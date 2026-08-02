@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sensor-badge cell background, used inside _temp_hum_ambient's 2x2 grid -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/overlay_black_19" />
+    <corners android:radius="10dp" />
+</shape>

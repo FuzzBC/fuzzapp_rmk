@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One telnet terminal row. Same id as item_console_line so ConsoleAdapter.VH
+     binds unchanged - only the look differs: monospace, terminal green-grey,
+     fixed colours (terminal theme, deliberately NOT theme-aware). -->
+<TextView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/console_line_text"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:includeFontPadding="false"
+    android:paddingTop="0dp"
+    android:paddingBottom="0dp"
+    android:typeface="monospace"
+    android:textColor="#C8D8C8"
+    android:textSize="10sp"
+    android:lineSpacingExtra="-1sp"
+    android:textIsSelectable="false" />

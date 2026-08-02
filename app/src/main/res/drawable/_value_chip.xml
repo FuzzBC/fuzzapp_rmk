@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small bordered pill behind a setting's current-value text
+     (row_value / row_option_value). Transparent fill, 1dp stroke -
+     stroke color retinted at runtime by
+     SettingsManager._tintRowChrome() via ThemeManager, same convention
+     as the inline option chips / category tabs. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@android:color/transparent" />
+    <corners android:radius="10dp" />
+    <stroke
+        android:color="@color/skbar_track_color"
+        android:width="1dp" />
+</shape>

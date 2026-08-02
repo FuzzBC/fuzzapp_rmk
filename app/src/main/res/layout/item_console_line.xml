@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One Term console row, three aligned columns:
+         <gutter> <clock> [SRC] <message>
+     The first two columns are monospace and space-padded to an exact character
+     count by ConsoleAdapter, so wrap_content measures them identically on every
+     row - they line up with no reserved slack, and a wrapped message re-indents
+     under the message column instead of under the clock.
+     Text, colour spans and value chips are fully built by ConsoleAdapter at
+     append() time - this row only calls setText() on bind.
+     item_telnet_line has none of these ids except console_line_text, which is
+     why ConsoleAdapter.VH null-checks the others. -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:baselineAligned="false">
+
+    <View
+        android:id="@+id/console_line_gutter"
+        android:layout_width="3dp"
+        android:layout_height="match_parent"
+        android:layout_marginTop="1dp"
+        android:layout_marginEnd="4dp"
+        android:layout_marginBottom="1dp" />
+
+    <TextView
+        android:id="@+id/console_line_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:paddingTop="1dp"
+        android:paddingBottom="1dp"
+        android:textColor="#5F5E5A"
+        android:textSize="12sp"
+        android:typeface="monospace"
+        tools:ignore="TextContrastCheck,TextSizeCheck"
+        tools:text="22:00:01" />
+
+    <TextView
+        android:id="@+id/console_line_src"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="3dp"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:paddingTop="1dp"
+        android:paddingBottom="1dp"
+        android:textColor="#888780"
+        android:textSize="12sp"
+        android:typeface="monospace"
+        tools:ignore="TextContrastCheck,TextSizeCheck"
+        tools:text="[APP]" />
+
+    <TextView
+        android:id="@+id/console_line_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:includeFontPadding="false"
+        android:lineSpacingExtra="1sp"
+        android:paddingTop="1dp"
+        android:paddingBottom="1dp"
+        android:textColor="@color/text_secondary"
+        android:textIsSelectable="false"
+        android:textSize="12sp"
+        android:typeface="monospace"
+        tools:ignore="TextContrastCheck,TextSizeCheck"
+        tools:text="Max brightness set to [120]" />
+
+</LinearLayout>

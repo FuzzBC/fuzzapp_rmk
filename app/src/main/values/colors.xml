@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ============================================================
+         FuZzAPP COLOR PALETTE — "Warm Amber / Copper Ambient"
+         ============================================================
+         Every color used anywhere in the app (layouts, drawables,
+         AND Java code) is defined here. To re-skin the app, edit the
+         values in this file only - nothing else should ever need
+         touching for a future palette change.
+
+         A few colors are intentionally left as fixed/functional and
+         are NOT meant to follow the theme (pure RGB channel swatches,
+         literal transparent/black overlays) - see "Fixed / Functional"
+         section below; recoloring those would change what they
+         represent, not just how they look.
+         ============================================================ -->
+
+    <!-- ── Material theme ──────────────────────────────────────── -->
+    <color name="colorPrimary">#8C5A2B</color>        <!-- Burnt copper -->
+    <color name="colorPrimaryDark">#5C3A1C</color>    <!-- Deep coffee brown -->
+    <color name="colorAccent">#D2691E</color>         <!-- Copper / chocolate accent -->
+
+    <!-- ── Core UI chrome ──────────────────────────────────────── -->
+    <color name="stroke_line_color">#CC2A2018</color> <!-- Button/panel outline -->
+    <color name="text_default">#E0A458</color>        <!-- Primary readable accent text -->
+    <color name="text_setting_label">#D9B68C</color>  <!-- Per-setting row label text (e.g. "MotionMaxBr") -->
+
+    <!-- ── Settings panel / seekbar ─────────────────────────────── -->
+    <color name="skbar_whole_settings">#2B2018</color>      <!-- Settings panel background -->
+    <color name="skbar_settings_title">#D9883C</color>      <!-- Vibrant copper-amber accent -->
+    <color name="skbar_line_between">#2B2018</color>        <!-- Divider line, matches panel bg -->
+    <color name="skbar_upper_text">#A88B6F</color>          <!-- Muted warm tan -->
+    <color name="skbar_track_color">#5C4633</color>         <!-- Seekbar track, subdued warm brown -->
+    <color name="skbar_second_track_color">#A98F6E</color>  <!-- Lighter warm tan track variant -->
+    <color name="skbar_section_text_color">#D9C4A8</color>  <!-- Soft warm cream section text -->
+
+    <!-- Settings category tab colors - one accent per CAT_* section, used by the
+         Settings tab's top tab bar (item per chip), the single header status
+         dot (recolored to match whichever tab is active), and that
+         category's section title/stripe once selected. -->
+    <color name="cat_color_tv">#E0A847</color>        <!-- golden amber - TV -->
+    <color name="cat_color_motion">#E8633D</color>    <!-- burnt orange - MOTION -->
+    <color name="cat_color_hb">#D9636B</color>        <!-- terracotta rose - HEARTBEAT -->
+    <color name="cat_color_ambilight">#A8556B</color> <!-- dusty wine - AMBILIGHT -->
+    <color name="cat_color_diffuser">#8FAA6B</color>  <!-- sage green - AROMA DIFFUSER -->
+    <color name="cat_color_other">#9C8B73</color>     <!-- warm taupe-grey - OTHER -->
+
+    <!-- ── Gradients & translucent panels ───────────────────────── -->
+    <color name="panel_gradient_start">#4B8A7560</color> <!-- Gradient start: _stroke_line, _temp_hum -->
+    <color name="panel_gradient_end">#3A2E22</color>     <!-- Gradient end: _stroke_line, _temp_hum -->
+    <color name="btn_led_color">#4BD48A3F</color>        <!-- _btn_hb.xml, _btn_led.xml background -->
+    <color name="btn_menu_leds_color">#4D9A805C</color>  <!-- _btn_menu_leds.xml background -->
+
+    <!-- Tab pill / chip "selected" tint - 10% of the accent color -->
+    <color name="tab_active_tint">#1AD9883C</color>
+
+    <!-- Debug TERM tab -->
+    <color name="debug_cell_bg">#211A14</color>          <!-- Debug grid cell background -->
+
+    <!-- ── Fixed / Functional Colors - intentionally NOT themed ──
+         These represent literal values (an actual RGB channel, a
+         transparent/black overlay) rather than a stylistic choice,
+         so they stay put across any future palette change. -->
+    <color name="color_transparent">#00000000</color> <!-- activity_main.xml backgrounds; bgfuzzz/app/_fuzz icon backgrounds -->
+    <color name="overlay_black_19">#30000000</color>  <!-- 19% black solid overlay -->
+    <color name="rgb_pure_red">#FF0000</color>        <!-- __r.xml literal RGB-channel swatch -->
+    <color name="rgb_pure_green">#00FF00</color>      <!-- __g.xml literal RGB-channel swatch -->
+    <color name="rgb_pure_blue">#0000FF</color>       <!-- __b.xml literal RGB-channel swatch -->
+
+    <!-- ── Text ─────────────────────────────────────────────────── -->
+    <color name="text_muted_grey">#B3A089</color>    <!-- SAVE DUAL COLORS label, on/off/dot indicators, lay_debug_item -->
+    <color name="text_secondary">#E3D2B8</color>     <!-- Secondary/lighter text color -->
+    <color name="link_accent_color">#8C4A14</color>  <!-- textColorLink on SAVE DUAL COLORS field -->
+
+    <!-- ── Shadows / glow ───────────────────────────────────────── -->
+    <color name="text_glow_shadow">#FFAA00</color> <!-- text shadowColor on color input fields -->
+    <color name="text_shadow_dark">#180D06</color>  <!-- text shadowColor -->
+
+    <!-- ── Sensor status-strip icon tints ──────────────────────────
+         Hue still carries meaning (warm=temp, cool=humidity) even
+         inside a warm theme, so these stay slightly differentiated
+         from the rest of the palette on purpose. -->
+    <color name="icon_tint_temperature">#C1481F</color> <!-- _iv_temp icon tint -->
+    <color name="icon_tint_humidity">#4A7A8C</color>    <!-- _iv_hum icon tint -->
+    <color name="icon_tint_lux">#6B5D4F</color>         <!-- _iv_lux icon tint -->
+
+    <!-- ── Neutral on-colors - true white/black, not theme-tinted ── -->
+    <color name="colorOnPrimary">#FFFFFF</color>   <!-- White text on Primary -->
+    <color name="colorOnSecondary">#000000</color> <!-- Black text on Secondary -->
+
+    <!-- ── Status / connection semantics ───────────────────────────
+         Hue = meaning (green=on, red=off/error, yellow=ready/standby);
+         changing these changes what the indicator MEANS, not just how
+         it looks, so keep edits here subtle. Used by StatusManager's
+         icon colorFilters and by the debug TERM legend dots. -->
+    <color name="status_on_green">#6FAE4A</color>
+    <color name="status_off_red">#D9543A</color>
+    <color name="status_ready_yellow">#D9A23E</color>
+    <color name="status_autooff_grey">#8C8478</color>
+    <color name="status_special_cyan">#5FA8AE</color>   <!-- TV icon while Ambilight is active -->
+    <color name="status_no_water_blue">#9BBCC9</color>  <!-- Diffuser: out of water -->
+    <color name="action_disable_warn">#B0492E</color>   <!-- ENABLE/DISABLE button text while enabled -->
+
+    <!-- ── Loading spinner (AVLoadingIndicatorView) ────────────────
+         active = while a command is in flight, timeout = no reply
+         after 10s, idle = hidden/done. -->
+    <color name="loading_active">#B4D9883C</color>
+    <color name="loading_timeout">#FFD6271A</color>
+    <color name="loading_idle">#FFE6B86E</color>
+
+    <!-- ── Toast ────────────────────────────────────────────────── -->
+    <color name="toast_text_color">#D9C2A0</color>
+    <color name="toast_shadow_color">#6B5847</color>
+
+    <!-- ── Debug console message direction ─────────────────────────
+         (HTML <font> tag color in _Console; hardware reply vs. app-sent) -->
+    <color name="console_received">@color/status_on_green</color>
+    <color name="console_sent">#F2E6D8</color>
+
+    <!-- ── Color wheel popup (SPIN / SET hand-dial) ─────────────────
+         hole/spin reuse the settings-panel colors above on purpose,
+         so the popup always matches whatever panel theme is active. -->
+    <color name="wheel_set_color">#7FA650</color>     <!-- bottom half - "SET" -->
+    <color name="wheel_divider_color">#160F0A</color> <!-- center divider + marker border -->
+    <color name="wheel_label_text">#1A1208</color>    <!-- SPIN/SET label text -->
+
+</resources>

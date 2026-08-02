@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One LED cell in the ColorLayout map. Must stay a single <shape> so it
+     inflates to a GradientDrawable: LEDManager mutates this background at
+     runtime (solid/gradient for the live colour, animated stroke for the
+     selected-ring). corners=20dp turns the 40dp cells into round "dots"
+     and the 150dp HB cell (_btn_led_60) into a pill. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <solid android:color="@color/btn_led_color"/>
+
+    <stroke
+        android:color="@color/stroke_line_color"
+        android:width="2dp" />
+    <corners
+        android:radius="20dp"/>
+</shape>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same themed stroke panel as _stroke_line/_temp_hum, but with a much
+     smaller inset - _stroke_line's 8dp inset is sized for large panels
+     (_temp_hum_ambient's whole 2x2 grid, _connectinfo's wide banner) and
+     visually crowds/overlaps a small single-metric badge like
+     _diffuser_refill_box. Re-tinted the same way via
+     ThemeManager.tintFrameStroke() - it finds the GradientDrawable inside
+     regardless of the inset wrapping it. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="2dp"
+    android:insetRight="2dp"
+    android:insetTop="2dp"
+    android:insetBottom="2dp">
+    <shape>
+        <gradient
+            android:startColor="@color/panel_gradient_start"
+            android:endColor="@color/panel_gradient_end"
+            android:angle="45" />
+        <corners
+            android:radius="10dp" />
+        <stroke
+            android:color="@color/stroke_line_color"
+            android:width="2dp" />
+        <solid android:color="@color/overlay_black_19" />
+    </shape>
+</inset>

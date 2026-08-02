@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Row template for TYPE_SWITCH.
+  Toggle pill (SwitchCompat) replaces CheckBox; teal ON / muted OFF.
+  row_checkbox id kept on the SwitchCompat for zero Java changes.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <View
+        android:id="@+id/row_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="@dimen/set_fakeline_padding"
+        android:layout_marginEnd="@dimen/set_fakeline_padding"
+        android:background="@color/skbar_line_between"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="9dp">
+
+        <TextView
+            android:id="@+id/row_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:letterSpacing="0.09"
+            android:textAllCaps="true"
+            android:textColor="@color/skbar_upper_text"
+            android:textSize="12sp"
+            android:textStyle="bold|italic"
+            tools:ignore="TextContrastCheck"
+            tools:text="DUAL COLOR" />
+
+        <!-- id=row_checkbox kept — SettingsManager casts to CheckBox; SwitchCompat extends it -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/row_checkbox"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:showText="false"
+            android:textOn=""
+            android:textOff=""
+            app:thumbTint="@color/text_secondary"
+            android:track="@drawable/_switch_track"
+            tools:ignore="TouchTargetSizeCheck" />
+
+    </LinearLayout>
+
+</LinearLayout>

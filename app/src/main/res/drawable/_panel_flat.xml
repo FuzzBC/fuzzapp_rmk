@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="8dp"
+    android:insetRight="8dp"
+    android:insetTop="8dp"
+    android:insetBottom="8dp">
+    <shape>
+        <gradient
+            android:startColor="@color/panel_gradient_start"
+            android:endColor="@color/panel_gradient_end"
+            android:angle="45" />
+        <corners
+            android:radius="12dp" />
+        <solid android:color="@color/overlay_black_19" />
+    </shape>
+</inset>

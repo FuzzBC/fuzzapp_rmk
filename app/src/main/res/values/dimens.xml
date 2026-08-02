@@ -1,0 +1,10 @@
+<resources>
+    <dimen name="btn_w">40dp</dimen>
+    <dimen name="btn_h">40dp</dimen>
+
+    <!-- Reduced from 30dp — rows now use 16dp start padding directly -->
+    <dimen name="ll_padding">16dp</dimen>
+
+    <dimen name="set_fakeline_padding">10dp</dimen>
+
+</resources>

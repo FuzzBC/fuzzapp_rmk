@@ -1,0 +1,2553 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--suppress ALL -->
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/xFuZz"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_gravity="bottom"
+    android:alpha="100"
+    android:background="@android:drawable/screen_background_dark"
+    android:backgroundTintMode="src_in"
+    android:clickable="false"
+    android:contextClickable="false"
+    android:foregroundTint="@color/color_transparent"
+    android:foregroundTintMode="src_in"
+    android:longClickable="false"
+    android:textAlignment="center"
+    android:visibility="visible"
+    app:layout_anchorGravity="center|center_horizontal"
+    tools:ignore="RtlCompat">
+
+    <pl.droidsonroids.gif.GifImageView
+        android:id="@+id/gifBackground"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:alpha="0.5"
+        android:scaleType="fitXY"
+        android:src="@drawable/bg_default" />
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/TopItems"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Diffuser refill badge: icon + remaining percent + thin fill bar along
+             the bottom edge. _diffuser_refill_fill's width is set programmatically
+             (see StatusManager) to the live remaining-percent fraction of
+             _diffuser_refill_track's 34dp width; icon/percent tint switches
+             warm->status_ready_yellow->status_off_red as the level drops, mirroring
+             the on/off semantics already used elsewhere (see colors.xml).
+             Same themed stroke look as _temp_hum_ambient (re-tinted alongside it
+             in StatusManager.applyThemeColors()), but _stroke_line_compact's
+             smaller inset instead of _stroke_line's - sized for a small single
+             badge instead of a whole panel. -->
+        <LinearLayout
+            android:id="@+id/_diffuser_refill_box"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="11dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/_stroke_line_compact"
+            android:clickable="true"
+            android:contextClickable="false"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="TouchTargetSizeCheck">
+
+            <ImageView
+                android:id="@+id/_diffuser_refill_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginBottom="2dp"
+                android:scaleType="fitXY"
+                android:tint="@color/text_default"
+                app:srcCompat="@drawable/_info_diffuser"
+                tools:ignore="ContentDescription,ImageContrastCheck" />
+
+            <TextView
+                android:id="@+id/_diffuser_refill_percent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAlignment="center"
+                android:textColor="@color/text_muted_grey"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:text="@string/status_na"
+                tools:ignore="TextSizeCheck"
+                tools:text="64%" />
+
+            <FrameLayout
+                android:layout_width="34dp"
+                android:layout_height="4dp"
+                android:layout_marginTop="4dp"
+                android:background="@color/diffuser_refill_track">
+
+                <View
+                    android:id="@+id/_diffuser_refill_fill"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:background="@color/status_on_green" />
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/_connectinfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/_stroke_line"
+            android:clickable="true"
+            android:contextClickable="false"
+            android:padding="8dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/connecting_info"
+            android:textAlignment="center"
+            android:textAppearance="@style/TextAppearance.App.TextInputLayout"
+            android:textColor="@color/text_default"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:visibility="visible"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="HardcodedText,RtlSymmetry,TextContrastCheck,TextContrastCheck,TouchTargetSizeCheck" />
+
+        <com.wang.avi.AVLoadingIndicatorView
+            android:id="@+id/LoadingBar"
+            android:layout_width="35dp"
+            android:layout_height="35dp"
+            android:layout_marginBottom="3dp"
+            app:indicatorColor="@color/text_default"
+            app:indicatorName="LineSpinFadeLoaderIndicator"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <!-- Temp / Hum / Lux / AmbientMode status grid (2x2 badges).
+             Each cell = icon + value + short caps label, all equal size.
+             Root id/background kept as-is: StatusManager.applyThemeColors()
+             re-tints this view's stroke on live theme switches. -->
+        <LinearLayout
+            android:id="@+id/_temp_hum_ambient"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="5dp"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/_temp_hum"
+            android:orientation="vertical"
+            android:padding="5dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="TextSizeCheck">
+
+            <!-- Row 1: Temperature / Humidity -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/_ll_temp"
+                    android:layout_width="44dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="5dp"
+                    android:background="@drawable/_badge_cell"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="4dp">
+
+                    <ImageView
+                        android:id="@+id/_iv_temp"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginBottom="2dp"
+                        android:scaleType="fitXY"
+                        android:tint="@color/icon_tint_temperature"
+                        app:srcCompat="@drawable/temp"
+                        tools:ignore="ContentDescription,ImageContrastCheck" />
+
+                    <TextView
+                        android:id="@+id/_temperature"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAlignment="center"
+                        android:textColor="@color/text_default"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextSizeCheck"
+                        tools:text="23 °c" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:letterSpacing="0.05"
+                        android:text="@string/label_temp"
+                        android:textColor="@color/text_muted_grey"
+                        android:textSize="7sp"
+                        tools:ignore="HardcodedText,SmallSp,TextSizeCheck" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/_ll_hum"
+                    android:layout_width="44dp"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/_badge_cell"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="4dp">
+
+                    <ImageView
+                        android:id="@+id/_iv_hum"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginBottom="2dp"
+                        android:scaleType="fitXY"
+                        android:tint="@color/icon_tint_humidity"
+                        app:srcCompat="@drawable/hum"
+                        tools:ignore="ContentDescription,ImageContrastCheck" />
+
+                    <TextView
+                        android:id="@+id/_humidity"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAlignment="center"
+                        android:textColor="@color/text_default"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextSizeCheck"
+                        tools:text="47 %" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:letterSpacing="0.05"
+                        android:text="@string/label_hum"
+                        android:textColor="@color/text_muted_grey"
+                        android:textSize="7sp"
+                        tools:ignore="HardcodedText,SmallSp,TextSizeCheck" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Row 2: Lux (bar rating, unchanged behaviour) / AmbientMode -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/_ll_lux"
+                    android:layout_width="44dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="5dp"
+                    android:background="@drawable/_badge_cell"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="4dp"
+                    tools:ignore="TextSizeCheck">
+
+                    <ImageView
+                        android:id="@+id/_iv_lux"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginBottom="2dp"
+                        android:scaleType="fitXY"
+                        android:tint="@color/icon_tint_lux"
+                        app:srcCompat="@drawable/lux"
+                        tools:ignore="ContentDescription,ImageContrastCheck" />
+
+                    <!-- Filled/empty glyphs (e.g. ▰▰▱), written by
+                         StatusManager.getLuxRating() - not a raw lux number -->
+                    <TextView
+                        android:id="@+id/_lux"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textAlignment="center"
+                        android:textColor="@color/text_default"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextSizeCheck"
+                        tools:text="▰▰▱" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:letterSpacing="0.05"
+                        android:text="@string/label_lux"
+                        android:textColor="@color/text_muted_grey"
+                        android:textSize="7sp"
+                        tools:ignore="HardcodedText,SmallSp,TextSizeCheck" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/_ll_ambientmode"
+                    android:layout_width="44dp"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/_badge_cell"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="4dp">
+
+                    <!-- Click = enable AmbientMode, long-click = disable
+                         (listeners in StatusManager.init(), unchanged) -->
+                    <ImageView
+                        android:id="@+id/_ambientmode"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:layout_marginBottom="2dp"
+                        android:scaleType="fitXY"
+                        android:tint="@color/text_muted_grey"
+                        app:srcCompat="@drawable/_btn_ambient_mode"
+                        tools:ignore="ContentDescription" />
+
+                    <!-- "N/A" until the first status packet is received;
+                         then ON / READY / OFF - StatusManager._updateAmbientStatusText() -->
+                    <TextView
+                        android:id="@+id/_ambientmode_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/status_na"
+                        android:textAlignment="center"
+                        android:textColor="@color/text_muted_grey"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextSizeCheck" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:letterSpacing="0.05"
+                        android:text="@string/label_amb"
+                        android:textColor="@color/text_muted_grey"
+                        android:textSize="7sp"
+                        tools:ignore="HardcodedText,SmallSp,TextSizeCheck" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/ToastLayout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/_toast"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/_connectinfo"
+            tools:ignore="TextSizeCheck">
+
+            <TextView
+                android:id="@+id/_toast_view"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/toast_placeholder"
+                android:textColor="@color/colorOnPrimary"
+                android:textSize="20sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/SetLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_gravity="center"
+        android:layout_marginStart="5dp"
+        android:layout_marginTop="5dp"
+        android:layout_marginEnd="5dp"
+        android:layout_marginBottom="8dp"
+        android:textAlignment="center"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/TopItems">
+
+        <!-- Category tab row - now sits BELOW the static header (BG + TESTMODE), above the scrollable list -->
+        <LinearLayout
+            android:id="@+id/settings_tab_row"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="10dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/settings_static_header">
+
+            <!-- Tabs injected programmatically by SettingsManager._setupCategoryTabs() -->
+
+        </LinearLayout>
+
+        <!-- Static header - never scrolls. Background + TestMode live here,
+             above the settings list, same as effInfo (below) sits as a
+             static footer under it. -->
+        <LinearLayout
+            android:id="@+id/settings_static_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!-- bg_set block moved into a popup, opened from the footer bar -->
+
+            <!-- _testmode block moved into a popup, opened from the footer bar -->
+
+        </LinearLayout>
+
+        <!-- Settings bar - the ONLY scrollable part of the panel now. -->
+        <ScrollView
+            android:id="@+id/sv_setting"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/_stroke_line_settings"
+            app:layout_constraintBottom_toTopOf="@+id/effInfo"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/settings_tab_row">
+
+            <LinearLayout
+                android:id="@+id/settingLL"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="0dp"
+                android:layout_marginTop="0dp"
+                android:layout_marginEnd="0dp"
+                android:layout_marginBottom="0dp"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <!-- Category sections (title + row container + separator), one per
+                     CategoryInfo in SettingsManager.CAT_Info, inflated from
+                     item_settings_category and inserted here at runtime by
+                     SettingsManager._buildCategorySections() - in CAT_Info order.
+                     Categories are now data, same as settings rows already are. -->
+                <LinearLayout
+                    android:id="@+id/cat_sections_root"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="0"
+                    android:orientation="vertical" />
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Static footer - never scrolls. Reset/Disable/Theme. -->
+        <LinearLayout
+            android:id="@+id/effInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/_panel_flat"
+            android:baselineAligned="false"
+            android:gravity="center"
+            android:minHeight="40dp"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:ignore="DisableBaselineAlignment">
+
+            <Button
+                android:id="@+id/_btn_setting_default"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="@string/btn_reset"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/text_default"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="7dp"
+                android:layout_marginEnd="7dp"
+                android:background="@color/stroke_line_color"
+                android:importantForAccessibility="no" />
+
+            <Button
+                android:id="@+id/_btn_testmode"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:ellipsize="end"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:maxLines="1"
+                android:maxWidth="110dp"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="TEST"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/text_default"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="7dp"
+                android:layout_marginEnd="7dp"
+                android:background="@color/stroke_line_color"
+                android:importantForAccessibility="no" />
+
+            <Button
+                android:id="@+id/_btn_en_dis"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="@string/btn_disable"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/text_default"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="7dp"
+                android:layout_marginEnd="7dp"
+                android:background="@color/stroke_line_color"
+                android:importantForAccessibility="no" />
+
+            <Button
+                android:id="@+id/_btn_theme"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="@string/btn_theme"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/skbar_settings_title"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="7dp"
+                android:layout_marginEnd="7dp"
+                android:background="@color/stroke_line_color"
+                android:importantForAccessibility="no" />
+
+            <Button
+                android:id="@+id/_btn_bg"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:ellipsize="end"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:maxLines="1"
+                android:maxWidth="110dp"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="BG"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/text_default"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/ColorLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="3dp"
+        android:layout_marginTop="5dp"
+        android:layout_marginEnd="3dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/TopItems"
+        app:layout_constraintVertical_bias="1.0">
+
+        <com.fuzz.colors.HeartbeatPatternView
+            android:id="@+id/_btn_led_60"
+            android:layout_width="180dp"
+            android:layout_height="66dp"
+            android:layout_marginBottom="8dp"
+            android:background="@null"
+            android:visibility="visible"
+            app:layout_constraintBottom_toTopOf="@+id/TVLedsLayout"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/TVLedsLayout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="3dp"
+            android:layout_marginEnd="3dp"
+            android:layout_marginBottom="20dp"
+            android:padding="10dp"
+            app:layout_constraintBottom_toTopOf="@+id/_Bars"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:ignore="VisualLintBounds">
+
+
+            <LinearLayout
+                android:id="@+id/_LedAlign_TV_TOP"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="10dp"
+                android:orientation="horizontal"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <Button
+                    android:id="@+id/_btn_led_10"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_11"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_12"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_13"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_14"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_15"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_16"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_17"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_18"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_19"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/_LedAlign_TV_BOT"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_marginTop="7dp"
+                android:layout_marginEnd="10dp"
+                android:orientation="horizontal"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_5">
+
+                <Button
+                    android:id="@+id/_btn_led_4"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_3"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_2"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_1"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_0"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_29"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_28"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_27"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_26"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_25"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/_btn_led_9"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="5dp"
+                android:visibility="visible"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_TV_TOP"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_8"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_9"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_7"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_8"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_6"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_7"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_5"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_6"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_20"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="5dp"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_TV_TOP"
+                tools:ignore="DuplicateClickableBoundsCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_21"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_20"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_22"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_21"
+                tools:ignore="DuplicateClickableBoundsCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_23"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_22"
+                tools:ignore="DuplicateClickableBoundsCheck,SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_24"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginTop="2dp"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_23"
+                tools:ignore="DuplicateClickableBoundsCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+            <LinearLayout
+                android:id="@+id/_LedAlign_COM"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="15dp"
+                android:orientation="horizontal"
+                android:visibility="visible"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_TV_BOT"
+                tools:ignore="VisualLintBounds">
+
+                <Button
+                    android:id="@+id/_btn_led_30"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginTop="0dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_31"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_32"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_33"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_34"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck" />
+
+                <Space
+                    android:id="@+id/_space_com"
+                    android:layout_width="10dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="0"
+                    android:visibility="visible"
+                    tools:ignore="InefficientWeight" />
+
+                <Button
+                    android:id="@+id/_btn_led_35"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_36"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+                <Button
+                    android:id="@+id/_btn_led_37"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_38"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TooManyViews,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_39"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/_btn_led_41"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginStart="40dp"
+                android:layout_marginTop="10dp"
+                app:layout_constraintStart_toStartOf="@+id/_LedAlign_COM"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_COM"
+                tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+            <Button
+                android:id="@+id/_btn_savedual"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:layout_weight="1"
+                android:background="@drawable/_stroke_line"
+                android:cursorVisible="true"
+                android:letterSpacing="0.05"
+                android:shadowColor="@color/text_shadow_dark"
+                android:shadowDx="1.5"
+                android:shadowDy="1.5"
+                android:shadowRadius="3"
+                android:text="@string/btn_save_dual_colors"
+                android:textColor="@color/text_muted_grey"
+                android:textColorLink="@color/link_accent_color"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                app:layout_constraintBottom_toBottomOf="@+id/_btn_led_40"
+                app:layout_constraintEnd_toStartOf="@+id/_btn_led_40"
+                app:layout_constraintStart_toEndOf="@+id/_btn_led_41"
+                app:layout_constraintTop_toTopOf="@+id/_btn_led_41"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,TextSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_led_40"
+                style="@style/Widget.Fuzz.LedCell"
+                android:layout_marginEnd="40dp"
+                app:layout_constraintEnd_toEndOf="@+id/_LedAlign_COM"
+                app:layout_constraintTop_toTopOf="@+id/_btn_led_41"
+                tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <LinearLayout
+                android:id="@+id/_LedAlign_BED"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginEnd="6dp"
+                android:orientation="horizontal"
+                android:paddingStart="10dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="6dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_btn_led_41">
+
+                <Button
+                    android:id="@+id/_btn_led_42"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginTop="0dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_43"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_44"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_45"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="VisualLintBounds" />
+
+                <ImageView
+                    android:id="@+id/_LedAlign_BED_img"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:layout_weight="1"
+                    android:alpha="0.6"
+                    android:tint="@color/text_default"
+                    android:visibility="visible"
+                    app:srcCompat="@drawable/_ledalign_bed"
+                    tools:ignore="ContentDescription,VisualLintBounds" />
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_46"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_47"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_48"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_49"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/_LedAlign_LAMP1"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_BED">
+
+                <Button
+                    android:id="@+id/_btn_led_50"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginTop="0dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_51"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_52"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_53"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_54"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="VisualLintBounds" />
+
+                <ImageView
+                    android:id="@+id/_LedAlign_lamp"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center_horizontal|center_vertical"
+                    android:layout_weight="1"
+                    android:alpha="0.6"
+                    android:tint="@color/text_default"
+                    android:visibility="visible"
+                    app:srcCompat="@drawable/_ledalign_lamp"
+                    tools:ignore="ContentDescription,VisualLintBounds" />
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:visibility="visible"
+                    tools:ignore="VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_55"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_56"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_57"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,SpeakableTextPresentCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_58"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="SpeakableTextPresentCheck,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds" />
+
+                <Button
+                    android:id="@+id/_btn_led_59"
+                    style="@style/Widget.Fuzz.LedCell"
+                    android:layout_marginStart="2dp"
+                    android:visibility="visible"
+                    tools:ignore="TextContrastCheck,TextViewEdits,TouchTargetSizeCheck,VisualLintBounds,SpeakableTextPresentCheck" />
+
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/_btn_colorpicker"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
+                android:background="@drawable/_btn_cp"
+                android:hapticFeedbackEnabled="false"
+                android:letterSpacing="1"
+                android:textColor="@color/text_muted_grey"
+                app:layout_constraintBottom_toTopOf="@+id/_LedAlign_TV_BOT"
+                app:layout_constraintEnd_toStartOf="@+id/_btn_led_22"
+                app:layout_constraintStart_toEndOf="@+id/_btn_led_7"
+                app:layout_constraintTop_toBottomOf="@+id/_LedAlign_TV_TOP"
+                tools:ignore="TouchTargetSizeCheck,TextContrastCheck,TextContrastCheck,SpeakableTextPresentCheck" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <LinearLayout
+            android:id="@+id/_Bars"
+            android:layout_width="400dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="7dp"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toTopOf="@+id/_btns_and_colors"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:ignore="TextSizeCheck">
+
+            <LinearLayout
+                android:id="@+id/ll_brightness"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center|center_horizontal|center_vertical"
+                android:layout_weight="0"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingStart="@dimen/ll_padding"
+                android:paddingEnd="@dimen/ll_padding">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/_brightness_text"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="0dp"
+                        android:layout_weight="1"
+                        android:autoSizeTextType="uniform"
+                        android:clickable="false"
+                        android:contextClickable="false"
+                        android:layerType="software"
+                        android:letterSpacing="0.1"
+                        android:linksClickable="false"
+                        android:longClickable="false"
+                        android:text="@string/label_brightness"
+                        android:textAlignment="viewStart"
+                        android:textAllCaps="true"
+                        android:textColor="@color/skbar_upper_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold|italic"
+                        tools:ignore="HardcodedText,TextContrastCheck" />
+
+                    <TextView
+                        android:id="@+id/_brightness_step_minus"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:text="@string/btn_minus"
+                        android:textColor="@color/skbar_settings_title"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck" />
+
+                    <TextView
+                        android:id="@+id/_brightness_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:minWidth="36dp"
+                        android:textAlignment="center"
+                        android:textColor="@color/text_default"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        tools:ignore="TextContrastCheck"
+                        tools:text="0" />
+
+                    <TextView
+                        android:id="@+id/_brightness_step_plus"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:text="@string/btn_plus"
+                        android:textColor="@color/skbar_settings_title"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck" />
+
+                </LinearLayout>
+
+                <com.xw.repo.BubbleSeekBar
+                    android:id="@+id/_brightness"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    app:bsb_always_show_bubble="false"
+                    app:bsb_always_show_bubble_delay="300"
+                    app:bsb_hide_bubble="true"
+                    app:bsb_max="100"
+                    app:bsb_min="0"
+                    app:bsb_progress="50"
+                    app:bsb_second_track_color="@color/skbar_second_track_color"
+                    app:bsb_second_track_size="5dp"
+                    app:bsb_section_count="1"
+                    app:bsb_seek_step_section="false"
+                    app:bsb_show_progress_in_float="false"
+                    app:bsb_show_section_mark="false"
+                    app:bsb_show_section_text="false"
+                    app:bsb_show_thumb_text="false"
+                    app:bsb_thumb_radius_on_dragging="5dp"
+                    app:bsb_touch_to_seek="false"
+                    app:bsb_track_color="@color/skbar_track_color"
+                    app:bsb_track_size="3dp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+
+        <LinearLayout
+            android:id="@+id/_btns_and_colors"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/_stroke_line"
+            android:orientation="vertical"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent">
+
+            <LinearLayout
+                android:id="@+id/_AlignBtn"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginBottom="3dp"
+                android:orientation="horizontal"
+                app:layout_constraintBottom_toTopOf="@+id/_rgbS"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent">
+
+                <Button
+                    android:id="@+id/_btn_deselectall"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="50dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/md_transparent"
+                    android:cursorVisible="true"
+                    android:letterSpacing="0.05"
+                    android:text="@string/btn_deselect_all"
+                    android:textColor="@color/text_muted_grey"
+                    tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+                <Button
+                    android:id="@+id/_btn_ledsoff"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="50dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/md_transparent"
+                    android:cursorVisible="true"
+                    android:letterSpacing="0.05"
+                    android:text="@string/btn_leds_off"
+                    android:textColor="@color/text_muted_grey"
+                    tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+                <Button
+                    android:id="@+id/_btn_selectall"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="50dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/md_transparent"
+                    android:cursorVisible="true"
+                    android:letterSpacing="0.05"
+                    android:text="@string/btn_select_all"
+                    android:textColor="@color/text_muted_grey"
+                    tools:ignore="HardcodedText,TextContrastCheck,TextSizeCheck,TextViewEdits,TouchTargetSizeCheck" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/_fake_line"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:background="@color/stroke_line_color"
+                android:orientation="horizontal"></LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/_rgbS"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:paddingStart="2dp"
+                android:paddingEnd="2dp"
+                android:paddingBottom="2dp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent">
+
+                <EditText
+                    android:id="@+id/_rgbprint_0"
+                    android:layout_width="45dp"
+                    android:layout_height="30dp"
+                    android:layout_margin="0dp"
+                    android:layout_marginBottom="4dp"
+                    android:background="@drawable/__r"
+                    android:clickable="true"
+                    android:contextClickable="false"
+                    android:filterTouchesWhenObscured="false"
+                    android:focusable="false"
+                    android:focusableInTouchMode="false"
+                    android:inputType="number"
+                    android:letterSpacing="0.2"
+                    android:maxLength="3"
+                    android:padding="5dp"
+                    android:selectAllOnFocus="true"
+                    android:text="@string/rgb_placeholder"
+                    android:textAlignment="center"
+                    android:textAppearance="@style/TextAppearance.App.TextInputLayout"
+                    android:textColor="@android:color/white"
+                    android:textStyle="bold"
+                    app:layout_constraintBottom_toTopOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    tools:ignore="Autofill,HardcodedText,LabelFor,TouchTargetSizeCheck,DuplicateSpeakableTextCheck" />
+
+                <EditText
+                    android:id="@+id/_rgbprint_1"
+                    android:layout_width="45dp"
+                    android:layout_height="30dp"
+                    android:layout_margin="0dp"
+                    android:layout_marginBottom="4dp"
+                    android:background="@drawable/__g"
+                    android:clickable="true"
+                    android:contextClickable="false"
+                    android:filterTouchesWhenObscured="false"
+                    android:focusable="false"
+                    android:focusableInTouchMode="false"
+                    android:inputType="number"
+                    android:letterSpacing="0.2"
+                    android:maxLength="3"
+                    android:padding="5dp"
+                    android:selectAllOnFocus="true"
+                    android:text="@string/rgb_placeholder"
+                    android:textAlignment="center"
+                    android:textAppearance="@style/TextAppearance.App.TextInputLayout"
+                    android:textColor="@android:color/white"
+                    android:textStyle="bold"
+                    app:layout_constraintBottom_toTopOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    tools:ignore="Autofill,HardcodedText,LabelFor,TouchTargetSizeCheck,TextContrastCheck" />
+
+                <EditText
+                    android:id="@+id/_rgbprint_2"
+                    android:layout_width="45dp"
+                    android:layout_height="30dp"
+                    android:layout_margin="0dp"
+                    android:layout_marginBottom="4dp"
+                    android:background="@drawable/__b"
+                    android:clickable="true"
+                    android:contextClickable="false"
+                    android:filterTouchesWhenObscured="false"
+                    android:focusable="false"
+                    android:focusableInTouchMode="false"
+                    android:inputType="number"
+                    android:letterSpacing="0.2"
+                    android:maxLength="3"
+                    android:padding="5dp"
+                    android:selectAllOnFocus="true"
+                    android:text="@string/rgb_placeholder"
+                    android:textAlignment="center"
+                    android:textAppearance="@style/TextAppearance.App.TextInputLayout"
+                    android:textColor="@android:color/white"
+                    android:textStyle="bold"
+                    app:layout_constraintBottom_toTopOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    tools:ignore="Autofill,HardcodedText,LabelFor,TouchTargetSizeCheck" />
+
+
+                <Button
+                    android:id="@+id/_btn_sendcolor"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="45dp"
+                    android:layout_height="30dp"
+                    android:background="@drawable/_btn_sendrgb"
+                    android:letterSpacing="1"
+                    android:text="@string/btn_send"
+                    android:textColor="@color/text_muted_grey"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    tools:ignore="HardcodedText,TextContrastCheck,TextContrastCheck,TextSizeCheck,TouchTargetSizeCheck" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Telnet terminal page (left of TERM, only reachable while the TELNET
+         debug toggle is ON - see MainActivity._RebuildNavPages()).
+         Split top/bottom: APP (SmartTV R4) over DIFFUSER. Fixed terminal
+         colours on purpose - not tinted by ThemeManager. -->
+    <!-- ── TELNET floating window (draggable; shown via _telnet_fab) ────────── -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/TelnetLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@drawable/_telnet_window_bg"
+        android:elevation="24dp"
+        android:padding="10dp"
+        android:visibility="gone"
+        app:layout_constraintWidth_percent="0.95"
+        app:layout_constraintHeight_percent="0.70"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+
+            <!-- ── window title bar: drag handle + close ──── -->
+            <LinearLayout
+                android:id="@+id/_telnet_drag"
+                android:layout_width="match_parent"
+                android:layout_height="34dp"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/_telnet_titlebar_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="10dp"
+                android:paddingEnd="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:letterSpacing="0.14"
+                    android:text="≡  DIFFUSER CONSOLE"
+                    android:textColor="#8BE9FD"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:typeface="monospace"
+                    tools:ignore="HardcodedText" />
+
+                <TextView
+                    android:id="@+id/_telnet_close"
+                    android:layout_width="30dp"
+                    android:layout_height="28dp"
+                    android:gravity="center"
+                    android:text="✕"
+                    android:textColor="#E06666"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:typeface="monospace"
+                    tools:ignore="HardcodedText" />
+
+            </LinearLayout>
+
+            <!-- ── DIFFUSER pane ──────────────────────────── -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:background="@drawable/_terminal_panel"
+                android:padding="6dp">
+
+                <!-- header: traffic dots + label + status chip -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="22dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp">
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/_dot_red" />
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/_dot_yellow" />
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/_dot_green" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="TELNET ─ DIFFUSER"
+                        android:textColor="#9AA79A"
+                        android:textSize="10sp"
+                        android:letterSpacing="0.12"
+                        android:textStyle="bold"
+                        android:typeface="monospace"
+                        tools:ignore="HardcodedText" />
+
+                    <TextView
+                        android:id="@+id/_telnet_dif_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="OFF"
+                        android:textColor="#666666"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:typeface="monospace"
+                        tools:ignore="HardcodedText" />
+
+                </LinearLayout>
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/_recyclertelnet_dif"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:clipToPadding="false"
+                    android:descendantFocusability="blocksDescendants"
+                    android:scrollbarStyle="outsideInset"
+                    tools:listitem="@layout/item_telnet_line" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/ConsoleLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="5dp"
+        android:layout_marginBottom="5dp"
+        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/TopItems">
+
+
+        <!-- Term console - RecyclerView, chronological (oldest -> newest), bottom-append.
+             Fills the full ConsoleLayout area; the DBG/CLR row floats
+             over the bottom edge instead of reserving space above.
+             Always autoscrolls to the newest line - see MainActivity._Console(). -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/_recyclerconsole"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginStart="5dp"
+            android:layout_marginEnd="5dp"
+            android:layout_marginBottom="5dp"
+            android:clipToPadding="false"
+            android:descendantFocusability="blocksDescendants"
+            android:scrollIndicators="right"
+            android:scrollbarStyle="outsideInset"
+            android:scrollbarTrackHorizontal="@drawable/_btn_menu_leds"
+            app:layout_constraintBottom_toTopOf="@+id/_btn_debug"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:listitem="@layout/item_console_line" />
+
+        <Button
+            android:id="@+id/_btn_debug"
+            style="@style/Widget.AppCompat.Button.Colored"
+            android:layout_width="wrap_content"
+            android:layout_height="26dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/_stroke_line"
+            android:letterSpacing="0.3"
+            android:minWidth="50dip"
+            android:paddingTop="0dp"
+            android:paddingBottom="0dp"
+            android:text="@string/btn_debug"
+            android:textColor="@color/text_default"
+            android:textSize="11sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+        <Button
+            android:id="@+id/_btn_clear_console"
+            style="@style/Widget.AppCompat.Button.Colored"
+            android:layout_width="wrap_content"
+            android:layout_height="26dp"
+            android:layout_marginStart="2dp"
+            android:background="@drawable/_stroke_line"
+            android:letterSpacing="0.3"
+            android:minWidth="50dip"
+            android:paddingTop="0dp"
+            android:paddingBottom="0dp"
+            android:text="@string/btn_clear"
+            android:textColor="@color/text_default"
+            android:textSize="11sp"
+            app:layout_constraintBottom_toBottomOf="@+id/_btn_debug"
+            app:layout_constraintStart_toEndOf="@+id/_btn_debug"
+            tools:ignore="HardcodedText,TextContrastCheck,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/StatusLay"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="3dp"
+        app:layout_constraintBottom_toTopOf="@+id/_btns_dual_color"
+        app:layout_constraintEnd_toEndOf="@+id/_btns_dual_color"
+        app:layout_constraintStart_toStartOf="@+id/_btns_dual_color">
+
+        <!-- Kept centered as a group: both Start/End pin to StatusLay's now-full-width
+             parent, so ConstraintLayout centers this wrap_content row automatically,
+             independent of _ard_wifi_box pinned to the right below. -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:id="@+id/sts_tv"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:tint="@color/status_off_red"
+                app:srcCompat="@drawable/_info_tv"
+                tools:ignore="ContentDescription" />
+
+            <View
+                android:id="@+id/_space0"
+                android:layout_width="7dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?android:attr/listDivider" />
+
+            <ImageView
+                android:id="@+id/sts_motion"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:tint="@color/status_off_red"
+                app:srcCompat="@drawable/_info_motion"
+                tools:ignore="ContentDescription" />
+
+            <View
+                android:id="@+id/_space1"
+                android:layout_width="7dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?android:attr/listDivider" />
+
+            <ImageView
+                android:id="@+id/sts_ambilight"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:tint="@color/status_off_red"
+                app:srcCompat="@drawable/_info_ambi"
+                tools:ignore="ContentDescription" />
+
+            <View
+                android:id="@+id/_space2"
+                android:layout_width="7dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?android:attr/listDivider" />
+
+            <ImageView
+                android:id="@+id/sts_diffuser"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_weight="1"
+                android:tint="@color/status_off_red"
+                app:srcCompat="@drawable/_info_diffuser"
+                tools:ignore="ContentDescription" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/_ard_wifi_box"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/_stroke_line"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:id="@+id/_ard_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_arduino"
+                app:tint="@color/text_muted_grey"
+                tools:ignore="ContentDescription" />
+
+            <ImageView
+                android:id="@+id/_wifi_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_wifi_level"
+                app:tint="@color/text_muted_grey"
+                tools:ignore="ContentDescription" />
+
+        </LinearLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/_btns_dual_color"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="5dp"
+        android:layout_marginEnd="5dp"
+        android:layout_marginBottom="10dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <HorizontalScrollView
+            android:id="@+id/horizontalScrollView2"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="SpeakableTextPresentCheck">
+
+            <LinearLayout
+                android:id="@+id/_dual_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:overScrollMode="never"
+                android:scrollIndicators="none"
+                android:scrollbarDefaultDelayBeforeFade="0"
+                android:scrollbarFadeDuration="0"
+                android:scrollbarSize="0dp"
+                android:scrollbars="none"></LinearLayout>
+        </HorizontalScrollView>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!--
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/SetLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="10dp"
+        android:padding="10dp"
+        android:textAlignment="center"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/_Bars">
+
+        <TableLayout
+            android:id="@+id/tableLayout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/set_backgorund"
+            android:paddingLeft="10dp"
+            android:paddingTop="10dp"
+            android:paddingRight="10dp"
+            android:paddingBottom="0dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_weight="0.5">
+
+            <TableRow
+                android:id="@+id/set1"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_motionbrightness"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text=" MotionMaxBr"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set0"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="100"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_ledcombrightness"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text=" E131ComBr"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set1"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="25"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/set2"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_tooffdelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="ToOffDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set2"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="45s"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_motiondelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="MotionDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set3"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="45s"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/set3"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_tvoffdelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="TvOffDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set4"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="45s"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_slowoffdelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="SlowOffDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set5"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="50ms"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/set4"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_randomdelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="RandomDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set6"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="8ms"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_brightnessdelay"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="BrightnessDelay"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set7"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="5ms"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+            </TableRow>
+
+
+            <TableRow
+                android:id="@+id/set6"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_ledsepbrtv"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="LedSepBrTv"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set10"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="8"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_ledsepbrcom"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="LedSepBrCom"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set11"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="15"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/set7"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_ledsepbrucom"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="LedSepBrUCom"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set12"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="50"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_ledsepbrbed"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="LedSepBrBed"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set13"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="30"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/set5"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/set_tvoneffect"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="false"
+                    android:gravity="center|center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="TvOnEffect"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set8"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="center_horizontal|center_vertical"
+                    android:hint="3 max"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/set_tvoffeffect"
+                    android:layout_width="300dp"
+                    android:layout_height="35dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_name"
+                    android:contextClickable="false"
+                    android:freezesText="true"
+                    android:gravity="center_vertical|end"
+                    android:paddingEnd="2dp"
+                    android:text="TvOffEffect"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="17sp"
+                    android:textStyle="normal|bold" />
+
+                <EditText
+                    android:id="@+id/val_set9"
+                    android:layout_width="60dp"
+                    android:layout_height="35dp"
+                    android:background="@drawable/set_value"
+                    android:gravity="clip_vertical|center_vertical"
+                    android:hint="3 max"
+                    android:inputType="number"
+                    android:textAlignment="center"
+                    android:textColor="@color/text_muted_grey"
+                    android:textStyle="bold" />
+
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/infoTvEffect"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/TvOnEffect"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="false"
+                    android:contextClickable="false"
+                    android:linksClickable="false"
+                    android:longClickable="false"
+                    android:text="~ TV ON EFFECT ~\n
+[0] default\n
+[1] Random + Static\n
+[2] Middle to out (sep)\n
+[3] Middle to out (all)"
+                    android:textAlignment="textStart"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvOFEffect"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="false"
+                    android:contextClickable="false"
+                    android:linksClickable="false"
+                    android:longClickable="false"
+                    android:text="~ TV OFF EFFECT ~\n
+default [0]\n
+Off delay (w tv off) [1]\n
+Off delay (all) [2]\n
+Slow TV > COM > uCOM > BED [3]"
+                    android:textAlignment="textEnd"
+                    android:textColor="@color/text_setting_label"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+            </TableRow>
+
+            <TableRow
+                android:id="@+id/confirm_row"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingTop="5dp">
+
+                <Button
+                    android:id="@+id/_btn_setting_back"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="0dp"
+                    android:layout_height="30dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_confirm"
+                    android:cursorVisible="true"
+                    android:letterSpacing="0.3"
+                    android:text="BACK"
+                    android:textColor="@color/text_muted_grey"
+                    android:visibility="visible"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    tools:ignore="TouchTargetSizeCheck,TextContrastCheck" />
+
+                <Button
+                    android:id="@+id/_btn_setting_confirm"
+                    style="@style/Widget.AppCompat.Button.Colored"
+                    android:layout_width="0dp"
+                    android:layout_height="30dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/set_confirm"
+                    android:cursorVisible="true"
+                    android:gravity="center|center_vertical"
+                    android:letterSpacing="0.3"
+                    android:text="SAVE"
+                    android:textColor="@color/text_muted_grey"
+                    android:visibility="visible"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    tools:ignore="TouchTargetSizeCheck,TextContrastCheck" />
+
+            </TableRow>
+
+        </TableLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+    -->
+
+    <!-- ── TELNET floating button (movable; visible only while telnet is enabled) ── -->
+    <TextView
+        android:id="@+id/_telnet_fab"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="70dp"
+        android:background="@drawable/_telnet_fab_bg"
+        android:elevation="26dp"
+        android:gravity="center"
+        android:text="&gt;_"
+        android:textColor="#8BE9FD"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:typeface="monospace"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:ignore="HardcodedText" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

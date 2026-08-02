@@ -1,0 +1,41 @@
+// HEADER COMMENT: Top-level Gradle build configuration file.
+// SCRIPT PURPOSE: Manages global buildscript dependencies, configures Java compiler options for all modules, and redirects the build output directory outside of Google Drive to prevent syncing issues.
+
+buildscript {
+    ext.kotlin_version = "2.4.10" // Define global Kotlin version variable
+
+    repositories {
+        google() // Fetch Android-specific dependencies from Google's repository
+        mavenCentral() // Fetch standard open-source libraries from Maven Central
+        maven { url 'https://jitpack.io' } // Allows importing GitHub repositories directly as dependencies
+        maven { url "https://maven.scijava.org/content/repositories/public/" } // Public SciJava repository for specific external dependencies
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.2.1' // Android Gradle Plugin dependency version
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version" // Adds Kotlin compilation support to Gradle
+    }
+}
+
+allprojects {
+
+    tasks.withType(JavaCompile).configureEach {
+        it.sourceCompatibility = JavaVersion.VERSION_17 // Sets target Java bytecode level to Java 17
+        it.targetCompatibility = JavaVersion.VERSION_17 // Enforces Java 17 compliance during compilation
+
+        it.options.compilerArgs += "-Xlint:deprecation" // Enables warning logs for any deprecated APIs used in code
+    }
+
+    buildDir = "D:/AndroidBuilds/${rootProject.name}/${project.name}" // Overrides build folder location to an external path outside Google Drive
+
+    repositories {
+        google() // Repositories block repeated for sub-module dependency resolution
+        mavenCentral() // Core repository for sub-module dependencies
+        maven { url 'https://jitpack.io' } // Resolves GitHub-hosted dependencies for sub-modules
+        maven { url "https://maven.scijava.org/content/repositories/public/" } // Resolves SciJava-hosted dependencies for sub-modules
+    }
+}
+
+// Clean task updated to target the new dynamic build directory paths directly
+tasks.register('clean', Delete) {
+    delete "D:/AndroidBuilds/${rootProject.name}" // Deletes the entire redirected build directory tree for the project when a clean is triggered
+}

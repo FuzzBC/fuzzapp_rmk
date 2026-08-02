@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Category header teal fade line -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="0"
+        android:startColor="@color/color_transparent"
+        android:centerColor="@color/skbar_settings_title"
+        android:endColor="@color/color_transparent" />
+    <size android:height="1dp" />
+</shape>

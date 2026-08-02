@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Glow divider - soft halo band. Tinted at runtime via DrawableCompat.setTint(); the
+     baked alpha below (~25%) is preserved through the tint and sets the glow's intensity. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="0"
+        android:startColor="@color/color_transparent"
+        android:centerColor="#40D9883C"
+        android:endColor="@color/color_transparent" />
+    <size android:height="8dp" />
+</shape>

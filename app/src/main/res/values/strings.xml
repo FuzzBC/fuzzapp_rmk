@@ -1,0 +1,26 @@
+ <resources>
+     <!-- Strings used for fragments for navigation -->
+
+    <string name="connecting_info">~ CONNECTING INFO ~</string>
+    <string name="label_temp">TEMP</string>
+    <string name="label_hum">HUM</string>
+    <string name="label_lux">LUX</string>
+    <string name="status_na">N/A</string>
+    <string name="status_learning">LEARN</string>
+    <string name="label_amb">AMB</string>
+    <string name="toast_placeholder">_ TOAST _</string>
+    <string name="btn_reset">RESET</string>
+    <string name="btn_disable">DISABLE</string>
+    <string name="btn_theme">THEME</string>
+    <string name="label_brightness">BRIGHTNESS</string>
+     <string name="btn_save_dual_colors">◄    SAVE DUAL COLORS    ►</string>
+    <string name="btn_deselect_all">◯</string>
+    <string name="btn_leds_off">OFF</string>
+    <string name="btn_select_all">•</string>
+    <string name="rgb_placeholder">-</string>
+    <string name="btn_send">➤</string>
+    <string name="btn_debug">DBG</string>
+    <string name="btn_clear">CLR</string>
+    <string name="btn_minus">−</string>
+    <string name="btn_plus">+</string>
+ </resources>

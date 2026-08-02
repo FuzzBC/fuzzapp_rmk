@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Row template for TYPE_TIME / TYPE_DELAY / TYPE_INCREMENTAL / TYPE_BRIGHTNESS.
+  Stepper inline with label; BubbleSeekBar below as visual fill indicator.
+  Track fill shown via bsb_second_track_color left-of-thumb.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:orientation="vertical">
+
+    <View
+        android:id="@+id/row_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="@dimen/set_fakeline_padding"
+        android:layout_marginEnd="@dimen/set_fakeline_padding"
+        android:background="@color/skbar_line_between"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="2dp">
+
+        <!-- Label + stepper row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/row_label"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:letterSpacing="0.09"
+                android:textAllCaps="true"
+                android:textColor="@color/skbar_upper_text"
+                android:textSize="12sp"
+                android:textStyle="bold|italic"
+                tools:ignore="TextContrastCheck"
+                tools:text="BRIGHTNESS" />
+
+            <!-- − value + inline stepper -->
+            <TextView
+                android:id="@+id/row_step_minus"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="−"
+                android:textColor="@color/skbar_settings_title"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                tools:ignore="HardcodedText,TextContrastCheck" />
+
+            <TextView
+                android:id="@+id/row_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/_value_chip"
+                android:gravity="center"
+                android:minWidth="32dp"
+                android:paddingStart="8dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="2dp"
+                android:textAlignment="center"
+                android:textColor="@color/text_default"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                tools:ignore="TextContrastCheck"
+                tools:text="47" />
+
+            <TextView
+                android:id="@+id/row_step_plus"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="+"
+                android:textColor="@color/skbar_settings_title"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                tools:ignore="HardcodedText,TextContrastCheck" />
+
+        </LinearLayout>
+
+        <!-- Seekbar — fill left-of-thumb via second_track -->
+        <com.xw.repo.BubbleSeekBar
+            android:id="@+id/row_seekbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
+            android:paddingStart="6dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="6dp"
+            app:bsb_hide_bubble="true"
+            app:bsb_max="100"
+            app:bsb_min="0"
+            app:bsb_progress="0"
+            app:bsb_second_track_color="@color/skbar_second_track_color"
+            app:bsb_second_track_size="5dp"
+            app:bsb_section_count="1"
+            app:bsb_seek_step_section="false"
+            app:bsb_show_progress_in_float="false"
+            app:bsb_show_section_mark="false"
+            app:bsb_show_section_text="false"
+            app:bsb_show_thumb_text="false"
+            app:bsb_thumb_color="@color/text_default"
+            app:bsb_thumb_radius="5dp"
+            app:bsb_thumb_radius_on_dragging="6dp"
+            app:bsb_touch_to_seek="false"
+            app:bsb_track_color="@color/skbar_track_color"
+            app:bsb_track_size="5dp" />
+
+    </LinearLayout>
+
+</LinearLayout>

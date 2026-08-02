@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Row template for TYPE_SELECTABLE.
+  Inline accordion: label left, value + chevron right.
+  Options expand below in row_options_container, right-aligned.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <View
+        android:id="@+id/row_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="@dimen/set_fakeline_padding"
+        android:layout_marginEnd="@dimen/set_fakeline_padding"
+        android:background="@color/skbar_line_between"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/row_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="9dp">
+
+        <TextView
+            android:id="@+id/row_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:letterSpacing="0.09"
+            android:maxLines="1"
+            android:textAllCaps="true"
+            android:textColor="@color/skbar_upper_text"
+            android:textSize="12sp"
+            android:textStyle="bold|italic"
+            tools:ignore="TextContrastCheck"
+            tools:text="TV ON EFFECT" />
+
+        <TextView
+            android:id="@+id/row_option_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/_value_chip"
+            android:ellipsize="end"
+            android:gravity="end"
+            android:maxLines="1"
+            android:maxWidth="150dp"
+            android:paddingStart="8dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="2dp"
+            android:textAlignment="textEnd"
+            android:textColor="@color/text_default"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            tools:ignore="TextContrastCheck"
+            tools:text="HALF RUN" />
+
+        <TextView
+            android:id="@+id/row_chevron"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="4dp"
+            android:gravity="center"
+            android:text="▾"
+            android:textColor="@color/skbar_settings_title"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            tools:ignore="HardcodedText,TextContrastCheck" />
+
+    </LinearLayout>
+
+    <!-- Options: populated programmatically by SettingsManager._buildOptionRows() -->
+    <LinearLayout
+        android:id="@+id/row_options_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/skbar_whole_settings"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+</LinearLayout>

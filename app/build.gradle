@@ -1,0 +1,113 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdk 34
+    //buildToolsVersion "27"
+    namespace "com.fuzz.colors"
+    defaultConfig {
+        applicationId 'com.fuzz.colors'
+        minSdk 21           // instead of minSdkVersion
+        targetSdk 34        // instead of targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        signingConfig signingConfigs.debug
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            debuggable true
+        }
+    }
+    /* 
+    configurations {
+        all*.exclude module: 'support-v4' // This removes all other versions of `support-v4` if gets duplicated from all the artifacts.
+    }
+    */
+
+    lintOptions {
+        checkReleaseBuilds false
+        // Enable all deprecation warnings
+        abortOnError false
+    }
+
+}
+
+dependencies {
+
+
+
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+
+    // RecyclerView for displaying scrollable lists/grid UI components
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+
+    // Material Components for modern UI widgets and design system
+    implementation 'com.google.android.material:material:1.12.0'
+
+    // Navigation components for in-app navigation (fragments and UI)
+    implementation 'androidx.navigation:navigation-fragment:2.8.6'
+    implementation 'androidx.navigation:navigation-ui:2.8.6'
+
+    // Include all .jar files placed in the libs folder (local dependencies)
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+
+    // AppCompat for backward compatibility of Android UI components
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+
+    // ConstraintLayout for flexible, responsive UI layouts
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // Library for decoding and displaying animated GIFs efficiently
+    implementation 'pl.droidsonroids.gif:android-gif-drawable:1.2.27'
+
+    // Uncomment if you want a color picker UI widget
+    // implementation 'com.github.QuadFlask:color-picker:0.0.15'
+
+    // Testing dependencies for Android instrumentation tests
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'               // JUnit integration for Android tests
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'  // UI testing framework
+
+    // Glide image loading and caching library
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.16.0'  // For Glide annotations (e.g. @GlideModule)
+
+    // Local project modules, assumed custom UI components
+    // implementation project(':signseekbar')         // Custom seekbar library
+    implementation project(':avloadingindicator')  // Custom loading animations
+
+    // Animated VectorDrawable support for backward compatible animated vector graphics
+    implementation 'androidx.vectordrawable:vectordrawable:1.2.0'
+    implementation 'androidx.vectordrawable:vectordrawable-animated:1.2.0'
+
+    // Remove duplicated Material library declaration
+    // implementation 'com.google.android.material:material:1.12.0'  // Already declared above
+
+    // Another local project module
+    implementation project(':library')
+
+    // BubbleSeekBar - a fancy seekbar UI with bubble indicators
+    implementation 'com.github.woxingxiao:BubbleSeekBar:3.20'
+
+    // Unit testing library
+    testImplementation 'junit:junit:4.13.2'
+
+    // AndroidX Test core libraries
+    implementation 'androidx.test:core:1.6.1'
+    implementation 'androidx.test:runner:1.6.2'
+    implementation 'androidx.test:rules:1.6.1'
+}
+
+// Custom task registration to run the batch script before compiling
+tasks.register('executeDeleteBuild', Exec) {                                    // Creates a new Exec type task named executeDeleteBuild
+    workingDir "${rootDir}"                                                    // Instructs Gradle to look for the script in the root project folder
+    commandLine 'cmd', '/c', 'DeleteBuild.bat'                                  // Calls Windows CMD to execute the requested batch routine
+}                                                                              // Ends task block
+
+// Hooking the task into the official Android compilation pipeline
+afterEvaluate {                                                                // Executes configuration rules once the project evaluation completes
+    tasks.named('preBuild').configure {                                        // Targets Android's internal initial compilation setup task
+        dependsOn 'executeDeleteBuild'                                         // Tells Gradle that DeleteBuild.bat must finish executing before building begins
+    }                                                                          // Ends configuration block
+}                                                                              // Ends lifecycle wrapper

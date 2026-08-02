@@ -1,0 +1,45 @@
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <!-- Shared style for every LED map cell (_btn_led_0 … _btn_led_60).
+         Centralises size + chrome so the whole ColorLayout grid can be
+         re-skinned from one place. Background stays @drawable/_btn_led
+         (a <shape> → GradientDrawable) because LEDManager casts it to
+         GradientDrawable at runtime to paint each LED's live colour and
+         animate the selected-ring; do NOT change it to a selector. -->
+    <style name="Widget.Fuzz.LedCell" parent="Widget.AppCompat.Button.Colored">
+        <item name="android:layout_width">@dimen/btn_w</item>
+        <item name="android:layout_height">@dimen/btn_h</item>
+        <item name="android:background">@drawable/_btn_led</item>
+        <item name="android:textColor">@color/colorOnPrimary</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.App.TextInputLayout" parent="@android:style/TextAppearance">
+        <item name="android:textColor">@color/colorAccent</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+
+    <style name="DialogColorPicker" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowNoTitle">true</item>
+
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">false</item>
+
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+
+
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
+</resources>

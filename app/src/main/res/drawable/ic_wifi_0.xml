@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WiFi signal level 0/4. Active bars full, inactive faint. White so the
+     ImageView tint / setColorFilter recolours by strength. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.22"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M4.9,11.3 A9.8,9.8 0 0 1 19.1,11.3" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.22"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M7.1,13.3 A6.9,6.9 0 0 1 16.9,13.3" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.22"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M9.4,15.4 A3.6,3.6 0 0 1 14.6,15.4" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.22"
+        android:pathData="M12,17.4 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0" />
+</vector>

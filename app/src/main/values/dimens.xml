@@ -1,0 +1,11 @@
+<resources>
+    <dimen name="btn_w">40dp</dimen>
+    <dimen name="btn_h">40dp</dimen>
+
+    <dimen name="sign_seek_widh">300dp</dimen>
+    <dimen name="ll_padding">30dp</dimen>
+    <dimen name="sign_button_size">4dp</dimen>
+
+    <dimen name="set_fakeline_padding">10dp</dimen>
+
+</resources>
