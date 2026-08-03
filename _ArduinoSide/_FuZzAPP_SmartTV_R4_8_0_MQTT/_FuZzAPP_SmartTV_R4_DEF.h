@@ -63,12 +63,12 @@ struct CHSV {
 
 /* --- COMPILE-TIME SWITCHES (uncomment to enable) ----------------------------- */
 //  #define ENABLE_EXECUTIONTIME
-//  #define ENABLE_LOG_APP
+    #define ENABLE_LOG_APP
 //  #define ENABLE_LOG_LUX
 //  #define ENABLE_LOG_UDPRAW
 //  #define ENABLE_LOG_BME280
-//  #define ENABLE_LOG_TASK
-//  #define ENABLE_LOG_TASKINFO
+    #define ENABLE_LOG_TASK
+  #define ENABLE_LOG_TASKINFO
 //  #define ENABLE_LOG_LED
 //  #define ENABLE_LOG_LED_TASK
 //  #define ENABLE_LOG_EEPROM
@@ -77,6 +77,10 @@ struct CHSV {
 //  #define ENABLE_LOG_NET
 //  #define ENABLE_LOG_DIF
 //  #define ENABLE_LOG_MQTT
+    // Left on per request, for ongoing live troubleshooting via serial monitor.
+    // ENABLE_LOG_LED / ENABLE_LOG_LED_TASK stay off - they fire every single
+    // animation tick and measurably slow transitions down (confirmed live
+    // during this session's LD/Ld investigation).
 
 /* --- GLOBAL MACROS ----------------------------------------------------------- */
 #define NL              "\n"
@@ -142,6 +146,7 @@ extern const uint8_t LED_FPS_TABLE[LED_FPS_OPTIONS_TOTAL] PROGMEM; /* refresh pe
 #define MOTION_CHECK_TIME    2000    /* ms -- min interval between triggers */
 #define MOTION_TIME_FIX       300    /* ms -- debounce hold */
 #define MOTION_LOG_INDEX_MAX    5    /* event ring-buffer depth */
+#define MOTION_COLLISION_BLOOM_MAX_TICKS 150  /* safety cap -- see T_EFFECT_MOTION_ON_5_TheCollision phase 3 */
 
 /* --- NET MODULE -------------------------------------------------------------- */
 #define NET_CHECK_TIME      30UL     /* seconds -- WiFi health-check period */

@@ -11,8 +11,8 @@ package com.fuzz.colors;
  *      layout switching, background images, shake sensor),
  *      and the Debug dialog.  All real work is delegated to:
  *
- *          UDPs  – UDPSend       (outgoing UDP packets)
- *          UDPr  – UDPReceive    (incoming UDP packets)
+ *          DATAs  – DataSend       (outgoing UDP packets)
+ *          DATAr  – DataReceive    (incoming UDP packets)
  *          LED   – LEDManager    (LED state & UI)
  *          SET   – SettingsManager (settings state & UI)
  *          STS   – StatusManager  (system status & sensors)
@@ -20,22 +20,22 @@ package com.fuzz.colors;
  *  Instantiation order in onCreate():
  *      1. setContentView
  *      2. _Init_Global()  ← binds Main's own views
- *      3. UDPs = new UDPSend(this)
- *      4. STS  = new StatusManager(this, null, null, UDPs)  ← LED/SET injected later
- *      5. SET  = new SettingsManager(this, UDPs, STS)
- *      6. LED  = new LEDManager(this, UDPs, STS, SET)
+ *      3. DATAs = new DataSend(this)
+ *      4. STS  = new StatusManager(this, null, null, DATAs)  ← LED/SET injected later
+ *      5. SET  = new SettingsManager(this, DATAs, STS)
+ *      6. LED  = new LEDManager(this, DATAs, STS, SET)
  *      7. STS.setDependencies(LED, SET)  ← complete circular injection
  *      8. SET.init()  ← must come before LED.init() (LED reads SET)
  *      9. LED.init()
  *     10. STS.init()
- *     11. UDPr = new UDPReceive(this, LED, SET, STS)
- *     12. UDPr.init()         ← open socket
- *     13. UDPs.setSocket(UDPr.getSocket())
- *     14. UDPr.setup()        ← start receive loop
- *     15. UDPs.sendWelcome()  ← handshake
+ *     11. DATAr = new DataReceive(this, LED, SET, STS)
+ *     12. DATAr.init()         ← open socket
+ *     13. DATAs.setSocket(DATAr.getSocket())
+ *     14. DATAr.setup()        ← start receive loop
+ *     15. DATAs.sendWelcome()  ← handshake
  *
  *  Reconnect resync:
- *      onResume() calls UDPr.reconnect() whenever the socket was lost
+ *      onResume() calls DATAr.reconnect() whenever the socket was lost
  *      (WiFi drop, app backgrounded long enough to be torn down, etc.).
  *      Right after, _ResyncDeviceState() re-sends sendGetColor(),
  *      sendSetting(-1, …) and sendSelectLed(…) so the app's local
@@ -63,7 +63,7 @@ package com.fuzz.colors;
  *      wrrwwrr        |RSSI| dBm, WiFi state, RTC state
  *      teeeeeeee      Device epoch (0 = never synced)
  *      xffff          Lux adaptation factor, percent
- *      fffff          Fault bitmask (see UDPReceive.FAULT_*)
+ *      fffff          Fault bitmask (see DataReceive.FAULT_*)
  *      err            EEPROM write completed (00 = OK)
  *
  *      ── Sent to Arduino ────────────────────────────────────
@@ -84,8 +84,8 @@ package com.fuzz.colors;
  *
  *  Short aliases used in comments across all files:
  *      Main  = MainActivity   (this file)
- *      UDPs  = UDPSend
- *      UDPr  = UDPReceive
+ *      DATAs  = DataSend
+ *      DATAr  = DataReceive
  *      LED   = LEDManager
  *      SET   = SettingsManager
  *      STS   = StatusManager
@@ -161,18 +161,18 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /* ====================================================== */
 
     /**
-     * UDPs – UDPSend
+     * DATAs – DataSend
      * Handles all outgoing UDP packets to the Arduino.
      * Created first because all other classes depend on it for sending.
      */
-    public UDPSend UDPs;
+    public DataSend DATAs;
 
     /**
-     * UDPr – UDPReceive
+     * DATAr – DataReceive
      * Owns the DatagramSocket and runs the background receive loop.
      * Parses every incoming packet and dispatches to LED / SET / STS.
      */
-    public UDPReceive UDPr;
+    public DataReceive DATAr;
 
     /**
      * LED – LEDManager
@@ -283,7 +283,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** Top-left link indicator: Arduino board icon + WiFi signal-strength icon. */
     public ImageView IMG_ArdIcon, IMG_WifiIcon;
 
-    /** Voltage readout, top-left of TopItems - set by UDPr._recvVoltage() */
+    /** Voltage readout, top-left of TopItems - set by DATAr._recvVoltage() */
     public TextView TEXT_VoltInfo;
 
     /** Animated loading spinner (AVLoadingIndicatorView library) */
@@ -389,17 +389,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         _Init_Global(); // Bind UI elements and internal variables
 
         // ── 2. Construct subsystems (order matters) ──────────
-        // UDPs must exist before STS / SET / LED so they can call send methods
-        UDPs = new UDPSend(this); // Instantiate UDP sending manager
+        // DATAs must exist before STS / SET / LED so they can call send methods
+        DATAs = new DataSend(this); // Instantiate UDP sending manager
 
-        // STS needs UDPs for sendAmbientMode; LED and SET injected later
-        STS  = new StatusManager(this, null, null, UDPs); // Instantiate status manager
+        // STS needs DATAs for sendAmbientMode; LED and SET injected later
+        STS  = new StatusManager(this, null, null, DATAs); // Instantiate status manager
 
-        // SET needs UDPs and STS
-        SET  = new SettingsManager(this, UDPs, STS); // Instantiate settings manager
+        // SET needs DATAs and STS
+        SET  = new SettingsManager(this, DATAs, STS); // Instantiate settings manager
 
-        // LED needs UDPs, STS, SET
-        LED  = new LEDManager(this, UDPs, STS, SET); // Instantiate LED manager
+        // LED needs DATAs, STS, SET
+        LED  = new LEDManager(this, DATAs, STS, SET); // Instantiate LED manager
 
         // Now inject LED and SET back into STS to complete the graph
         STS.setDependencies(LED, SET); // Resolve circular dependency references
@@ -419,14 +419,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         _InitBackgroundImages(); // Render background graphics/animations
 
         // ── 7. Open UDP socket and start receive loop ────────
-        UDPr = new UDPReceive(this, LED, SET, STS); // Instantiate UDP receiver listener
-        UDPr.init();                          // open DatagramSocket // Bind network socket
-        UDPs.setSocket(UDPr.getSocket());     // share socket with UDPs // Provide active socket to sender
-        UDPr.setSender(UDPs);                 // route "#SSR" command ACKs back to UDPs // Register back-reference
-        UDPr.setup();                         // clear console + start loop // Reset receive state machine
+        DATAr = new DataReceive(this, LED, SET, STS); // Instantiate UDP receiver listener
+        DATAr.init();                          // open DatagramSocket // Bind network socket
+        DATAs.setSocket(DATAr.getSocket());     // share socket with DATAs // Provide active socket to sender
+        DATAr.setSender(DATAs);                 // route "#SSR" command ACKs back to DATAs // Register back-reference
+        DATAr.setup();                         // clear console + start loop // Reset receive state machine
 
         // ── 8. Initialize MQTT Instance ──────────────────────
-        MQTT = new MqttTransport(this, UDPr); // Instantiate MQTT fallback transport
+        MQTT = new MqttTransport(this, DATAr); // Instantiate MQTT fallback transport
         // NOTE: _connectTransport() removed from here because onResume() executes right after onCreate()!
 
         // ── 8b. Restore telnet console if it was left ON ──────
@@ -462,7 +462,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         UpdateChecker.check(this, new UpdateChecker.Callback() {
             @Override
             public void onUpdateAvailable(String tagName, int versionCode, String apkUrl, String releaseNotes) {
-                _ShowUpdateDialog(tagName, apkUrl);
+                // Matches app/build.gradle's own versionName formula ("1." + versionCode,
+                // zero-padded to 3 digits) so what's shown here is the same number the
+                // user would see in the system app-info screen after installing it -
+                // not the raw GitHub tag, which is just an internal build counter.
+                String displayVersion = "1." + String.format(java.util.Locale.US, "%03d", versionCode);
+                _ShowUpdateDialog(displayVersion, apkUrl, tagName, releaseNotes);
             }
 
             @Override
@@ -477,23 +482,42 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         });
     }
 
-    private void _ShowUpdateDialog(String tagName, String apkUrl) {
-        new AlertDialog.Builder(this)
-                .setTitle("Update available")
-                .setMessage("A new version (" + tagName + ") is available. Download and install it now?")
-                .setPositiveButton("Update", (d, w) -> _StartUpdateDownload(apkUrl, tagName))
-                .setNegativeButton("Later", null)
-                .setCancelable(true)
-                .show();
+    private void _ShowUpdateDialog(String displayVersion, String apkUrl, String tagName, String releaseNotes) {
+        new UpdatePopup(this).showAvailable(getWindow().getDecorView(), displayVersion, releaseNotes,
+                () -> _StartUpdateDownload(apkUrl, displayVersion, tagName));
     }
 
     /**
-     * Kicks off the APK download. On API 26+, installing from a downloaded
-     * file requires the user to have granted "install unknown apps" for
-     * this app first - if not granted, sends them straight to that settings
-     * screen instead of downloading (they can just tap Update again after).
+     * "What's new" - shows the bundled CHANGELOG.md (assets/CHANGELOG.md,
+     * copied in from the repo root at build time; see AGENTS.md for the
+     * rule on keeping it updated). Tapped from the "V: 1.XXX" label.
      */
-    private void _StartUpdateDownload(String apkUrl, String tagName) {
+    private void _ShowChangelog() {
+        String text;
+        try (java.io.InputStream in = getAssets().open("CHANGELOG.md")) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            text = out.toString("UTF-8");
+        } catch (java.io.IOException e) {
+            text = null;
+        }
+        new UpdatePopup(this).showChangelog(getWindow().getDecorView(), text);
+    }
+
+    /**
+     * Kicks off the APK download behind a live progress card (percent, size,
+     * speed, Cancel). On API 26+, installing from a downloaded file requires
+     * the user to have granted "install unknown apps" for this app first -
+     * if not granted, sends them straight to that settings screen instead of
+     * downloading (they can just tap Update again after).
+     *
+     * @param displayVersion  User-facing "1.XXX" string shown in the popups.
+     * @param tagName         Raw GitHub tag (e.g. "v2") - only used for the
+     *                        downloaded file's name, not shown to the user.
+     */
+    private void _StartUpdateDownload(String apkUrl, String displayVersion, String tagName) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 && !getPackageManager().canRequestPackageInstalls()) {
             _Toast("Allow \"install unknown apps\" for FuZz LED, then tap Update again");
@@ -503,8 +527,40 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }
 
         if (updateInstaller == null) updateInstaller = new UpdateInstaller(this);
-        updateInstaller.download(apkUrl, tagName);
-        _Toast("Downloading update " + tagName + "...");
+        UpdatePopup progressPopup = new UpdatePopup(this);
+        UpdatePopup.Handle handle = progressPopup.showProgress(getWindow().getDecorView(), displayVersion,
+                () -> {
+                    updateInstaller.cancel();
+                    _Toast("Update cancelled");
+                });
+
+        updateInstaller.download(apkUrl, tagName, new UpdateInstaller.ProgressListener() {
+            @Override
+            public void onProgress(int percent, long downloaded, long total, double speedBps) {
+                if (percent < 0) {
+                    handle.setStatus(_humanBytes(downloaded) + " downloaded...");
+                } else {
+                    handle.setProgress(percent, downloaded, total, speedBps);
+                }
+            }
+
+            @Override
+            public void onComplete() {
+                progressPopup.dismiss();
+            }
+
+            @Override
+            public void onFailed(String reason) {
+                progressPopup.dismiss();
+                _Toast("Update download failed: " + reason);
+            }
+        });
+    }
+
+    private String _humanBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format(java.util.Locale.US, "%.0f KB", bytes / 1024.0);
+        return String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
     /**
@@ -518,13 +574,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         lastActiveTransport = 0;                                 // force a resync on the first live transport
 
         if (_IsWifiConn()) {
-            if (!UDPr.isSocketOpen()) {                          // (re)bind the receive socket
-                UDPr.reconnect();
-                UDPs.setSocket(UDPr.getSocket());
+            if (!DATAr.isSocketOpen()) {                          // (re)bind the receive socket
+                DATAr.reconnect();
+                DATAs.setSocket(DATAr.getSocket());
             }
-            UDPr.startReceiving();
-            UDPs.sendWelcomeUdpDirect();                         // probe local first (never routed to cloud)
-            UDPr.markUdpProbe();                                 // arm the first-contact grace
+            DATAr.startReceiving();
+            DATAs.sendWelcomeUdpDirect();                         // probe local first (never routed to cloud)
+            DATAr.markUdpProbe();                                 // arm the first-contact grace
         } else {
             if (MQTT != null) MQTT.connect();                   // off WiFi -> straight to cloud
         }
@@ -552,17 +608,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         if (!_IsWifiConn()) {
             if (MQTT != null) MQTT.connect();
             active = _MqttConnected() ? 2 : 0;
-        } else if (UDPr.isAvailable()) {
+        } else if (DATAr.isUdpAvailable()) {
             active = 1;                                          // local proven live
         } else {
             if (MQTT != null) MQTT.connect();                   // fall over to cloud
             // Probe the LAN, but do NOT arm the grace here: while on cloud,
             // availability must flip back to local ONLY on a real UDP reply
             // (lastUdpRxTime), never merely because we just sent a probe -
-            // otherwise isAvailable() would read true most of the time and
+            // otherwise isUdpAvailable() would read true most of the time and
             // route commands into a dead socket. One probe reaches the board
             // if it's reachable; its reply lands on the socket and promotes us.
-            if (UDPr.isSocketOpen()) UDPs.sendWelcomeUdpDirect();
+            if (DATAr.isSocketOpen()) DATAs.sendWelcomeUdpDirect();
             active = _MqttConnected() ? 2 : 0;
         }
 
@@ -608,16 +664,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      * "selected"), so it must be re-pushed rather than re-requested.
      */
     private void _ResyncDeviceState() {
-        UDPs.sendGetColor();
-        UDPs.sendSetting(-1, SET.SET_Info, SET.SET_TOTAL);
-        UDPs.sendSelectLed(LED.LED_Selected, LED.LED_TOTAL);
+        DATAs.sendGetColor();
+        DATAs.sendSetting(-1, SET.SET_Info, SET.SET_TOTAL);
+        DATAs.sendSelectLed(LED.LED_Selected, LED.LED_TOTAL);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         transportHandler.removeCallbacks(transportSupervisor);   // stop auto-switching while backgrounded
-        UDPr.stopReceiving();
+        DATAr.stopReceiving();
         SHAKE_SensManager.unregisterListener(this);
     }
 
@@ -625,7 +681,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     protected void onDestroy() {
         super.onDestroy();
         transportHandler.removeCallbacks(transportSupervisor);
-        UDPr.destroy();
+        DATAr.destroy();
         if (MQTT != null) MQTT.disconnect();
         if (TELNET != null) TELNET.setEnabled(false);  // close both telnet sockets/threads
         if (updateInstaller != null) updateInstaller.unregister();
@@ -666,7 +722,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 int[] rgbR = _HexToRgb(randHex.substring(6, 12));
 
                 // Send shake dual colour
-                UDPs.sendShakeDualColor(
+                DATAs.sendShakeDualColor(
                         rgbL[LED._R], rgbL[LED._G], rgbL[LED._B],
                         rgbR[LED._R], rgbR[LED._G], rgbR[LED._B]);
 
@@ -774,6 +830,25 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         IMG_ArdIcon      = findViewById(R.id._ard_icon);
         IMG_WifiIcon     = findViewById(R.id._wifi_icon);
         updateWifiSignal(0, 0);   // start greyed-out until the first 'w' packet
+
+        // Long-press the status label to force a fresh reconnect attempt
+        // (same sequence as onResume()/a cold start), for when the link is
+        // stuck (e.g. CLOUD - NO REPLY) and the user wants to retry now
+        // rather than wait for the next supervisor tick.
+        TEXT_ConnectInfo.setOnLongClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            _Toast("Retrying connection...");
+            _connectTransport("manual retry");
+            return true;
+        });
+
+        // Installed-version label, bottom-left above the dual-colour swatch row -
+        // tap it to see "What's new" (bundled CHANGELOG.md, see AGENTS.md)
+        TextView versionLabel = findViewById(R.id._version_label);
+        if (versionLabel != null) {
+            versionLabel.setText("V: " + BuildConfig.VERSION_NAME);
+            versionLabel.setOnClickListener(v -> _ShowChangelog());
+        }
 
         // Toast
         LAY_TOAST     = findViewById(R.id.ToastLayout);
@@ -1271,10 +1346,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (target == LAY_SET) {
             _SetLayout(LAY_SET);
-            UDPs.sendSetting(-1, SET.SET_Info, SET.SET_TOTAL);
+            DATAs.sendSetting(-1, SET.SET_Info, SET.SET_TOTAL);
         } else if (target == LAY_LEDS) {
             _SetLayout(LAY_LEDS);
-            UDPs.sendGetColor();
+            DATAs.sendGetColor();
         } else {
             _SetLayout(LAY_CONSOLE);
         }
@@ -1407,7 +1482,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Show the debug-item list dialog.
-     * Tapping an item sends a debug request to the Arduino via UDPs.
+     * Tapping an item sends a debug request to the Arduino via DATAs.
      *
      * Items come from SET.SET_Debug[].
      * BTN_Debug (DBG, Term tab) triggers this from _Init_Global().
@@ -1438,7 +1513,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 ((android.widget.BaseAdapter) gv.getAdapter()).notifyDataSetChanged();
                 return;
             }
-            UDPs.sendDebug(position);
+            DATAs.sendDebug(position);
             _Toast(" DEBUG  {" + SET.SET_Debug[position] + "}");
             _Console(false, "►►",
                     "DEBUG -> {{#C}" + SET.SET_Debug[position] + "{##}}");
@@ -1450,7 +1525,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             // summary; this is the only way to see the actual per-cycle
             // breakdown from the app. Reply lands in applyDiffuserHistory().
             if ("DIFFUSER".equals(SET.SET_Debug[position])) {
-                UDPs.sendDiffuserHistory();
+                DATAs.sendDiffuserHistory();
             }
         });
 
@@ -1549,7 +1624,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /**
      * Append one framed log line received from the Arduino.
      *
-     * Called by UDPr._recvMsg() once the '*' envelope has been decoded. Any
+     * Called by DATAr._recvMsg() once the '*' envelope has been decoded. Any
      * hole in the seq run is reported first, as its own WRN line, so a lost
      * datagram is visible instead of silently missing.
      *
@@ -1714,9 +1789,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /**
      * Stop the spinner tinted to reflect a specific ACK result, so a
      * clamped/blocked/locked/etc. command reads differently at a glance
-     * than a plain success. Called from UDPs.ackResolve().
+     * than a plain success. Called from DATAs.ackResolve().
      *
-     * @param color  Resolved color, see UDPSend._colorForResult().
+     * @param color  Resolved color, see DataSend._colorForResult().
      */
     public void _LoadingBarResult(int color) {
         AVLoading_Handler.removeCallbacksAndMessages(null);
@@ -1737,7 +1812,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         // No-op: the transport supervisor is now persistent (it self-selects
         // local/cloud and reschedules), so a first confirmation must NOT cancel
         // it — that would disable later failover/recovery. Kept for the existing
-        // UDPr call site. Supervision is torn down only in onPause()/onDestroy().
+        // DATAr call site. Supervision is torn down only in onPause()/onDestroy().
     }
 
     public void _ClearBootLoading() {
@@ -1822,7 +1897,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Check whether the device currently has an active WiFi connection.
-     * Used by UDPr.isAvailable() and the onResume() flow.
+     * Used by DATAr.isUdpAvailable() and the onResume() flow.
      *
      * @return true if WiFi is connected.
      */
@@ -1881,14 +1956,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     /**
-     * Thin wrapper – delegates to UDPr.isAvailable().
+     * Thin wrapper – delegates to DATAr.isUdpAvailable().
      * Kept here so subsystems can call Main._UDP_Available() without
-     * needing a direct reference to UDPr.
+     * needing a direct reference to DATAr.
      *
      * @return true if the UDP socket is open and WiFi is connected.
      */
     public boolean _UDP_Available() {
-        return UDPr != null && UDPr.isAvailable();
+        return DATAr != null && DATAr.isUdpAvailable();
     }
 
     /**
@@ -1900,7 +1975,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * A command can go out if EITHER transport is up: local UDP (WiFi) or
-     * the MQTT cloud link. Used by UDPs to guard sends.
+     * the MQTT cloud link. Used by DATAs to guard sends.
      *
      * @return true if UDP or MQTT can carry a packet right now.
      */
@@ -1910,7 +1985,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Publish one already-enveloped command packet over the cloud link.
-     * Called by UDPs._transmit() when the local UDP path is unavailable.
+     * Called by DATAs._transmit() when the local UDP path is unavailable.
      *
      * @param packet  Exact wire string.
      */
@@ -1921,15 +1996,22 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /**
      * Decide + push the status label from the current WiFi/UDP/MQTT state.
      * Single source of truth for onResume() and _connectTransport(), so the
-     * two never drift apart. (UDPr._confirmLive() covers the other case:
+     * two never drift apart. (DATAr._confirmLive() covers the other case:
      * it's called from a receive path where liveness is already proven.)
      */
     private void _refreshTransportStatus() {
-        if (UDPr == null) return;
-        if (_UDP_Available())      UDPr._setStatus(UDPReceive.Status.Connected);
-        else if (_MqttConnected()) UDPr._setStatus(UDPReceive.Status.Cloud);
-        else if (_IsWifiConn())    UDPr._setStatus(UDPReceive.Status.NoConnection);
-        else                       UDPr._setStatus(UDPReceive.Status.NoWifi);
+        if (DATAr == null) return;
+        // Cloud is only reported once the board has actually replied over
+        // it (DATAr.isMqttArduinoAlive()) - a live MQTT SESSION alone
+        // (_MqttConnected()) just means the phone reached the broker, not
+        // that the Arduino is on the other end. Runs every SUPERVISE_MS, so
+        // this also self-corrects Cloud -> CloudNoReply if the board goes
+        // quiet over cloud without the session itself dropping.
+        if (_UDP_Available())                 DATAr._setStatus(DataReceive.Status.Connected);
+        else if (DATAr.isMqttArduinoAlive())    DATAr._setStatus(DataReceive.Status.Cloud);
+        else if (_MqttConnected())             DATAr._setStatus(DataReceive.Status.CloudNoReply);
+        else if (_IsWifiConn())                DATAr._setStatus(DataReceive.Status.NoConnection);
+        else                                   DATAr._setStatus(DataReceive.Status.NoWifi);
     }
 
     /* ====================================================== */

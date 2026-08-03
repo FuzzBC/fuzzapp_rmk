@@ -6127,7 +6127,7 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
         }
 
         if (!stillMoving) {
-            TASK.Phase++; TASK.ParamA = 0;                                   // Move to Bloom - State
+            TASK.Phase++; TASK.ParamA = 0; TASK.ParamB = 0;                  // Move to Bloom - State (ParamB: bloom-tick counter, see phase 3)
         } else {
             TASK.ParamA++; LED::Show();                                      // Step inward and update - State
             APP::updDeltaColors();                                 // Sync UI - Sync
@@ -6163,8 +6163,42 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
         if (!N) {
             TASK.Phase = taskDone;                                       // Collision complete - State
         } else {
-            LED::Show();                                                 // Output changes - Output
-            APP::updDeltaColors();                                 // Update UI - Sync
+            TASK.ParamB++;                                               // Bloom-tick counter - State
+            if (TASK.ParamB > MOTION_COLLISION_BLOOM_MAX_TICKS) {
+                // Safety cap: at least one pixel (confirmed live: a single HB
+                // pixel, reproducibly) can fail to converge here and leave N
+                // true forever. That stalls this task in an endless per-tick
+                // colour-sync resend -- confirmed live to both starve the
+                // command socket (multi-second command delays) and leak
+                // ~40-50B/s of RAM (own-buffer never freed on the repeated
+                // send), eventually crashing the board. Whatever pixel hasn't
+                // converged by now gets snapped straight to its target instead
+                // of stepped, so this phase always terminates.
+                for (int z = 0; z < 3; z++) {
+                    if (z == 1 && isBedOnly) continue;
+                    int num = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM);
+                    int mid = num >> 1;
+                    for (int i = 0; i < num; i++) {
+                        int p = (z == 0) ? LED::BED(i) : (z == 1 ? LED::COM(i) : LED::HB(i));
+                        int dist = abs(i - mid);
+                        int target = baseBr;
+                        if (useDiv) {
+                            int effectiveDist = (z == 2) ? (dist / hbScale) : dist;
+                            int reduction = (baseBr * (effectiveDist * 15)) / 100;
+                            target = baseBr - reduction;
+                            if (target < 0) target = 0;
+                        }
+                        LED::State.CurrentBrightness[p] = target;
+                        LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, target, false);
+                    }
+                }
+                LED::Show();
+                APP::updDeltaColors();
+                TASK.Phase = taskDone;
+            } else {
+                LED::Show();                                                 // Output changes - Output
+                APP::updDeltaColors();                                 // Update UI - Sync
+            }
         }
     }
 }
@@ -6964,6 +6998,7 @@ void cmdChangeBrightness(char *buff, int len) {
 
 	// * Motion
 	if (isMotion) {
+		APP::State.LastResult = APP_ACK_BLOCKED;
 		#ifdef ENABLE_LOG_APP
 			PRNT::_print(PRNT::formatMSG("%32s : motion active, brightness change ignored" NL, "ChangeBrightness"));
 		#endif
@@ -7048,16 +7083,20 @@ void cmdChangeColor(char *buff, int len) {
 	TSK::KillTasksAvoidLocked("ChangeColor");
     TSK::AddTask("ChangeColor", "T_SMOOTH_CHANGE", LED::T_SMOOTH_CHANGE, TASK_MS, EE::Get(EE_TV_ON_BR_CL_DEL), 20, false);
 	
-	// * HB Enable DualColor
-	EE::Set(EE_HB_DUAL_COLOR, 0);
+	// * HB Enable DualColor -- only touch the setting (and resync the app's
+	// full settings view) when it's actually flipping; every plain colour
+	// command used to do this unconditionally, which meant a 200+ byte
+	// full-settings resend on every single colour change even when dual
+	// colour was already off.
+	if (EE::Get(EE_HB_DUAL_COLOR) != 0) {
+		EE::Set(EE_HB_DUAL_COLOR, 0);
+		updSettings(); // *
+	}
 
 	// * Push to diffuser now if a source is active -- same reasoning as ChangeDualColor:
 	// LED::State.CurrentColor hasn't faded to the new colour yet, so pass it straight through.
 	DIF_Colorx colorOverride = { r, g, b, r, g, b };
 	DIF::PushLiveIfActive(&colorOverride);
-
-	// * Send new setting
-	updSettings(); // *
 
 	// * Motion - disable
 	MOTION::State.Status = motOFF;
@@ -7084,14 +7123,23 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 	}
 
 	if (UDPRAW::State.Status) {
+		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
 		PRNT::_print(PRNT::formatMSG("%~32s # UDPRAW active, command ignored" NL, "ChangeDualColor"));
 		return;
 	}
 
 	if (APP::Am.Status) {
+		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
 		PRNT::_print(PRNT::formatMSG("%~32s # Ambient Mode active, command ignored" NL, "ChangeDualColor"));
+		return;
+	}
+
+	if (MOTION::State.Status > motON) {                                   // COM or BED currently triggered
+		APP::State.LastResult = APP_ACK_BLOCKED;
+		// * LOG
+		PRNT::_print(PRNT::formatMSG("%~32s # motion active, command ignored" NL, "ChangeDualColor"));
 		return;
 	}
 
@@ -7116,8 +7164,14 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 	// * Kill all tasks
 	TSK::KillTasksAvoidLocked("ChangeDualColor");
 
-	// * HB Enable DualColor
-	EE::Set(EE_HB_DUAL_COLOR, 1);
+	// * HB Enable DualColor -- only when it's actually flipping (see the
+	// matching note in cmdChangeColor); once dual colour is already on,
+	// repeated LD/Ld calls (e.g. shake) don't need to re-flag it and
+	// re-send the full 50-setting dump every time.
+	if (EE::Get(EE_HB_DUAL_COLOR) != 1) {
+		EE::Set(EE_HB_DUAL_COLOR, 1);
+		updSettings(); // *
+	}
 
 	// * Push to diffuser now if a source is active -- LED::State.CurrentColor hasn't faded
 	// to the new colours yet, so pass them straight through instead of deriving live.
@@ -7126,9 +7180,6 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 		LED::State.TargetColor[1].r, LED::State.TargetColor[1].g, LED::State.TargetColor[1].b
 	};
 	DIF::PushLiveIfActive(&dualOverride);
-
-	// * Send new setting
-	updSettings(); // *
 	
 	// * Task
 	if (shakeMode) {
@@ -7329,9 +7380,10 @@ void cmdSettings(char *buff, int len) {
 void cmdAmbientMode(char *buff, int len) {
 	// 0 - turn off, 1 - turn on
 	if (UDPRAW::State.Status) {
+		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
 		PRNT::_print(PRNT::formatMSG("%~32s # UDPRAW active, command ignored" NL, "APP_AmbientMode"));
-		
+
 		return;
 	}
 
@@ -7385,10 +7437,12 @@ void cmdAmbientMode(char *buff, int len) {
 
 					return;
 				} else {
+					APP::State.LastResult = APP_ACK_BLOCKED;
 					// * LOG
 					PRNT::_print(PRNT::formatMSG("%~32s # TV on, command ignored" NL, "APP_AmbientMode", TV::State.Status));
 				}
 			} else {
+				APP::State.LastResult = APP_ACK_BLOCKED;
 				// * LOG
 				PRNT::_print(PRNT::formatMSG("%~32s # motion active, command ignored [motion:%d bed:%l]" NL, "APP_AmbientMode", MOTION::State.Status, MOTION::PinStatus(MOTION_PIN_BED)));
 			}
@@ -10988,6 +11042,20 @@ void Setup() {
     MQTT_Cli.setCallback(Callback);                        // RX hook - Setup
     MQTT_Cli.setBufferSize(MQTT_BUF_SIZE);                      // 512 to fit packets - Setup
     MQTT_Cli.setKeepAlive(MQTT_KEEPALIVE);                      // Keepalive - Setup
+
+    // Both default to effectively-unbounded blocking on this board: the raw
+    // TCP+TLS handshake goes through the ESP32-S3 co-processor (WiFiSSLClient::
+    // connect() -- _connectionTimeout defaults to 0 = "let the modem decide"),
+    // and PubSubClient's own CONNACK wait defaults to MQTT_SOCKET_TIMEOUT=15s.
+    // Reconnect() calls both synchronously from loop(), so while the broker is
+    // unreachable/slow (e.g. right after a fresh flash, before WiFi/cloud have
+    // settled) every retry can freeze loop() -- and therefore LED refresh, the
+    // lux sampling task, and TV on/off detection -- for a long, unbounded
+    // stretch, repeating every MQTT_RETRY_MS. Capping both bounds the worst
+    // case to a few seconds per attempt instead.
+    MQTT_Net.setConnectionTimeout(4000);                    // ms - TCP+TLS handshake cap - Setup
+    MQTT_Cli.setSocketTimeout(4);                           // s  - CONNACK wait cap - Setup
+
     if (NET::IsConnected()) Reconnect();                    // First attempt - Action
 }
 

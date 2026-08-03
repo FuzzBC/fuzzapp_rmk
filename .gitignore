@@ -130,6 +130,17 @@ android.lock
 # =========================
 *.zip
 
+# =========================
+# GitHub release publish token (local secret, never commit)
+# =========================
+/github_release.properties
+
+# =========================
+# Build-time copy of the root CHANGELOG.md (see copyChangelog in
+# app/build.gradle) - root CHANGELOG.md is the source of truth, not this.
+# =========================
+/app/src/main/assets/CHANGELOG.md
+
 # Python cache
 __pycache__/
 *.pyc

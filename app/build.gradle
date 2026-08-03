@@ -1,5 +1,20 @@
 apply plugin: 'com.android.application'
 
+// Version state lives in version.properties (committed - it's the current
+// released version, not a secret) so a build can read it, and the
+// bumpVersionForNextBuild task (bottom of this file) can increment it after
+// a successful release build without editing this file by hand.
+def versionPropsFile = file("${rootDir}/version.properties")
+def versionProps = new Properties()
+versionProps.load(new FileInputStream(versionPropsFile))
+// -PtestVersionCode=N overrides for a one-off throwaway build (e.g. to
+// install an "older" build for testing the update flow) without ever
+// touching version.properties itself.
+def appVersionCode = project.hasProperty('testVersionCode')
+        ? project.property('testVersionCode').toInteger()
+        : versionProps['versionCode'].toInteger()
+def appVersionName = "1." + String.format("%03d", appVersionCode)
+
 android {
     compileSdk 34
     //buildToolsVersion "27"
@@ -8,8 +23,8 @@ android {
         applicationId 'com.fuzz.colors'
         minSdk 21           // instead of minSdkVersion
         targetSdk 34        // instead of targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         signingConfig signingConfigs.debug
     }
@@ -19,6 +34,9 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             debuggable true
         }
+    }
+    buildFeatures {
+        buildConfig true // AGP 8+ disables this by default; MainActivity reads BuildConfig.VERSION_NAME
     }
     /* 
     configurations {
@@ -105,9 +123,49 @@ tasks.register('executeDeleteBuild', Exec) {                                    
     commandLine 'cmd', '/c', 'DeleteBuild.bat'                                  // Calls Windows CMD to execute the requested batch routine
 }                                                                              // Ends task block
 
-// Hooking the task into the official Android compilation pipeline
+// Bundles the root CHANGELOG.md into the app's assets on every build, so the
+// in-app "What's new" screen (tap the "V: 1.XXX" label) always ships with
+// whatever's currently committed - see CLAUDE.md for the update-it rule.
+tasks.register('copyChangelog', Copy) {
+    from "${rootDir}/CHANGELOG.md"
+    into "${projectDir}/src/main/assets"
+}
+
+// Publishes the just-built release APK as a GitHub release (see publish_release.ps1).
+// Only wired to the release variant - debug/Run-button builds never trigger this.
+tasks.register('publishReleaseToGitHub', Exec) {
+    workingDir "${rootDir}"
+    commandLine 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'publish_release.ps1'
+}
+
+// Increments version.properties for the *next* build, after this one has
+// already been built and published with the current number. Runs last in
+// the chain so the just-published release always reflects what was actually
+// built, never a version bumped out from under it.
+tasks.register('bumpVersionForNextBuild') {
+    doLast {
+        def next = appVersionCode + 1
+        versionPropsFile.text = "versionCode=${next}\n"
+        println "Bumped versionCode ${appVersionCode} -> ${next} (next build will be 1.${String.format('%03d', next)})"
+    }
+}
+
+// Hooking the tasks into the official Android compilation pipeline
 afterEvaluate {                                                                // Executes configuration rules once the project evaluation completes
     tasks.named('preBuild').configure {                                        // Targets Android's internal initial compilation setup task
         dependsOn 'executeDeleteBuild'                                         // Tells Gradle that DeleteBuild.bat must finish executing before building begins
+        dependsOn 'copyChangelog'                                              // Keep the bundled "What's new" text in sync with the repo
     }                                                                          // Ends configuration block
+    tasks.named('assembleRelease').configure {
+        finalizedBy 'publishReleaseToGitHub'                                   // Auto-publish once a release APK is actually built
+    }
+    tasks.named('publishReleaseToGitHub').configure {
+        finalizedBy 'bumpVersionForNextBuild'                                  // Then roll the counter forward
+    }
+    // finalizedBy runs regardless of the finalized task's outcome - without this
+    // guard, a failed publish (bad token, network hiccup, script bug) still
+    // burns a version number with nothing actually uploaded for it.
+    tasks.named('bumpVersionForNextBuild').configure {
+        onlyIf { tasks.named('publishReleaseToGitHub').get().state.failure == null }
+    }
 }                                                                              // Ends lifecycle wrapper

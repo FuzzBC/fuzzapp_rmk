@@ -194,7 +194,7 @@ public class DiffuserUsagePopup {
         // into its refill history right now and reset the accumulator, for
         // when the user tops it off proactively rather than waiting for an
         // actual out-of-water drop (the only other thing that finalizes a
-        // cycle). See UDPSend.sendDiffuserManualRefill() / diffuser "Dr".
+        // cycle). See DataSend.sendDiffuserManualRefill() / diffuser "Dr".
         // Gated behind a 5-second press-and-hold (with a filling progress
         // overlay) rather than a plain tap, since it resets tracked usage
         // history and shouldn't be triggerable by an accidental touch.
@@ -344,7 +344,7 @@ public class DiffuserUsagePopup {
                 refillHoldAnimator = null;
                 if (ctx instanceof MainActivity) {
                     MainActivity main = (MainActivity) ctx;
-                    main.UDPs.sendDiffuserManualRefill();
+                    main.DATAs.sendDiffuserManualRefill();
                     main._Toast("Diffuser marked as refilled");
                 }
                 if (popup != null) popup.dismiss();

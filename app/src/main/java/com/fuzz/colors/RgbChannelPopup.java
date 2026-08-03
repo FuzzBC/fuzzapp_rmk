@@ -15,7 +15,7 @@ package com.fuzz.colors;
  *  anything over UDP - it only reports the value back to the
  *  caller so it can be written into the pending custom-RGB
  *  fields; the physical SEND button (_btn_sendcolor) still owns
- *  the actual UDPs.sendColor() call.
+ *  the actual DATAs.sendColor() call.
  *
  *  Usage (see LEDManager._setupRgbInputs()):
  *      new RgbChannelPopup(Main).show(LED_ROW_RgbInputs, _R, currentRgb,

@@ -45,6 +45,7 @@ public class UpdateChecker {
 
     public static void check(Context ctx, Callback cb) {
         final Context appCtx = ctx.getApplicationContext();
+        Log.d("UpdateChecker", "check() starting, GET " + API_URL);
         IO.execute(() -> {
             try {
                 HttpURLConnection conn = (HttpURLConnection) new URL(API_URL).openConnection();
@@ -53,32 +54,40 @@ public class UpdateChecker {
                 conn.setReadTimeout(8000);
 
                 int code = conn.getResponseCode();
+                Log.d("UpdateChecker", "HTTP response code: " + code);
                 if (code != 200) {
                     postError(cb, "Update check failed (HTTP " + code + ")");
                     return;
                 }
-                JSONObject json = new JSONObject(readAll(conn.getInputStream()));
+                String body = readAll(conn.getInputStream());
+                JSONObject json = new JSONObject(body);
                 String tagName = json.optString("tag_name", "");
                 int remoteCode = parseVersionCode(tagName);
-
                 int localCode = getLocalVersionCode(appCtx);
+                Log.d("UpdateChecker", "tag=" + tagName + " remoteCode=" + remoteCode + " localCode=" + localCode);
 
                 if (remoteCode <= 0 || remoteCode <= localCode) {
+                    Log.d("UpdateChecker", "up to date (or unparseable tag) - not offering update");
                     postUpToDate(cb);
                     return;
                 }
 
                 String apkUrl = findApkUrl(json.optJSONArray("assets"));
+                Log.d("UpdateChecker", "apkUrl=" + apkUrl);
                 if (apkUrl == null) {
                     postError(cb, "Release " + tagName + " has no APK asset");
                     return;
                 }
 
                 String notes = json.optString("body", "");
+                Log.d("UpdateChecker", "update available, posting to callback");
                 postAvailable(cb, tagName, remoteCode, apkUrl, notes);
             } catch (Exception e) {
                 Log.w("UpdateChecker", "check failed", e);
                 postError(cb, e.getMessage());
+            } catch (Throwable t) {
+                Log.e("UpdateChecker", "check failed with Throwable (not Exception)", t);
+                postError(cb, String.valueOf(t.getMessage()));
             }
         });
     }
@@ -105,11 +114,20 @@ public class UpdateChecker {
         return null;
     }
 
+    /**
+     * Extracts the numeric versionCode from a release tag. Current scheme is
+     * "V<versionName>" (e.g. "V1.003") - the versionCode is the run of digits
+     * after the last '.'. Falls back to the first digit run for older-style
+     * tags (e.g. a bare "v3") so it isn't brittle if the scheme changes again.
+     */
     private static int parseVersionCode(String tag) {
+        int lastDot = tag.lastIndexOf('.');
+        String segment = (lastDot >= 0 && lastDot < tag.length() - 1) ? tag.substring(lastDot + 1) : tag;
+
         StringBuilder digits = new StringBuilder();
         boolean started = false;
-        for (int i = 0; i < tag.length(); i++) {
-            char c = tag.charAt(i);
+        for (int i = 0; i < segment.length(); i++) {
+            char c = segment.charAt(i);
             if (Character.isDigit(c)) {
                 digits.append(c);
                 started = true;

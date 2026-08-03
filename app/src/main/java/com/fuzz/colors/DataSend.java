@@ -2,25 +2,30 @@ package com.fuzz.colors;
 
 /*
  * ============================================================
- *  UDPSend.java  (alias: UDPs)
+ *  DataSend.java  (alias: DATAs)
  * ============================================================
  *  Responsibility:
- *      All outgoing UDP packets to the Arduino controller.
- *      Every public method builds a protocol string and hands
- *      it to the private _send() worker that runs on a
- *      background thread so the UI is never blocked.
+ *      Shared outgoing command layer for the Arduino controller - builds
+ *      every protocol string and hands it to the private _send() worker,
+ *      which runs on a background thread so the UI is never blocked.
+ *      NOT UDP-only: _transmit() picks whichever transport is actually
+ *      live, local UDP directly or MQTT (see MqttTransport/MQTT) over the
+ *      HiveMQ cloud link when off-WiFi. sendWelcomeUdpDirect() /
+ *      _transmitUdpDirect() are the one deliberate exception - they always
+ *      go out over the raw local socket, bypassing the transport pick,
+ *      because that's what probes whether local UDP is reachable at all.
  *
  *  How to use:
  *      1.  Instantiate once inside Main (MainActivity):
- *              UDPs = new UDPSend(this);
+ *              DATAs = new DataSend(this);
  *
  *      2.  Pass the shared DatagramSocket AFTER it is created
- *          by UDPr (UDPReceive):
- *              UDPs.setSocket(UDPr.getSocket());
+ *          by DATAr (DataReceive):
+ *              DATAs.setSocket(DATAr.getSocket());
  *
  *      3.  Call any public method from Main, LED, SET, or STS:
- *              UDPs.sendColor(r, g, b);
- *              UDPs.sendBrightness(progress);
+ *              DATAs.sendColor(r, g, b);
+ *              DATAs.sendBrightness(progress);
  *
  *  Protocol strings (hex values, uppercase unless noted):
  *      LBvv            – Set LED brightness (vv = hex byte)
@@ -46,8 +51,8 @@ package com.fuzz.colors;
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
- *      UDPs  = UDPSend      (this class)
- *      UDPr  = UDPReceive
+ *      DATAs  = DataSend      (this class)
+ *      DATAr  = DataReceive
  *      LED   = LEDManager
  *      SET   = SettingsManager
  *      STS   = StatusManager
@@ -63,14 +68,14 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.HashMap;
 
-public class UDPSend {
+public class DataSend {
 
     // --------------------------------------------------------
     // Constants – must match the Arduino firmware
     // --------------------------------------------------------
     /**
      * SINGLE SOURCE OF TRUTH for the board's address. Change the Arduino IP/port
-     * HERE ONLY — UDPReceive (socket bind + status display) references these,
+     * HERE ONLY — DataReceive (socket bind + status display) references these,
      * so there is no second copy to keep in sync.
      */
     /** Target Arduino IP address */
@@ -174,8 +179,8 @@ public class UDPSend {
 
     /**
      * Shared DatagramSocket.
-     * Created by UDPr (UDPReceive) and injected via setSocket().
-     * UDPs never owns or closes this socket.
+     * Created by DATAr (DataReceive) and injected via setSocket().
+     * DATAs never owns or closes this socket.
      */
     private DatagramSocket socket;
 
@@ -216,7 +221,7 @@ public class UDPSend {
      * @param main  The running MainActivity instance (alias: Main).
      *              Must not be null.
      */
-    public UDPSend(MainActivity main) {
+    public DataSend(MainActivity main) {
         this.Main = main;
     }
 
@@ -224,13 +229,16 @@ public class UDPSend {
     // Socket management
     // --------------------------------------------------------
     /**
-     * Inject the shared DatagramSocket created by UDPr.
-     * Call this after UDPr has successfully opened the socket.
+     * Inject the shared DatagramSocket created by DATAr.
+     * Call this after DATAr has successfully opened the socket.
      *
      * @param socket  Open, non-null DatagramSocket.
+     *
+     * Called by: MainActivity (onCreate init, and again on every local
+     * reconnect in _connectTransport()).
      */
     public void setSocket(DatagramSocket socket) {
-        Log.v("UDP_S", "Socket injected");
+        Log.v("DATA_S", "Socket injected");
         this.socket = socket;
     }
 
@@ -244,14 +252,19 @@ public class UDPSend {
      *
      * @param message  Protocol string to send (ASCII, UTF-8).
      *                 Example: "LC" or "LBff"
+     *
+     * Called by: internal only - every ACK'd public sendX() method below
+     * (sendColor, sendBrightness, sendDualColor, sendSelectLed, sendSetting,
+     * sendAmbientMode, sendEnableDisable, sendTestMode, sendTestDiffuser,
+     * sendParfum/sendParfumOff, sendTestLux).
      */
     private void _send(final String message) {
-        Log.v("UDP_S", "Sending: " + message);
+        Log.v("DATA_S", "Sending: " + message);
 
         // Guard – do nothing if socket/wifi not available
         if (!Main._TransportAvailable()) {
-            Log.i("UDP_ERR", "NOT AVAILABLE");
-            Log.v("UDP_S", "Transport not available");
+            Log.i("DATA_ERR", "NOT AVAILABLE");
+            Log.v("DATA_S", "Transport not available");
             Main._Console(false, "--", "{#R}NOT AVAILABLE{##}");
             return;
         }
@@ -271,7 +284,7 @@ public class UDPSend {
             final String packet = ACK_CHAR + String.format("%02x", s) + message;
             final int timeoutMs = _ackTimeoutFor(message);
 
-            Log.v("UDP_S", "Sequenced send - seq: " + s + " packet: " + packet + " timeout: " + timeoutMs);
+            Log.v("DATA_S", "Sequenced send - seq: " + s + " packet: " + packet + " timeout: " + timeoutMs);
 
             final Pending p = new Pending(s, packet, message, timeoutMs, ACK_MAX_RETRIES);
             p.timeout = () -> _onTimeout(s);
@@ -290,12 +303,16 @@ public class UDPSend {
      * large and slow (e.g. the K debug dump).
      *
      * @param message  Protocol string, sent as-is (un-enveloped).
+     *
+     * Called by: internal only - sendDebug() (K dump), sendGetColor() (LC-get),
+     * the "get dual color"/"get settings" branches of sendDualColor()/
+     * sendSetting(), and sendWelcome()/sendWelcomeUdpDirect() (Z).
      */
     private void _sendBare(final String message) {
-        Log.v("UDP_S", "Sending bare: " + message);
+        Log.v("DATA_S", "Sending bare: " + message);
         if (!Main._TransportAvailable()) {
-            Log.i("UDP_ERR", "NOT AVAILABLE");
-            Log.v("UDP_S", "Transport not available for bare send");
+            Log.i("DATA_ERR", "NOT AVAILABLE");
+            Log.v("DATA_S", "Transport not available for bare send");
             Main._Console(false, "--", "{#R}NOT AVAILABLE{##}");
             return;
         }
@@ -304,23 +321,26 @@ public class UDPSend {
 
     /**
      * Fire one datagram on a background thread using the shared socket
-     * (Java DatagramSocket tolerates a concurrent send while UDPr blocks
+     * (Java DatagramSocket tolerates a concurrent send while DATAr blocks
      * in receive() on the same socket) — no more per-packet ephemeral socket.
      *
      * @param packet  Exact bytes to put on the wire (already enveloped).
+     *
+     * Called by: internal only - _send() and _sendBare(). This is the one
+     * place that picks the actual transport (local UDP vs MQTT).
      */
     private void _transmit(final String packet) {
         // Cloud path: no usable local UDP link -> publish over MQTT (HiveMQ).
         // Same enveloped bytes, so the ACK layer round-trips over the broker too.
         if (!Main._UDP_Available() && Main._MqttConnected()) {
-            Log.v("UDP_S", "Transmitting via MQTT: " + packet);
+            Log.v("DATA_S", "MQTT : Transmitting: " + packet);
             Main._MqttPublish(packet);
             return;
         }
         final DatagramSocket sock = socket;
         if (sock == null || sock.isClosed()) {
-            Log.e("UDP_ERR", "NO SOCKET for [" + packet + "]");
-            Log.v("UDP_S", "No socket available for: " + packet);
+            Log.e("DATA_ERR", "UDP : NO SOCKET for [" + packet + "]");
+            Log.v("DATA_S", "UDP : No socket available for: " + packet);
             return;
         }
         new Thread(() -> {
@@ -330,12 +350,12 @@ public class UDPSend {
                 DatagramPacket dp = new DatagramPacket(
                         buffer, buffer.length, address, ARDUINO_PORT);
                 sock.send(dp);
-                Log.i("UDP_S", "SEND [" + packet + "] size [" + buffer.length + "]");
-                Log.v("UDP_S", "Transmitted to " + ARDUINO_IP + ":" + ARDUINO_PORT);
+                Log.i("DATA_S", "UDP : SEND [" + packet + "] size [" + buffer.length + "]");
+                Log.v("DATA_S", "UDP : Transmitted to " + ARDUINO_IP + ":" + ARDUINO_PORT);
             } catch (Exception e) {
                 e.printStackTrace();
-                Log.e("UDP_ERR", "Exception in _transmit: " + e.getMessage());
-                Log.v("UDP_S", "Transmit exception: " + e.getMessage());
+                Log.e("DATA_ERR", "UDP : Exception in _transmit: " + e.getMessage());
+                Log.v("DATA_S", "UDP : Transmit exception: " + e.getMessage());
             }
         }).start();
     }
@@ -345,6 +365,9 @@ public class UDPSend {
      * otherwise drop it and report NO ACK. Runs on the main looper.
      *
      * @param s  Sequence id whose timeout elapsed.
+     *
+     * Called by: internal only - scheduled via ack.postDelayed() from
+     * _send() (first arm) and from itself on each retry.
      */
     private void _onTimeout(int s) {
         final Pending p = pending.get(s);
@@ -352,34 +375,37 @@ public class UDPSend {
 
         if (p.triesLeft > 0) {
             p.triesLeft--;
-            Log.i("UDP_S", "RETRY [" + p.label + "] left [" + p.triesLeft + "]");
-            Log.v("UDP_S", "Retrying seq " + s + " tries left: " + p.triesLeft);
+            Log.i("DATA_S", "RETRY [" + p.label + "] left [" + p.triesLeft + "]");
+            Log.v("DATA_S", "Retrying seq " + s + " tries left: " + p.triesLeft);
             _transmit(p.packet);
             ack.postDelayed(p.timeout, p.timeoutMs);
         } else {
             pending.remove(s);
             Main._LoadingBar(false);
             Main._Console(true, "◄◄", "{#R}NO ACK{##} [" + p.label + "]");
-            Log.i("UDP_S", "NO ACK [" + p.label + "]");
-            Log.v("UDP_S", "No ACK for seq " + s + " after all retries");
+            Log.i("DATA_S", "NO ACK [" + p.label + "]");
+            Log.v("DATA_S", "No ACK for seq " + s + " after all retries");
         }
     }
 
     /**
      * Resolve a pending command from an incoming "#SSR" ACK.
-     * Called by UDPr; re-posted to the ack looper so all pending-map access
+     * Called by DATAr; re-posted to the ack looper so all pending-map access
      * stays on one thread.
      *
      * @param s       Sequence id echoed by the controller.
      * @param result  Result code (0 applied · 1 clamped · 2 rejected ·
      *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported).
+     *
+     * Called by: DataReceive._recvAck() - fed from a "#SSR" packet, whether
+     * it arrived over local UDP or (via DataReceive.onCloudMessage()) MQTT.
      */
     public void ackResolve(final int s, final int result) {
-        Log.v("UDP_S", "ACK resolve - seq: " + s + " result: " + result);
+        Log.v("DATA_S", "ACK resolve - seq: " + s + " result: " + result);
         ack.post(() -> {
             final Pending p = pending.remove(s);
             if (p == null) return;                   // unknown / duplicate ACK
-            Log.v("UDP_S", "ACK resolved for seq " + s);
+            Log.v("DATA_S", "ACK resolved for seq " + s);
             ack.removeCallbacks(p.timeout);
             Main._LoadingBarResult(_colorForResult(result));
             _reportResult(p.label, result);
@@ -392,12 +418,14 @@ public class UDPSend {
      *
      * @param label   Command label (the command string).
      * @param result  Result code from the controller.
+     *
+     * Called by: internal only - ackResolve().
      */
     private void _reportResult(String label, int result) {
-        Log.v("UDP_S", "Reporting result for: " + label + " result: " + result);
+        Log.v("DATA_S", "Reporting result for: " + label + " result: " + result);
         String tag;
         switch (result) {
-            case 0:  Log.i("UDP_R", "ACK OK [" + label + "]"); return;
+            case 0:  Log.i("DATA_R", "ACK OK [" + label + "]"); return;
             case 1:  tag = "{#Y}CLAMPED{##}";            break;
             case 2:  tag = "{#R}REJECTED{##}";           break;
             case 3:  tag = "{#R}BLOCKED{##}";            break;
@@ -405,7 +433,7 @@ public class UDPSend {
             case 5:  tag = "{#R}NO WATER / NO RESP{##}"; break;
             default: tag = "{#R}UNSUPPORTED{##}";        break;
         }
-        Log.i("UDP_R", "ACK [" + result + "] [" + label + "]");
+        Log.i("DATA_R", "ACK [" + result + "] [" + label + "]");
         Main._Console(true, "◄◄", tag + " [" + label + "]");
     }
 
@@ -416,6 +444,8 @@ public class UDPSend {
      *
      * @param result  Result code (0 applied · 1 clamped · 2 rejected ·
      *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported).
+     *
+     * Called by: internal only - ackResolve().
      */
     private int _colorForResult(int result) {
         int colorRes;
@@ -445,11 +475,14 @@ public class UDPSend {
      *
      * @param mode  Test mode index (0 = NONE, 1 = TV ON, …).
      *              See SET_TestMode[] in SET (SettingsManager).
+     *
+     * Called by: SettingsManager (TestMode picker callbacks), via the
+     * TestModePopup UI.
      */
     public void sendTestMode(int mode) {
-        Log.v("UDP_S", "Sending test mode: " + mode);
+        Log.v("DATA_S", "Sending test mode: " + mode);
         _send("@" + String.format("%02x", mode));
-        Log.i("UDP_S", "TEST MODE [" + mode + "]");
+        Log.i("DATA_S", "TEST MODE [" + mode + "]");
     }
 
     /**
@@ -457,11 +490,13 @@ public class UDPSend {
      * Protocol: @Dvv  where vv = 00 off · 01-04 mode · FF random color.
      *
      * @param val  Diffuser test value (hex byte).
+     *
+     * Called by: SettingsManager (TestMode picker, DIFFUSER slot).
      */
     public void sendTestDiffuser(int val) {
-        Log.v("UDP_S", "Sending test diffuser: " + val);
+        Log.v("DATA_S", "Sending test diffuser: " + val);
         _send("@D" + String.format("%02x", val));
-        Log.i("UDP_S", "TEST DIFFUSER [" + val + "]");
+        Log.i("DATA_S", "TEST DIFFUSER [" + val + "]");
     }
 
     // --------------------------------------------------------
@@ -477,25 +512,29 @@ public class UDPSend {
      *
      * @param minutes  Duration in minutes, clamped to 1-360.
      * @param mode     Index into PARFUM_MODES, clamped to 0..PARFUM_MODES.length-1.
+     *
+     * Called by: StatusManager, via the ParfumPopup UI's "start" callback.
      */
     public void sendParfum(int minutes, int mode) {
-        Log.v("UDP_S", "Sending parfum - minutes: " + minutes + " mode: " + mode);
+        Log.v("DATA_S", "Sending parfum - minutes: " + minutes + " mode: " + mode);
         if (minutes < 1)   minutes = 1;
         if (minutes > 360) minutes = 360;
         mode = Math.max(0, Math.min(PARFUM_MODES.length - 1, mode));
         int wireVal = PARFUM_MODE_VALUES[mode];
         _send("Dp" + String.format("%04x", minutes) + Integer.toHexString(wireVal));
-        Log.i("UDP_S", "PARFUM ON [" + minutes + " min] MODE [" + PARFUM_MODES[mode] + "]");
+        Log.i("DATA_S", "PARFUM ON [" + minutes + " min] MODE [" + PARFUM_MODES[mode] + "]");
     }
 
     /**
      * Cancel the diffuser's Parfum mode and shut the diffuser down.
      * Protocol: Dp00000  (fixed-width - minutes + mode digit both zero)
+     *
+     * Called by: StatusManager, via the ParfumPopup UI's "stop" callback.
      */
     public void sendParfumOff() {
-        Log.v("UDP_S", "Sending parfum off");
+        Log.v("DATA_S", "Sending parfum off");
         _send("Dp00000");
-        Log.i("UDP_S", "PARFUM OFF");
+        Log.i("DATA_S", "PARFUM OFF");
     }
 
     /**
@@ -505,11 +544,13 @@ public class UDPSend {
      * Protocol: @Lvv  where vv = lux level 01-04.
      *
      * @param level  Lux level (1..4).
+     *
+     * Called by: SettingsManager (TestMode picker, lux slot).
      */
     public void sendTestLux(int level) {
-        Log.v("UDP_S", "Sending test lux: " + level);
+        Log.v("DATA_S", "Sending test lux: " + level);
         _send("@L" + String.format("%02x", level));
-        Log.i("UDP_S", "TEST LUX [" + level + "]");
+        Log.i("DATA_S", "TEST LUX [" + level + "]");
     }
 
     /**
@@ -518,11 +559,13 @@ public class UDPSend {
      *
      * @param debug  Debug index (0 = LED_INFO, 1 = LED_SELECTED, …).
      *               See SET_Debug[] in SET (SettingsManager).
+     *
+     * Called by: MainActivity (debug dropdown selection).
      */
     public void sendDebug(int debug) {
-        Log.v("UDP_S", "Sending debug: " + debug);
+        Log.v("DATA_S", "Sending debug: " + debug);
         _sendBare("K" + String.format("%02x", debug));
-        Log.i("UDP_S", "[K" + String.format("%02x", debug)
+        Log.i("DATA_S", "[K" + String.format("%02x", debug)
                 + "] # DEBUG [" + debug + "]");
     }
 
@@ -533,12 +576,16 @@ public class UDPSend {
      * Send the welcome / handshake packet so the Arduino knows
      * the app is alive.
      * Protocol: Z
+     *
+     * Called by: MainActivity (init handshake, and again from onResume() on
+     * every resume/reconnect) and MqttTransport (re-announce over cloud
+     * after a fresh broker connect, when local UDP isn't the active link).
      */
     // Method signature updated to accept the caller or context tag
     public void sendWelcome(String caller) {
-        Log.v("UDP_S", "Sending welcome from: " + caller);
+        Log.v("DATA_S", "Sending welcome from: " + caller);
         _sendBare("Z"); // Sends the base payload as before
-        Log.i("UDP_S", "[Z] # WELCOME (" + caller + ")"); // Logcat output with dynamic caller context
+        Log.i("DATA_S", "[Z] # WELCOME (" + caller + ")"); // Logcat output with dynamic caller context
     }
 
     /**
@@ -548,11 +595,14 @@ public class UDPSend {
      * it answers, the reply lands on the UDP socket and promotes the link back
      * to local. Harmless no-op if the board isn't on the LAN. Never routed to
      * MQTT, so it can never be mistaken for a cloud welcome.
+     *
+     * Called by: MainActivity - _connectTransport() (first probe on WiFi)
+     * and _superviseTransport() (repeated LAN probe while parked on cloud).
      */
     public void sendWelcomeUdpDirect() {
-        Log.v("UDP_S", "Sending welcome UDP direct probe");
+        Log.v("DATA_S", "UDP : Sending welcome direct probe");
         _transmitUdpDirect("Z");
-        Log.i("UDP_S", "[Z] # WELCOME (udp-probe)");
+        Log.i("DATA_S", "UDP : [Z] # WELCOME (udp-probe)");
     }
 
     /**
@@ -560,12 +610,14 @@ public class UDPSend {
      * routing, no availability guard). Backs sendWelcomeUdpDirect().
      *
      * @param packet  Exact bytes to put on the wire.
+     *
+     * Called by: internal only - sendWelcomeUdpDirect().
      */
     private void _transmitUdpDirect(final String packet) {
-        Log.v("UDP_S", "Transmitting UDP direct: " + packet);
+        Log.v("DATA_S", "UDP : Transmitting direct: " + packet);
         final DatagramSocket sock = socket;
         if (sock == null || sock.isClosed()) {
-            Log.v("UDP_S", "Socket not available for UDP direct");
+            Log.v("DATA_S", "UDP : Socket not available for direct send");
             return;
         }
         new Thread(() -> {
@@ -573,10 +625,10 @@ public class UDPSend {
                 InetAddress address = InetAddress.getByName(ARDUINO_IP);
                 byte[] buffer = packet.getBytes();
                 sock.send(new DatagramPacket(buffer, buffer.length, address, ARDUINO_PORT));
-                Log.v("UDP_S", "UDP direct sent to " + ARDUINO_IP + ":" + ARDUINO_PORT);
+                Log.v("DATA_S", "UDP : direct sent to " + ARDUINO_IP + ":" + ARDUINO_PORT);
             } catch (Exception e) {
-                Log.e("UDP_ERR", "Exception in _transmitUdpDirect: " + e.getMessage());
-                Log.v("UDP_S", "UDP direct exception: " + e.getMessage());
+                Log.e("DATA_ERR", "UDP : Exception in _transmitUdpDirect: " + e.getMessage());
+                Log.v("DATA_S", "UDP : direct exception: " + e.getMessage());
             }
         }).start();
     }
@@ -585,9 +637,12 @@ public class UDPSend {
      * Answer the board's keep-alive ping. A bare, un-enveloped "k" (the board
      * treats a 1-char 'k' as liveness only – no ACK, no status). Cloud-aware via
      * _transmit, so it round-trips over MQTT when the local UDP link is down.
+     *
+     * Called by: DataReceive._recvKeepAlive(), answering the board's 'k'
+     * ping (whichever transport it arrived on).
      */
     public void sendKeepAlive() {
-        Log.v("UDP_S", "Sending keep-alive");
+        Log.v("DATA_S", "Sending keep-alive");
         _sendBare("k");
     }
 
@@ -595,11 +650,13 @@ public class UDPSend {
      * Ask the diffuser for its current status ("Ds"). Sent when the Parfum popup
      * opens so the board answers with the live parfum minutes ('p') if a window
      * is running.
+     *
+     * Called by: StatusManager, when the Parfum popup opens.
      */
     public void sendDiffuserStatus() {
-        Log.v("UDP_S", "Sending diffuser status request");
+        Log.v("DATA_S", "Sending diffuser status request");
         _sendBare("Ds");
-        Log.i("UDP_S", "[Ds] # DIFFUSER STATUS REQUEST");
+        Log.i("DATA_S", "[Ds] # DIFFUSER STATUS REQUEST");
     }
 
     /**
@@ -608,11 +665,13 @@ public class UDPSend {
      * poll). SmartTV relays the diffuser's reply straight through without
      * caching it, so call this whenever the history is actually needed
      * (e.g. opening a history view) rather than polling it continuously.
+     *
+     * Called by: MainActivity, when the diffuser history view is opened.
      */
     public void sendDiffuserHistory() {
-        Log.v("UDP_S", "Sending diffuser history request");
+        Log.v("DATA_S", "Sending diffuser history request");
         _sendBare("Dh");
-        Log.i("UDP_S", "[Dh] # DIFFUSER HISTORY REQUEST");
+        Log.i("DATA_S", "[Dh] # DIFFUSER HISTORY REQUEST");
     }
 
     /**
@@ -621,11 +680,13 @@ public class UDPSend {
      * cycle into its refill history, resets the usage accumulator to 0, and
      * clears any out-of-water alert, then replies with a normal status ("Ds")
      * reflecting the fresh state - handled like any other status push.
+     *
+     * Called by: DiffuserUsagePopup, on the manual-refill button.
      */
     public void sendDiffuserManualRefill() {
-        Log.v("UDP_S", "Sending diffuser manual refill");
+        Log.v("DATA_S", "Sending diffuser manual refill");
         _send("Dr");
-        Log.i("UDP_S", "[Dr] # DIFFUSER MANUAL REFILL");
+        Log.i("DATA_S", "[Dr] # DIFFUSER MANUAL REFILL");
     }
 
     // --------------------------------------------------------
@@ -634,11 +695,14 @@ public class UDPSend {
     /**
      * Request the current LED colours from the Arduino.
      * Protocol: LC  (no parameters – Arduino replies with LCiiRRggBB…)
+     *
+     * Called by: MainActivity._ResyncDeviceState() (after a reconnect) and
+     * page-navigation refreshes.
      */
     public void sendGetColor() {
-        Log.v("UDP_S", "Sending get color request");
+        Log.v("DATA_S", "Sending get color request");
         _sendBare("LC");
-        Log.i("UDP_S", "[LC] # GET COLOR");
+        Log.i("DATA_S", "[LC] # GET COLOR");
     }
 
     /**
@@ -648,12 +712,15 @@ public class UDPSend {
      * @param r  Red   channel 0-255
      * @param g  Green channel 0-255
      * @param b  Blue  channel 0-255
+     *
+     * Called by: LEDManager (colour picker / swatch taps), typically paired
+     * with a preceding sendSelectLed().
      */
     public void sendColor(int r, int g, int b) {
-        Log.v("UDP_S", "Sending color - R:" + r + " G:" + g + " B:" + b);
+        Log.v("DATA_S", "Sending color - R:" + r + " G:" + g + " B:" + b);
         String hex = String.format("%02x%02x%02x", r, g, b);
         _send("LC" + hex);
-        Log.i("UDP_S", "[LC" + hex + "] # COLOR [" + r + " " + g + " " + b + "]");
+        Log.i("DATA_S", "[LC" + hex + "] # COLOR [" + r + " " + g + " " + b + "]");
     }
 
     /**
@@ -669,19 +736,23 @@ public class UDPSend {
      * @param r2  Right Red   (-1 to request current value)
      * @param g2  Right Green (-1 to request current value)
      * @param b2  Right Blue  (-1 to request current value)
+     *
+     * Called by: LEDManager (dual-colour swatch row and the RgbChannelPopup
+     * "set" callback), and MainActivity._ResyncDeviceState() (GET form,
+     * after a reconnect).
      */
     public void sendDualColor(int r1, int g1, int b1, int r2, int g2, int b2) {
         if (r1 == -1 && g1 == -1 && b1 == -1 && r2 == -1 && g2 == -1 && b2 == -1) {
             // GET request
-            Log.v("UDP_S", "Sending get dual color request");
+            Log.v("DATA_S", "Sending get dual color request");
             _sendBare("LD");
-            Log.i("UDP_S", "[LD] # GET DUAL COLOR");
+            Log.i("DATA_S", "[LD] # GET DUAL COLOR");
         } else {
             // SET command
-            Log.v("UDP_S", "Sending dual color - L:" + r1 + "," + g1 + "," + b1 + " R:" + r2 + "," + g2 + "," + b2);
+            Log.v("DATA_S", "Sending dual color - L:" + r1 + "," + g1 + "," + b1 + " R:" + r2 + "," + g2 + "," + b2);
             String hex = String.format("%02x%02x%02x%02x%02x%02x", r1, g1, b1, r2, g2, b2);
             _send("LD" + hex);
-            Log.i("UDP_S", "[LD" + hex + "] # DUAL COLOR ["
+            Log.i("DATA_S", "[LD" + hex + "] # DUAL COLOR ["
                     + r1 + " " + g1 + " " + b1 + "] <> ["
                     + r2 + " " + g2 + " " + b2 + "]");
         }
@@ -697,12 +768,14 @@ public class UDPSend {
      * @param r2  Right Red   0-255
      * @param g2  Right Green 0-255
      * @param b2  Right Blue  0-255
+     *
+     * Called by: MainActivity's shake-sensor handler.
      */
     public void sendShakeDualColor(int r1, int g1, int b1, int r2, int g2, int b2) {
-        Log.v("UDP_S", "Sending shake dual color - L:" + r1 + "," + g1 + "," + b1 + " R:" + r2 + "," + g2 + "," + b2);
+        Log.v("DATA_S", "Sending shake dual color - L:" + r1 + "," + g1 + "," + b1 + " R:" + r2 + "," + g2 + "," + b2);
         String hex = String.format("%02x%02x%02x%02x%02x%02x", r1, g1, b1, r2, g2, b2);
         _send("Ld" + hex);
-        Log.i("UDP_S", "[Ld" + hex + "] # SHAKE DUAL COLOR ["
+        Log.i("DATA_S", "[Ld" + hex + "] # SHAKE DUAL COLOR ["
                 + r1 + " " + g1 + " " + b1 + "] <> ["
                 + r2 + " " + g2 + " " + b2 + "]");
     }
@@ -712,11 +785,13 @@ public class UDPSend {
      * Protocol: LBvv  where vv = 2-digit hex brightness value.
      *
      * @param brightness  0-255 (capped by Arduino to LED_MAX_BAR_BRIGHTNESS)
+     *
+     * Called by: LEDManager (brightness slider).
      */
     public void sendBrightness(int brightness) {
-        Log.v("UDP_S", "Sending brightness: " + brightness);
+        Log.v("DATA_S", "Sending brightness: " + brightness);
         _send("LB" + String.format("%02x", brightness));
-        Log.i("UDP_S", "[LB" + String.format("%02x", brightness)
+        Log.i("DATA_S", "[LB" + String.format("%02x", brightness)
                 + "] # BRIGHTNESS [" + brightness + "]");
     }
 
@@ -728,9 +803,13 @@ public class UDPSend {
      * @param ledSelected   boolean[] from LED (LEDManager).
      *                      Length must equal LED_TOTAL.
      * @param ledTotal      Total number of LEDs (LED.LED_TOTAL).
+     *
+     * Called by: LEDManager (every selection change) and
+     * MainActivity._ResyncDeviceState() (re-push after a reconnect, since
+     * "selected" is app-local and the Arduino can't re-derive it).
      */
     public void sendSelectLed(boolean[] ledSelected, int ledTotal) {
-        Log.v("UDP_S", "Sending LED selection for " + ledTotal + " LEDs");
+        Log.v("DATA_S", "Sending LED selection for " + ledTotal + " LEDs");
         StringBuilder msg    = new StringBuilder("LO");
         StringBuilder logMsg = new StringBuilder("[ ");
         for (int i = 0; i < ledTotal; i++) {
@@ -739,7 +818,7 @@ public class UDPSend {
                   .append(ledSelected[i] ? "•" : "◯").append(") ");
         }
         logMsg.append("] # SELECT LED");
-        Log.i("UDP_S", logMsg.toString());
+        Log.i("DATA_S", logMsg.toString());
         _send(msg.toString());
     }
 
@@ -759,21 +838,25 @@ public class UDPSend {
      *                    order, lookups below always match by id.
      * @param setInfo     List of SettingInfo objects from SET (SettingsManager).
      * @param setTotal    SET_TOTAL constant from SET (SettingsManager).
+     *
+     * Called by: SettingsManager (slider/switch changes and "reset to
+     * defaults") and MainActivity._ResyncDeviceState() (GET form, after a
+     * reconnect).
      */
     public void sendSetting(int setting,
                             java.util.List<SettingInfo> setInfo,
                             int setTotal) {
-        Log.v("UDP_S", "Sending setting - id: " + setting);
+        Log.v("DATA_S", "Sending setting - id: " + setting);
         if (setting == -1) {
             // Request all settings
-            Log.v("UDP_S", "Requesting all settings");
-            Log.i("UDP_S", "[S] # GET SETTINGS INFO");
+            Log.v("DATA_S", "Requesting all settings");
+            Log.i("DATA_S", "[S] # GET SETTINGS INFO");
             _sendBare("S");
 
         } else if (setting == setTotal) {
             // Send all default values in one packet - each SettingInfo
             // contributes its own id, regardless of list order.
-            Log.v("UDP_S", "Sending all default settings");
+            Log.v("DATA_S", "Sending all default settings");
             StringBuilder msg    = new StringBuilder("S");
             StringBuilder logMsg = new StringBuilder("[");
             for (SettingInfo si : setInfo) {
@@ -781,7 +864,7 @@ public class UDPSend {
                 logMsg.append(String.format("(%d:%d)", si.id(), si.defaultValue()));
             }
             logMsg.append("] # SETTINGS");
-            Log.i("UDP_S", logMsg.toString());
+            Log.i("DATA_S", logMsg.toString());
             _send(msg.toString());
 
         } else {
@@ -794,13 +877,13 @@ public class UDPSend {
                 if (si.id() == setting) { target = si; break; }
             }
             if (target == null) {
-                Log.i("UDP_S", "[SETTING id " + setting + "] NOT FOUND - not sent");
+                Log.i("DATA_S", "[SETTING id " + setting + "] NOT FOUND - not sent");
                 return;
             }
             int progress = target.currentValue();
-            Log.v("UDP_S", "Setting " + setting + " value: " + progress);
+            Log.v("DATA_S", "Setting " + setting + " value: " + progress);
             _send("S" + String.format("%02x%02x", setting, progress));
-            Log.i("UDP_S", "[S" + String.format("%02x%02x", setting, progress)
+            Log.i("DATA_S", "[S" + String.format("%02x%02x", setting, progress)
                     + "] # SETTING [" + setting + " " + progress + "]");
         }
     }
@@ -813,11 +896,13 @@ public class UDPSend {
      * Protocol: A1 (on) or A0 (off).
      *
      * @param mode  true = ON, false = OFF
+     *
+     * Called by: StatusManager (ambient icon tap).
      */
     public void sendAmbientMode(boolean mode) {
-        Log.v("UDP_S", "Sending ambient mode: " + mode);
+        Log.v("DATA_S", "Sending ambient mode: " + mode);
         _send("A" + (mode ? "1" : "0"));
-        Log.i("UDP_S", "[A" + (mode ? "1" : "0")
+        Log.i("DATA_S", "[A" + (mode ? "1" : "0")
                 + "] # AMBIENT MODE [" + mode + "]");
     }
 
@@ -827,11 +912,13 @@ public class UDPSend {
      *
      * @param stsEnableDisable  Current enable/disable status from STS.
      *                          Used only for logging – the Arduino toggles itself.
+     *
+     * Called by: SettingsManager (LED enable/disable switch).
      */
     public void sendEnableDisable(StatusManager.STS_EnableDisable stsEnableDisable) {
-        Log.v("UDP_S", "Sending enable/disable: " + stsEnableDisable);
+        Log.v("DATA_S", "Sending enable/disable: " + stsEnableDisable);
         _send("X");
-        Log.i("UDP_S", "[X] # LED "
+        Log.i("DATA_S", "[X] # LED "
                 + (stsEnableDisable == StatusManager.STS_EnableDisable.ON
                    ? "DISABLE" : "ENABLE"));
     }

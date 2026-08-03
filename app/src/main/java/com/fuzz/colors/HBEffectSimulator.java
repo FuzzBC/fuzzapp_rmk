@@ -149,7 +149,7 @@ public class HBEffectSimulator {
     }
 
     /**
-     * Called from UDPReceive._recvSettings() when a settings packet confirms an
+     * Called from DataReceive._recvSettings() when a settings packet confirms an
      * HB effect setting was applied. Reacts to id 32 (idle EFFECT) immediately,
      * regardless of TV state, so picking a new effect and getting the device's
      * confirmation echo updates the HB button right away. Speed (33) is read

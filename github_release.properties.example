@@ -1,0 +1,6 @@
+# Copy this file to github_release.properties (gitignored - never commit the real one)
+# and fill in a GitHub Personal Access Token with "Contents: Read and write"
+# permission scoped to the FuzzBC/fuzzapp-releases repo.
+# Create one at: https://github.com/settings/tokens?type=beta
+
+githubToken=

@@ -1942,6 +1942,21 @@
         </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <TextView
+        android:id="@+id/_version_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="4dp"
+        android:padding="6dp"
+        android:alpha="0.75"
+        android:fontFamily="monospace"
+        android:text="V: 0.000"
+        android:textColor="@color/text_muted_grey"
+        android:textSize="13sp"
+        app:layout_constraintBottom_toTopOf="@id/_btns_dual_color"
+        app:layout_constraintStart_toStartOf="parent" />
+
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/_btns_dual_color"
         android:layout_width="0dp"

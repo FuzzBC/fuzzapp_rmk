@@ -27,7 +27,7 @@ import android.widget.TextView;
  *  Usage (see SettingsManager._showTestModePopup()):
  *      new TestModePopup(Main).show(chip, "TV",
  *              new String[]{"ON", "OFF"}, new int[]{1, 2},
- *              (value, label) -> UDPs.sendTestMode(value));
+ *              (value, label) -> DATAs.sendTestMode(value));
  * ============================================================
  */
 public class TestModePopup {

@@ -16,12 +16,12 @@ package com.fuzz.colors;
  *
  *  How to use:
  *      1.  Instantiate in Main.onCreate() AFTER setContentView():
- *              LED = new LEDManager(this, UDPs, STS, SET);
+ *              LED = new LEDManager(this, DATAs, STS, SET);
  *
  *      2.  Call from Main.onCreate() – sets up every view:
  *              LED.init();
  *
- *      3.  Methods called by UDPr (UDPReceive) when packets arrive:
+ *      3.  Methods called by DATAr (DataReceive) when packets arrive:
  *              LED.updateColor(ledIndex, r, g, b)
  *              LED.setBrightnessProgress(value)
  *              LED.setMaxBrightness(value)
@@ -33,8 +33,8 @@ package com.fuzz.colors;
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
- *      UDPs  = UDPSend
- *      UDPr  = UDPReceive
+ *      DATAs  = DataSend
+ *      DATAr  = DataReceive
  *      LED   = LEDManager   (this class)
  *      SET   = SettingsManager
  *      STS   = StatusManager
@@ -249,10 +249,10 @@ public class LEDManager {
     private final MainActivity Main;
 
     /**
-     * UDPs – all outgoing UDP commands triggered by user interaction.
-     * Alias: UDPs (UDPSend)
+     * DATAs – all outgoing UDP commands triggered by user interaction.
+     * Alias: DATAs (DataSend)
      */
-    private final UDPSend UDPs;
+    private final DataSend DATAs;
 
     /**
      * STS – checked to guard actions when Ambilight is active.
@@ -271,14 +271,14 @@ public class LEDManager {
     // --------------------------------------------------------
     /**
      * @param main  Running MainActivity (alias: Main).
-     * @param udps  UDPSend instance      (alias: UDPs).
+     * @param udps  DataSend instance      (alias: DATAs).
      * @param sts   StatusManager instance (alias: STS).
      * @param set   SettingsManager instance (alias: SET).
      */
-    public LEDManager(MainActivity main, UDPSend udps,
+    public LEDManager(MainActivity main, DataSend udps,
                       StatusManager sts, SettingsManager set) {
         this.Main = main;
-        this.UDPs = udps;
+        this.DATAs = udps;
         this.STS  = sts;
         this.SET  = set;
     }
@@ -427,8 +427,8 @@ public class LEDManager {
                         Integer.parseInt(LED_EDIT_CustomRGB[_B].getText().toString())));
 
                 Main._Toast("CUSTOM RGB {R:" + r + " G:" + g + " B:" + b + " }");
-                UDPs.sendSelectLed(LED_Selected, LED_TOTAL); // send selection first
-                UDPs.sendColor(r, g, b);
+                DATAs.sendSelectLed(LED_Selected, LED_TOTAL); // send selection first
+                DATAs.sendColor(r, g, b);
                 Main._Console(false, "►►",
                         "CUSTOM COLOR [R:{#R}" + r + "{##}] [G:{#G}"
                         + g + "{##}] [B:{#B}" + b + "{##}]");
@@ -450,8 +450,8 @@ public class LEDManager {
         // ── LEDs OFF ─────────────────────────────────────────
         LED_BTN_LedsOFF.setOnClickListener(v -> {
             Main._Toast("[LEDs OFF]");
-            UDPs.sendSelectLed(LED_Selected, LED_TOTAL);
-            UDPs.sendColor(0, 0, 0);
+            DATAs.sendSelectLed(LED_Selected, LED_TOTAL);
+            DATAs.sendColor(0, 0, 0);
             Main._Console(false, "►►", "LED's {#Y}OFF{##}");
         });
 
@@ -473,7 +473,7 @@ public class LEDManager {
                 Main._ShakeButton(LED_BTN_SaveDual, 500);
                 Main._Toast("[SAVE DUAL COLOR]");
                 // Request current dual colour from Arduino (all -1 = GET)
-                UDPs.sendDualColor(-1, -1, -1, -1, -1, -1);
+                DATAs.sendDualColor(-1, -1, -1, -1, -1, -1);
                 _deselectAll();
                 Main._Console(false, "►►",
                         "DUAL COLOR [LEFT R:{#R}"
@@ -512,8 +512,8 @@ public class LEDManager {
                             LED_EDIT_CustomRGB[_G].getText().toString());
                     int b = Integer.parseInt(
                             LED_EDIT_CustomRGB[_B].getText().toString());
-                    UDPs.sendSelectLed(LED_Selected, LED_TOTAL);
-                    UDPs.sendColor(r, g, b);
+                    DATAs.sendSelectLed(LED_Selected, LED_TOTAL);
+                    DATAs.sendColor(r, g, b);
                     Main._Console(false, "►►",
                             "COLOR SET [R:{#R}" + r + "{##}][G:{#G}"
                             + g + "{##}][B:{#B}" + b + "{##}]");
@@ -607,7 +607,7 @@ public class LEDManager {
     // --------------------------------------------------------
     /**
      * Configure the brightness BubbleSeekBar and attach listeners.
-     * On release → sends brightness via UDPs.
+     * On release → sends brightness via DATAs.
      */
     private void _setupBrightnessBar() {
         LED_Brightness.getConfigBuilder()
@@ -649,8 +649,8 @@ public class LEDManager {
 
     /** Sends brightness over UDP and refreshes label + stepper dim state. */
     private void _commitBrightness(int progress) {
-        UDPs.sendSelectLed(LED_Selected, LED_TOTAL);
-        UDPs.sendBrightness(progress);
+        DATAs.sendSelectLed(LED_Selected, LED_TOTAL);
+        DATAs.sendBrightness(progress);
         Main._Console(false, "►►",
                 "BR PROGRESS {{#Y}" + progress + "{##}}");
         _updateBrightnessLabel(progress);
@@ -783,7 +783,7 @@ public class LEDManager {
                 if (i_ != 0) {
                     // Saved pair
                     String[] sp2 = LED_DualColorList.get(listIndex).split("\\.");
-                    UDPs.sendDualColor(
+                    DATAs.sendDualColor(
                         Integer.parseInt(sp2[0].substring(0, 2), 16),
                         Integer.parseInt(sp2[0].substring(2, 4), 16),
                         Integer.parseInt(sp2[0].substring(4, 6), 16),
@@ -795,7 +795,7 @@ public class LEDManager {
                     // Random
                     int[] rgbL = _hexToRgb(LED_RandDualColor.substring(0, 6));
                     int[] rgbR = _hexToRgb(LED_RandDualColor.substring(6, 12));
-                    UDPs.sendDualColor(
+                    DATAs.sendDualColor(
                             rgbL[_R], rgbL[_G], rgbL[_B],
                             rgbR[_R], rgbR[_G], rgbR[_B]);
                     Main._Toast("[RANDOM DUAL COLOR]");
@@ -862,7 +862,7 @@ public class LEDManager {
                             finalC1 & 0xFFFFFF, finalC2 & 0xFFFFFF);
                     int[] L = _hexToRgb(LED_RandDualColor.substring(0, 6));
                     int[] R = _hexToRgb(LED_RandDualColor.substring(6, 12));
-                    UDPs.sendDualColor(L[_R], L[_G], L[_B], R[_R], R[_G], R[_B]);
+                    DATAs.sendDualColor(L[_R], L[_G], L[_B], R[_R], R[_G], R[_B]);
                     Main._Toast("[RANDOM DUAL COLOR]");
                     reloadRandDualColor();
                     _deselectAll();
@@ -870,7 +870,7 @@ public class LEDManager {
     }
 
     /**
-     * Called by UDPr when a 'LDrrggbbRRggBB' packet arrives.
+     * Called by DATAr when a 'LDrrggbbRRggBB' packet arrives.
      * Appends the received pair to the list, saves, and rebuilds the UI.
      *
      * @param r1  Left  Red   0-255
@@ -1028,7 +1028,7 @@ public class LEDManager {
     }
 
     // ========================================================
-    //  Colour update (called by UDPr)
+    //  Colour update (called by DATAr)
     // ========================================================
 
     /**
@@ -1141,7 +1141,7 @@ public class LEDManager {
     }
 
     // ========================================================
-    //  Bulk colour apply (called by UDPr for device-pushed 'LK' frames)
+    //  Bulk colour apply (called by DATAr for device-pushed 'LK' frames)
     // ========================================================
 
     /**
@@ -1247,7 +1247,7 @@ public class LEDManager {
      * whatever it last rendered until a colour update targeted HB directly,
      * so it looked "stuck" on one solid colour instead of the live split.
      *
-     * Also called by UDPr directly (STS.applyStatus() / SET_HB_Dual setting
+     * Also called by DATAr directly (STS.applyStatus() / SET_HB_Dual setting
      * changes) - turning TV or HB_Dual on/off doesn't send any colour packet
      * on its own, so without this HB stayed solid until the next unrelated
      * colour update happened to touch it.
@@ -1273,7 +1273,7 @@ public class LEDManager {
     }
 
     // ========================================================
-    //  HB effect simulation (called by STS/UDPr)
+    //  HB effect simulation (called by STS/DATAr)
     // ========================================================
 
     /** Zone index bounds - must match Arduino firmware (LED_START_I_COM/BED/LAMP). */
@@ -1377,12 +1377,12 @@ public class LEDManager {
     }
 
     // ========================================================
-    //  Brightness helpers (called by UDPr)
+    //  Brightness helpers (called by DATAr)
     // ========================================================
 
     /**
      * Update the brightness SeekBar to a received value.
-     * Called by UDPr when 'LBvv' is received from Arduino.
+     * Called by DATAr when 'LBvv' is received from Arduino.
      *
      * @param brightness  0-255
      */
@@ -1393,7 +1393,7 @@ public class LEDManager {
 
     /**
      * Set the maximum allowed brightness on the SeekBar.
-     * Called by UDPr when 'LMvv' is received from Arduino.
+     * Called by DATAr when 'LMvv' is received from Arduino.
      *
      * @param maxBrightness  Maximum brightness (hardware limit).
      */

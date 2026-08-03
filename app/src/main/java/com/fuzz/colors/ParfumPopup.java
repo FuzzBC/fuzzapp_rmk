@@ -26,7 +26,7 @@ import android.widget.TextView;
  *  cancels the diffuser's PARFUM mode (a timed "insist" run of
  *  1-360 minutes during which the diffuser ignores every stop
  *  command). Dispenses in the user-picked pattern from
- *  UDPSend.PARFUM_MODES (continuous / 10 sec pulses); the status
+ *  DataSend.PARFUM_MODES (continuous / 10 sec pulses); the status
  *  icon itself still tints violet so the mode is visible at a glance.
  *
  *  Layout (TestModePopup card language - accent header bar on a
@@ -42,8 +42,8 @@ import android.widget.TextView;
  *
  *  Usage (see StatusManager.init()):
  *      new ParfumPopup(Main).show(icon, isActive, remainingMin,
- *              (minutes, mode) -> UDPs.sendParfum(minutes, mode),
- *              ()              -> UDPs.sendParfumOff());
+ *              (minutes, mode) -> DATAs.sendParfum(minutes, mode),
+ *              ()              -> DATAs.sendParfumOff());
  * ============================================================
  */
 public class ParfumPopup {
@@ -82,7 +82,7 @@ public class ParfumPopup {
     /** Live selection, kept in sync between the box, steppers and slider. */
     private int minutes = DEFAULT_MINUTES;
 
-    /** Live dispense-mode selection - index into UDPSend.PARFUM_MODES. */
+    /** Live dispense-mode selection - index into DataSend.PARFUM_MODES. */
     private int mode = 0;
 
     /** True while code (not the user) is writing the EditText - blocks feedback loops. */
@@ -253,10 +253,10 @@ public class ParfumPopup {
         LinearLayout modeRow = new LinearLayout(ctx);
         modeRow.setOrientation(LinearLayout.HORIZONTAL);
 
-        final TextView[] modeBtns = new TextView[UDPSend.PARFUM_MODES.length];
-        for (int i = 0; i < UDPSend.PARFUM_MODES.length; i++) {
+        final TextView[] modeBtns = new TextView[DataSend.PARFUM_MODES.length];
+        for (int i = 0; i < DataSend.PARFUM_MODES.length; i++) {
             final int idx = i;
-            TextView btn = _buildModeButton(UDPSend.PARFUM_MODES[i], dp);
+            TextView btn = _buildModeButton(DataSend.PARFUM_MODES[i], dp);
             LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
             btnLp.setMargins(i == 0 ? 0 : (int) (4 * dp), 0,
@@ -373,7 +373,7 @@ public class ParfumPopup {
      * Commit the tapped dispense-mode index and repaint both buttons so
      * only the selected one shows the accent fill.
      *
-     * @param idx       Tapped index into UDPSend.PARFUM_MODES.
+     * @param idx       Tapped index into DataSend.PARFUM_MODES.
      * @param btns      Both mode buttons, parallel to PARFUM_MODES.
      * @param rowFill   Unselected fill colour.
      * @param strokeCol Unselected border colour.

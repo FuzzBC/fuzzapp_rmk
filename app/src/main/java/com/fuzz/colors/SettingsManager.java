@@ -24,18 +24,18 @@ package com.fuzz.colors;
  *      • Handles the background-image picker SeekBar.
  *      • Handles the TestMode SeekBar.
  *      • Handles the Default / Enable-Disable buttons.
- *      • Provides applyReceivedSetting() for UDPr to push
+ *      • Provides applyReceivedSetting() for DATAr to push
  *        incoming Arduino values into the UI.
  *      • Exposes getHBDualValue() for LED colour logic.
  *
  *  How to use:
  *      1.  Instantiate in Main before calling init():
- *              SET = new SettingsManager(this, UDPs, STS);
+ *              SET = new SettingsManager(this, DATAs, STS);
  *
  *      2.  Must be initialised before LED (because LED reads SET):
  *              SET.init();
  *
- *      3.  Called by UDPr when 'SiiVV' packets arrive:
+ *      3.  Called by DATAr when 'SiiVV' packets arrive:
  *              SET.applyReceivedSetting(id, value)
  *              SET.getSettingInfo(id)
  *              SET.getSettingCount()
@@ -67,8 +67,8 @@ package com.fuzz.colors;
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
- *      UDPs  = UDPSend
- *      UDPr  = UDPReceive
+ *      DATAs  = DataSend
+ *      DATAr  = DataReceive
  *      LED   = LEDManager
  *      SET   = SettingsManager   (this class)
  *      STS   = StatusManager
@@ -142,7 +142,7 @@ public class SettingsManager {
     // --------------------------------------------------------
     /**
      * Debug item names shown in the debug-list dialog.
-     * Index sent to Arduino via UDPs.sendDebug(index) - the order here MUST
+     * Index sent to Arduino via DATAs.sendDebug(index) - the order here MUST
      * match the firmware's __debug enum in _FuZzAPP_SmartTV_R4_DEF.h, or the
      * picker fires the wrong dump.
      */
@@ -197,7 +197,7 @@ public class SettingsManager {
 
     /**
      * Same SettingInfo objects as SET_Info, but indexed by their Arduino
-     * EEPROM id rather than by add()-order. This is the lookup UDPr/UDPs
+     * EEPROM id rather than by add()-order. This is the lookup DATAr/DATAs
      * and every send/receive path use - id is the only thing the Arduino
      * ever sees, so it's the only thing that should ever be used to find
      * a setting again.
@@ -305,10 +305,10 @@ public class SettingsManager {
     private final MainActivity Main;
 
     /**
-     * UDPs – sends setting changes to the Arduino.
-     * Alias: UDPs (UDPSend)
+     * DATAs – sends setting changes to the Arduino.
+     * Alias: DATAs (DataSend)
      */
-    private final UDPSend UDPs;
+    private final DataSend DATAs;
 
     /**
      * STS – read for enable/disable LED state label.
@@ -321,12 +321,12 @@ public class SettingsManager {
     // --------------------------------------------------------
     /**
      * @param main  Running MainActivity (alias: Main).
-     * @param udps  UDPSend instance      (alias: UDPs).
+     * @param udps  DataSend instance      (alias: DATAs).
      * @param sts   StatusManager instance (alias: STS).
      */
-    public SettingsManager(MainActivity main, UDPSend udps, StatusManager sts) {
+    public SettingsManager(MainActivity main, DataSend udps, StatusManager sts) {
         this.Main = main;
-        this.UDPs = udps;
+        this.DATAs = udps;
         this.STS  = sts;
     }
 
@@ -498,7 +498,7 @@ public class SettingsManager {
         SET_InfoById[id] = si;
     }
 
-    /** Looks up a setting by its Arduino EEPROM id (the only key UDPr/UDPs ever use). */
+    /** Looks up a setting by its Arduino EEPROM id (the only key DATAr/DATAs ever use). */
     private SettingInfo _byId(int id) {
         return SET_InfoById[id];
     }
@@ -954,7 +954,7 @@ public class SettingsManager {
                 "SETTING {{#C}" + si.description()
                 + "{##}} > {{#Y}" + valueText + "{##}}");
 
-        UDPs.sendSetting(id, SET_Info, SET_TOTAL);
+        DATAs.sendSetting(id, SET_Info, SET_TOTAL);
     }
 
     /** Formats a bar-type value with the unit that matches its TYPE. */
@@ -1041,7 +1041,7 @@ public class SettingsManager {
                     "SETTING {{#C}" + s.description()
                     + "{##}} > {" + (isChecked ? "{#G}ON{##}" : "{#R}OFF{##}") + "}");
 
-            UDPs.sendSetting(id, SET_Info, SET_TOTAL);
+            DATAs.sendSetting(id, SET_Info, SET_TOTAL);
         });
 
         return row;
@@ -1466,7 +1466,7 @@ public class SettingsManager {
         Main._Console(false, "►►",
                 "SETTING {{#C}" + s.description() + "{##}} > {{#Y}" + opt + "{##}}");
 
-        UDPs.sendSetting(id, SET_Info, SET_TOTAL);
+        DATAs.sendSetting(id, SET_Info, SET_TOTAL);
     }
 
     /** Refreshes a selectable row's header text and highlights the selected option. */
@@ -1595,15 +1595,15 @@ public class SettingsManager {
             final int slot = tab + 1;                       // index into SET_TestMode
             switch (tab) {
                 case TestModePopup.TAB_CANCEL:
-                    _sendTestModePick(0, "NONE", () -> UDPs.sendTestMode(0));
+                    _sendTestModePick(0, "NONE", () -> DATAs.sendTestMode(0));
                     break;
-                case 0: _sendTestModePick(slot, "TV " + label,     () -> UDPs.sendTestMode(value)); break;
-                case 1: _sendTestModePick(slot, "MOTION " + label, () -> UDPs.sendTestMode(value)); break;
+                case 0: _sendTestModePick(slot, "TV " + label,     () -> DATAs.sendTestMode(value)); break;
+                case 1: _sendTestModePick(slot, "MOTION " + label, () -> DATAs.sendTestMode(value)); break;
                 // UDPRAW OFF drops the whole test latch, so it reports as NONE
                 case 2: _sendTestModePick(value == 0 ? 0 : slot, "UDPRAW " + label,
-                                () -> UDPs.sendTestMode(value)); break;
-                case 3: _sendTestModePick(slot, "DIFFUSER " + label, () -> UDPs.sendTestDiffuser(value)); break;
-                case 4: _sendTestModePick(slot, label, () -> UDPs.sendTestLux(value)); break;
+                                () -> DATAs.sendTestMode(value)); break;
+                case 3: _sendTestModePick(slot, "DIFFUSER " + label, () -> DATAs.sendTestDiffuser(value)); break;
+                case 4: _sendTestModePick(slot, label, () -> DATAs.sendTestLux(value)); break;
             }
         });
     }
@@ -1672,8 +1672,8 @@ public class SettingsManager {
             }
 
             // Send all defaults, then request fresh values from Arduino
-            UDPs.sendSetting(SET_TOTAL, SET_Info, SET_TOTAL);
-            UDPs.sendSetting(-1,        SET_Info, SET_TOTAL);
+            DATAs.sendSetting(SET_TOTAL, SET_Info, SET_TOTAL);
+            DATAs.sendSetting(-1,        SET_Info, SET_TOTAL);
             return true;
         });
 
@@ -1691,7 +1691,7 @@ public class SettingsManager {
             // status round-trip - that mismatch was why every press reported
             // the same "ENABLED" toast regardless of direction.
             boolean wasEnabled = STS.isEnabled();
-            UDPs.sendEnableDisable(STS.getEnableDisable());
+            DATAs.sendEnableDisable(STS.getEnableDisable());
             STS.applyEnable(!wasEnabled);
 
             Main._Toast("LED's  " + (wasEnabled ? "DISABLED" : "ENABLED"));
@@ -1710,17 +1710,17 @@ public class SettingsManager {
     }
 
     // ========================================================
-    //  Public API  (used by UDPr and LED)
+    //  Public API  (used by DATAr and LED)
     // ========================================================
 
     /**
      * Apply a setting value received from the Arduino to the UI.
      * Validates range, updates SettingInfo, and refreshes whichever
      * widget that setting's row actually has.
-     * Called by UDPr._recvSettings().
+     * Called by DATAr._recvSettings().
      *
      * @param id     Arduino EEPROM setting id 0..SET_TOTAL-1 (NOT a list position)
-     * @param value  Raw value received (already hex-decoded by UDPr)
+     * @param value  Raw value received (already hex-decoded by DATAr)
      */
     public void applyReceivedSetting(int id, int value) {
         SettingInfo si = _byId(id);
@@ -1755,7 +1755,7 @@ public class SettingsManager {
 
     /**
      * @param id  Arduino EEPROM setting id (NOT a list position)
-     * @return SettingInfo registered for that id, or null if none (read by UDPr for clamping)
+     * @return SettingInfo registered for that id, or null if none (read by DATAr for clamping)
      */
     public SettingInfo getSettingInfo(int id) {
         return _byId(id);

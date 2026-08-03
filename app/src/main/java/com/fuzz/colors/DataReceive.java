@@ -2,30 +2,37 @@ package com.fuzz.colors;
 
 /*
  * ============================================================
- *  UDPReceive.java  (alias: UDPr)
+ *  DataReceive.java  (alias: DATAr)
  * ============================================================
  *  Responsibility:
- *      • Opens and owns the shared DatagramSocket.
- *      • Runs a background thread that listens for incoming
- *        UDP packets from the Arduino.
- *      • Parses every packet and dispatches to the correct
- *        handler method (LED update, STS update, etc.).
- *      • Monitors connection health (timeout detection).
+ *      Shared inbound layer for the Arduino controller - NOT UDP-only.
+ *      Parses every packet and dispatches to the correct handler (LED
+ *      update, STS update, etc.) regardless of which transport delivered
+ *      it: the local UDP receive loop below feeds _parsePacket() directly,
+ *      while MqttTransport's cloud callback feeds the same parser via
+ *      onCloudMessage()/onCloudMessageBin(). Also:
+ *      • Opens and owns the shared DatagramSocket (local UDP only).
+ *      • Runs the background thread that listens for incoming local UDP
+ *        packets from the Arduino.
+ *      • Monitors connection health per transport - isUdpAvailable() for
+ *        local UDP, isMqttArduinoAlive() for the cloud link - and drives
+ *        the status label (see _setStatus()/Status).
  *
  *  How to use:
  *      1.  Instantiate once in Main (MainActivity):
- *              UDPr = new UDPReceive(this, LED, SET, STS);
+ *              DATAr = new DataReceive(this, LED, SET, STS);
  *
- *      2.  After construction, share the open socket with UDPs:
- *              UDPs.setSocket(UDPr.getSocket());
+ *      2.  After construction, share the open socket with DATAs:
+ *              DATAs.setSocket(DATAr.getSocket());
  *
  *      3.  Lifecycle calls from Main:
- *              UDPr.init()         – open socket (called in onCreate)
- *              UDPr.setup()        – send welcome, start receive loop
- *              UDPr.startReceiving() – call in onResume
- *              UDPr.stopReceiving()  – call in onPause / onDestroy
- *              UDPr.reconnect()    – re-open socket after failure
- *              UDPr.isAvailable()  – check socket health
+ *              DATAr.init()         – open socket (called in onCreate)
+ *              DATAr.setup()        – send welcome, start receive loop
+ *              DATAr.startReceiving() – call in onResume
+ *              DATAr.stopReceiving()  – call in onPause / onDestroy
+ *              DATAr.reconnect()    – re-open socket after failure
+ *              DATAr.isUdpAvailable()      – check local UDP liveness
+ *              DATAr.isMqttArduinoAlive()  – check cloud (MQTT) liveness
  *
  *  Received packet protocol (from Arduino):
  *      LBvv            – LED brightness
@@ -41,14 +48,14 @@ package com.fuzz.colors;
  *                        history count 0-10, lifetime refill count)
  *      DhRRVVVV...     – Full refill-cycle history (2-hex count + 10x4-hex
  *                        minutes, oldest first) - on demand only, see
- *                        UDPSend.sendDiffuserHistory()
+ *                        DataSend.sendDiffuserHistory()
  *      ~               – Stop loading bar
  *      *MSG            – Print message to console
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
- *      UDPs  = UDPSend
- *      UDPr  = UDPReceive   (this class)
+ *      DATAs  = DataSend
+ *      DATAr  = DataReceive   (this class)
  *      LED   = LEDManager
  *      SET   = SettingsManager
  *      STS   = StatusManager
@@ -65,13 +72,13 @@ import java.net.DatagramSocket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 
-public class UDPReceive {
+public class DataReceive {
 
     // --------------------------------------------------------
     // Constants – must match the Arduino firmware
     // --------------------------------------------------------
-    // Arduino IP/port live in ONE place only: UDPSend.ARDUINO_IP /
-    // UDPSend.ARDUINO_PORT. Referenced below (socket bind + status display) so
+    // Arduino IP/port live in ONE place only: DataSend.ARDUINO_IP /
+    // DataSend.ARDUINO_PORT. Referenced below (socket bind + status display) so
     // the address is changed from a single side. Do NOT redeclare here.
 
     /**
@@ -93,7 +100,7 @@ public class UDPReceive {
      * First-contact grace (ms): after a UDP welcome/probe is sent, the local
      * link is treated as "available" this long even before any reply, so a
      * fresh connect isn't demoted to cloud instantly. Past this with no UDP
-     * packet, isAvailable() returns false and the transport supervisor falls
+     * packet, isUdpAvailable() returns false and the transport supervisor falls
      * over to cloud. Should match Main.UDP_FALLBACK_MS.
      */
     public static final int UDP_PROBE_GRACE = 4000;
@@ -101,12 +108,12 @@ public class UDPReceive {
     // --------------------------------------------------------
     // Connection status enum  (used by Main to update UI)
     // --------------------------------------------------------
-    public enum Status { NoWifi, Connected, Cloud, ConnectionLost, NoConnection }
+    public enum Status { NoWifi, Connected, Cloud, CloudNoReply, ConnectionLost, NoConnection }
 
     // --------------------------------------------------------
     // State
     // --------------------------------------------------------
-    /** Shared socket – created here, injected into UDPs */
+    /** Shared socket – created here, injected into DATAs */
     private DatagramSocket socket;
 
     /** Background receive thread */
@@ -121,11 +128,22 @@ public class UDPReceive {
     /**
      * Timestamp of the last packet received specifically over the LOCAL UDP
      * socket (ms). Distinct from lastReceiveTime, which cloud traffic also
-     * refreshes — using that for isAvailable() would let cloud packets spoof
+     * refreshes — using that for isUdpAvailable() would let cloud packets spoof
      * local liveness and flap the transport. Written on the receive thread,
      * read from sender threads, hence volatile.
      */
     private volatile long lastUdpRxTime = 0;
+
+    /**
+     * Timestamp of the last genuine (non-echo) payload received over the
+     * MQTT cloud link (ms). Mirrors lastUdpRxTime for the cloud transport:
+     * a live broker SESSION (MqttTransport.isConnected()) only proves the
+     * phone reached HiveMQ, not that the board is listening on the other
+     * end, so this is the only real proof the Arduino is reachable over
+     * cloud. Written from MqttTransport's callback thread, read from the
+     * UI/supervisor thread, hence volatile.
+     */
+    private volatile long lastMqttRxTime = 0;
 
     /** Timestamp of the last UDP welcome/probe sent, arming the first-contact grace. */
     private volatile long udpProbeAt = 0;
@@ -186,11 +204,11 @@ public class UDPReceive {
     private final StatusManager STS;
 
     /**
-     * UDPs – the sender, used to resolve command ACKs ("#SSR").
+     * DATAs – the sender, used to resolve command ACKs ("#SSR").
      * Wired in from Main via setSender() after both are constructed.
-     * Alias: UDPs (UDPSend)
+     * Alias: DATAs (DataSend)
      */
-    private UDPSend UDPs;
+    private DataSend DATAs;
 
     // --------------------------------------------------------
     // Constructor
@@ -201,7 +219,7 @@ public class UDPReceive {
      * @param set   SettingsManager instance (alias: SET).
      * @param sts   StatusManager instance   (alias: STS).
      */
-    public UDPReceive(MainActivity main,
+    public DataReceive(MainActivity main,
                       LEDManager led,
                       SettingsManager set,
                       StatusManager sts) {
@@ -213,12 +231,15 @@ public class UDPReceive {
 
     /**
      * Wire the sender so incoming "#SSR" ACKs can resolve pending commands.
-     * Call once from Main after both UDPr and UDPs are constructed.
+     * Call once from Main after both DATAr and DATAs are constructed.
      *
-     * @param udps  The UDPSend instance (alias: UDPs).
+     * @param udps  The DataSend instance (alias: DATAs).
+     *
+     * Called by: MainActivity (onCreate, once, after both DATAr and DATAs
+     * are constructed).
      */
-    public void setSender(UDPSend udps) {
-        this.UDPs = udps;
+    public void setSender(DataSend udps) {
+        this.DATAs = udps;
     }
 
     // ========================================================
@@ -229,18 +250,20 @@ public class UDPReceive {
      * Open the DatagramSocket and start the timeout checker.
      * Call once from Main.onCreate().
      * On failure, status is set to NoConnection.
+     *
+     * Called by: MainActivity (onCreate) and internally by reconnect().
      */
     public void init() {
         try {
-            socket = new DatagramSocket(UDPSend.ARDUINO_PORT);
+            socket = new DatagramSocket(DataSend.ARDUINO_PORT);
             socket.setReuseAddress(true);
             socket.setSoTimeout(200);   // short timeout for the receive loop
 
-            Log.v("UDP_R", "Socket initialized on port " + UDPSend.ARDUINO_PORT);
+            Log.v("DATA_R", "Socket initialized on port " + DataSend.ARDUINO_PORT);
             _setStatus(Status.Connected);
         } catch (Exception e) {
             e.printStackTrace();
-            Log.v("UDP_R", "Socket init failed: " + e.getMessage());
+            Log.v("DATA_R", "Socket init failed: " + e.getMessage());
             _setStatus(Status.NoConnection);
         }
 
@@ -251,20 +274,25 @@ public class UDPReceive {
     /**
      * Post-init setup: clear console, start receive loop, send welcome.
      * Call once from Main.onCreate() AFTER init().
+     *
+     * Called by: MainActivity (onCreate).
      */
     public void setup() {
-        Log.v("UDP_R", "Setup called - clearing console and starting receive");
+        Log.v("DATA_R", "Setup called - clearing console and starting receive");
         Main._Console_Clear();
         startReceiving();
-        // UDPs.sendWelcome() is called from Main after setup() returns
+        // DATAs.sendWelcome() is called from Main after setup() returns
     }
 
     /**
      * Close and re-open the socket (e.g. after a WiFi drop).
      * Call from Main.onResume() or on detected socket failure.
+     *
+     * Called by: MainActivity._connectTransport() (onResume / manual retry
+     * long-press), when on WiFi and the socket isn't already open.
      */
     public void reconnect() {
-        Log.v("UDP_R", "Reconnect requested - closing and reopening socket");
+        Log.v("DATA_R", "Reconnect requested - closing and reopening socket");
         if (socket != null) socket.close();
         init();
     }
@@ -272,9 +300,11 @@ public class UDPReceive {
     /**
      * Close the socket and stop the timeout handler.
      * Call from Main.onDestroy().
+     *
+     * Called by: MainActivity (onDestroy).
      */
     public void destroy() {
-        Log.v("UDP_R", "Destroy called - stopping receive and closing socket");
+        Log.v("DATA_R", "Destroy called - stopping receive and closing socket");
         stopReceiving();
         handler.removeCallbacks(timeoutRunnable);
         if (socket != null && !socket.isClosed()) {
@@ -296,8 +326,12 @@ public class UDPReceive {
      * grace/timeout and the supervisor falls over to cloud automatically.
      *
      * @return true if the local UDP link is proven (or freshly probed) live.
+     *
+     * Called by: MainActivity (Main._UDP_Available() wrapper - used
+     * throughout the transport-selection/status logic and by DataSend to
+     * pick UDP vs MQTT) and internally by _confirmLive().
      */
-    public boolean isAvailable() {
+    public boolean isUdpAvailable() {
         if (!Main._IsWifiConn())              return false;
         if (socket == null || socket.isClosed()) return false;
         long now = System.currentTimeMillis();
@@ -306,18 +340,45 @@ public class UDPReceive {
         return false;
     }
 
-    /** @return true if the socket is bound and open (regardless of liveness). */
+    /**
+     * @return true if the socket is bound and open (regardless of liveness).
+     * Called by: MainActivity._superviseTransport() (guards the LAN probe
+     * while parked on cloud).
+     */
     public boolean isSocketOpen() {
         return socket != null && !socket.isClosed();
     }
 
-    /** Arm the first-contact grace — call right after sending a UDP welcome/probe. */
+    /**
+     * Arm the first-contact grace — call right after sending a UDP welcome/probe.
+     * Called by: MainActivity._connectTransport().
+     */
     public void markUdpProbe() {
         udpProbeAt = System.currentTimeMillis();
     }
 
     /**
-     * @return The shared DatagramSocket (inject into UDPs after init).
+     * Cloud (MQTT) link proven live: the Arduino has actually sent something
+     * over the broker within CONN_LOST_TIMEOUT. A live MqttTransport
+     * session only means the phone reached HiveMQ - it says nothing about
+     * whether the board is on the other end, so this (not
+     * MqttTransport.isConnected()) is what should gate the "CLOUD MODE"
+     * label. See onCloudMessage()/onCloudMessageBin(), the only writers.
+     *
+     * @return true if the board has replied over cloud recently.
+     *
+     * Called by: MainActivity (_refreshTransportStatus(), every supervisor
+     * tick) and internally by _confirmLive().
+     */
+    public boolean isMqttArduinoAlive() {
+        long now = System.currentTimeMillis();
+        return lastMqttRxTime > 0 && now - lastMqttRxTime <= CONN_LOST_TIMEOUT;
+    }
+
+    /**
+     * @return The shared DatagramSocket (inject into DATAs after init).
+     *
+     * Called by: MainActivity, to pass the socket to DataSend.setSocket().
      */
     public DatagramSocket getSocket() {
         return socket;
@@ -330,14 +391,17 @@ public class UDPReceive {
     /**
      * Start the background receive thread.
      * Safe to call multiple times – returns immediately if already running.
+     *
+     * Called by: setup() (initial start) and MainActivity._connectTransport()
+     * (onResume / manual retry, when on WiFi).
      */
     public void startReceiving() {
         if (receiveThread != null && receiveThread.isAlive()) {
-            Log.v("UDP_R", "Receive thread already running");
+            Log.v("DATA_R", "Receive thread already running");
             return;
         }
 
-        Log.v("UDP_R", "Starting receive thread");
+        Log.v("DATA_R", "Starting receive thread");
         isReceiving = true;
         receiveThread = new Thread(() -> {
             byte[]         buffer = new byte[1024];
@@ -346,12 +410,12 @@ public class UDPReceive {
             // Set socket timeout for the loop
             try {
                 socket.setSoTimeout(100);
-                Log.v("UDP_R", "Socket timeout set to 100ms");
+                Log.v("DATA_R", "Socket timeout set to 100ms");
             } catch (SocketException e) {
                 e.printStackTrace();
                 isReceiving = false;
-                Log.i("UDP_ERR", "SOCKET EXCEPTION");
-                Log.v("UDP_R", "Socket exception: " + e.getMessage());
+                Log.i("DATA_ERR", "SOCKET EXCEPTION");
+                Log.v("DATA_R", "Socket exception: " + e.getMessage());
                 Main.runOnUiThread(() ->
                     Main._Console(true, "--", "{#R}SOCKET EXCEPTION{##}"));
                 return;
@@ -361,10 +425,10 @@ public class UDPReceive {
                 try {
                     socket.receive(packet);
                     final int len = packet.getLength();
-                    Log.v("UDP_R", "Packet received, length: " + len);
+                    Log.v("DATA_R", "UDP : Packet received, length: " + len);
                     // Any datagram on our socket is the board answering locally,
                     // so this is the authoritative local-liveness signal that
-                    // isAvailable() gates on (cloud traffic must not touch it).
+                    // isUdpAvailable() gates on (cloud traffic must not touch it).
                     lastUdpRxTime = System.currentTimeMillis();
                     // The compressed colour packet ('L''K') is RAW BINARY - it can
                     // hold 0x00 and bytes >= 0x80, which new String(...) would mangle
@@ -373,14 +437,14 @@ public class UDPReceive {
                     // String path exactly as before.
                     final byte[] data = java.util.Arrays.copyOf(packet.getData(), len);
                     if (len >= 2 && data[0] == 'L' && data[1] == 'K') {
-                        Log.v("UDP_R", "Binary color packet detected");
+                        Log.v("DATA_R", "UDP : Binary color packet detected");
                         Main.runOnUiThread(() -> {
                             lastReceiveTime = System.currentTimeMillis();
                             _recvLedColorBin(data, len);
                         });
                     } else {
                         final String msg = new String(data, 0, len);
-                        Log.v("UDP_R", "ASCII packet: " + msg);
+                        Log.v("DATA_R", "UDP : ASCII packet: " + msg);
                         Main.runOnUiThread(() -> {
                             lastReceiveTime = System.currentTimeMillis();
                             _parsePacket(msg, msg.length());
@@ -403,9 +467,11 @@ public class UDPReceive {
     /**
      * Stop the background receive thread.
      * Call from Main.onPause() and Main.onDestroy().
+     *
+     * Called by: MainActivity (onPause) and internally by destroy().
      */
     public void stopReceiving() {
-        Log.v("UDP_R", "Stop receiving called");
+        Log.v("DATA_R", "Stop receiving called");
         if (receiveThread != null && receiveThread.isAlive()) {
             receiveThread.interrupt();
         }
@@ -430,10 +496,17 @@ public class UDPReceive {
      * UI thread to match the UDP receive loop.
      *
      * @param message  Raw payload string from the broker.
+     *
+     * Called by: MqttTransport.messageArrived() (cloud RX, ASCII payloads).
      */
     public void onCloudMessage(final String message) {
         if (message == null || message.isEmpty()) return;
-        Log.v("UDP_R", "Cloud message received: " + message);
+        Log.v("DATA_R", "MQTT : message received: " + message);
+        // Proof the Arduino itself is on the other end of the broker -
+        // stamp this even if local ends up muting the payload below, so
+        // isMqttArduinoAlive() stays accurate regardless of which
+        // transport is currently primary.
+        lastMqttRxTime = System.currentTimeMillis();
         // Local UDP is the primary link only while it's actually usable.
         // _UDP_Available() (unlike raw _IsWifiConn()) already respects the
         // CLOUD ONLY pin, so a forced-cloud session still applies cloud
@@ -453,10 +526,14 @@ public class UDPReceive {
      *
      * @param data  Payload bytes starting at 'L' 'K'.
      * @param len   Payload length.
+     *
+     * Called by: MqttTransport.messageArrived() (cloud RX, binary 'LK'
+     * colour packets).
      */
     public void onCloudMessageBin(final byte[] data, final int len) {
         if (data == null || len < 2) return;
-        Log.v("UDP_R", "Cloud binary message received, length: " + len);
+        Log.v("DATA_R", "MQTT : binary message received, length: " + len);
+        lastMqttRxTime = System.currentTimeMillis();   // see onCloudMessage() above
         if (Main._UDP_Available()) return;
         Main.runOnUiThread(() -> {
             lastReceiveTime = System.currentTimeMillis();
@@ -464,27 +541,33 @@ public class UDPReceive {
         });
     }
 
+    /**
+     * Called by: internal only - the local receive loop in startReceiving()
+     * (ASCII branch) and onCloudMessage(). Dispatches to every _recv*()
+     * handler below via the switch on message.charAt(0), regardless of
+     * which transport the packet arrived on.
+     */
     private void _parsePacket(String message, int size) {
         boolean recognized = false;
-        Log.v("UDP_R", "Parsing packet: " + message + " size: " + size);
+        Log.v("DATA_R", "Parsing packet: " + message + " size: " + size);
 
         switch (message.charAt(0)) {
 
             case '#': // #SSR – per-command ACK
-                Log.v("UDP_R", "ACK packet detected");
+                Log.v("DATA_R", "ACK packet detected");
                 _recvAck(message, size);
                 recognized = true;
                 break;
 
             case '*': // *MSG – print to console
-                Log.v("UDP_R", "Message packet detected");
+                Log.v("DATA_R", "Message packet detected");
                 _recvMsg(message.substring(1), size);
                 recognized = true;
                 break;
 
             case 'L': // LED sub-commands
                 if (message.length() < 2) break;
-                Log.v("UDP_R", "LED command: " + message.charAt(1));
+                Log.v("DATA_R", "LED command: " + message.charAt(1));
                 switch (message.charAt(1)) {
                     case 'B': // LBvv – brightness
                         _recvLedBrightness(message, size);
@@ -507,7 +590,7 @@ public class UDPReceive {
 
             case 'D': // Diffuser sub-commands relayed from SmartTV (mirrors the diffuser's own D-prefix wire format)
                 if (message.length() < 2) break;
-                Log.v("UDP_R", "Diffuser command: " + message.charAt(1));
+                Log.v("DATA_R", "Diffuser command: " + message.charAt(1));
                 switch (message.charAt(1)) {
                     case 'h': // Dh + 2-hex count + 10x4-hex minutes – full refill history (on demand only)
                         _recvDiffuserHistory(message, size);
@@ -517,73 +600,73 @@ public class UDPReceive {
                 break;
 
             case 'S': // SiiVV… – settings
-                Log.v("UDP_R", "Settings packet detected");
+                Log.v("DATA_R", "Settings packet detected");
                 _recvSettings(message, size);
                 recognized = true;
                 break;
 
             case 's': // sTTMMUUAADD – core status (TV/Motion/UDPRAW/Ambient/Diffuser)
-                Log.v("UDP_R", "Status packet detected");
+                Log.v("DATA_R", "Status packet detected");
                 _recvStatus(message, size);
                 recognized = true;
                 break;
 
             case 'H': // HTTHH – climate (temperature, humidity)
-                Log.v("UDP_R", "Climate packet detected");
+                Log.v("DATA_R", "Climate packet detected");
                 _recvClimate(message, size);
                 recognized = true;
                 break;
 
             case 'E': // Ee – LED enable / disable
-                Log.v("UDP_R", "Enable packet detected");
+                Log.v("DATA_R", "Enable packet detected");
                 _recvEnable(message, size);
                 recognized = true;
                 break;
 
             case 'M': // Mllll – lux level (classified 1..5)
-                Log.v("UDP_R", "Lux packet detected");
+                Log.v("DATA_R", "Lux packet detected");
                 _recvLux(message, size);
                 recognized = true;
                 break;
 
             case 'p': // pTTTT – parfum remaining minutes (0000 = inactive)
-                Log.v("UDP_R", "Parfum packet detected");
+                Log.v("DATA_R", "Parfum packet detected");
                 _recvParfum(message, size);
                 recognized = true;
                 break;
 
             case 'u': // uAAAAVVVVRRLLLL – diffuser usage/refill stats
-                Log.v("UDP_R", "Diffuser usage packet detected");
+                Log.v("DATA_R", "Diffuser usage packet detected");
                 _recvDiffuserUsage(message, size);
                 recognized = true;
                 break;
 
             case '@': // @mm – active test mode
-                Log.v("UDP_R", "Test mode packet detected");
+                Log.v("DATA_R", "Test mode packet detected");
                 _recvTestMode(message, size);
                 recognized = true;
                 break;
 
             case 'w': // wRRWW – |rssi| dBm + wifi state
-                Log.v("UDP_R", "Link packet detected");
+                Log.v("DATA_R", "Link packet detected");
                 _recvLink(message, size);
                 recognized = true;
                 break;
 
             case 'f': // ffff – fault bitmask (transition only)
-                Log.v("UDP_R", "Fault packet detected");
+                Log.v("DATA_R", "Fault packet detected");
                 _recvFaults(message, size);
                 recognized = true;
                 break;
 
             case 'e': // ee – EEPROM write landed
-                Log.v("UDP_R", "EEPROM saved packet detected");
+                Log.v("DATA_R", "EEPROM saved packet detected");
                 _recvSaved(message, size);
                 recognized = true;
                 break;
 
             case 'k': // k – keep-alive ping from the board; answer + mark live
-                Log.v("UDP_R", "Keep-alive packet detected");
+                Log.v("DATA_R", "Keep-alive packet detected");
                 _recvKeepAlive();
                 recognized = true;
                 break;
@@ -592,7 +675,7 @@ public class UDPReceive {
         if (recognized) {
             _confirmLive();
         } else {
-            Log.i("UDP_R", "MSG [" + message + "] size [" + size + "]");
+            Log.i("DATA_R", "MSG [" + message + "] size [" + size + "]");
             Main._Console(true, "◄◄",
                     "COMMAND NOT FOUND [{#Y}" + message
                     + "{##}] SIZE [{#R}" + size + "{##}]");
@@ -604,28 +687,31 @@ public class UDPReceive {
     // ========================================================
 
     /**
-     * '#SSR' – per-command ACK. Resolves the pending command in UDPs so the
+     * '#SSR' – per-command ACK. Resolves the pending command in DATAs so the
      * app learns whether that specific command was applied.
      * SS = 2-hex sequence id, R = 1-hex result code.
      *
      * @param message  Full packet ("#" + seq + result).
      * @param size     Must be 4.
+     *
+     * Called by: internal only - _parsePacket() (case '#'). Feeds
+     * DataSend.ackResolve() to resolve the pending command.
      */
     private void _recvAck(String message, int size) {
-        Log.v("UDP_R", "Processing ACK: " + message + " size: " + size);
+        Log.v("DATA_R", "Processing ACK: " + message + " size: " + size);
         if (size != 4) {
-            Log.i("UDP_R", "ACK SIZE NOT VALID [" + message + "] SIZE [" + size + "]");
+            Log.i("DATA_R", "ACK SIZE NOT VALID [" + message + "] SIZE [" + size + "]");
             return;
         }
         try {
             int s      = Integer.parseInt(message.substring(1, 3), 16);
             int result = Integer.parseInt(message.substring(3, 4), 16);
-            Log.i("UDP_R", "ACK seq [" + s + "] result [" + result + "]");
-            Log.v("UDP_R", "ACK resolved - seq: " + s + " result: " + result);
-            if (UDPs != null) UDPs.ackResolve(s, result);
+            Log.i("DATA_R", "ACK seq [" + s + "] result [" + result + "]");
+            Log.v("DATA_R", "ACK resolved - seq: " + s + " result: " + result);
+            if (DATAs != null) DATAs.ackResolve(s, result);
         } catch (NumberFormatException e) {
-            Log.i("UDP_R", "ACK PARSE ERROR [" + message + "]");
-            Log.v("UDP_R", "ACK parse exception: " + e.getMessage());
+            Log.i("DATA_R", "ACK PARSE ERROR [" + message + "]");
+            Log.v("DATA_R", "ACK parse exception: " + e.getMessage());
         }
     }
 
@@ -648,24 +734,29 @@ public class UDPReceive {
     /** Latest fault bitmask from 'f'. */
     public int faults = 0;
 
-    /** @return true when the given FAULT_* bit is currently set. */
+    /**
+     * @return true when the given FAULT_* bit is currently set.
+     * Called by: nobody currently - no call sites found elsewhere in the
+     * app. Public accessor for the `faults` bitmask set by _recvFaults();
+     * kept for future fault-bit UI, not dead by design.
+     */
     public boolean hasFault(int bit) {
         return (faults & bit) != 0;
     }
 
-    /** '@mm' – the test mode currently forced, 0 = none. */
+    /** '@mm' – the test mode currently forced, 0 = none. Called by: _parsePacket() only. */
     private void _recvTestMode(String message, int size) {
-        Log.v("UDP_R", "Processing test mode: " + message);
+        Log.v("DATA_R", "Processing test mode: " + message);
         if (size < 3) return;
         try {
             testMode = Integer.parseInt(message.substring(1, 3), 16);
-            Log.v("UDP_R", "Test mode set to: " + testMode);
+            Log.v("DATA_R", "Test mode set to: " + testMode);
             Main._Console(true, "\u25c4\u25c4", "TEST MODE ["
                     + ((testMode == 0) ? "none" : SET_TestModeName(testMode)) + "]");
         } catch (NumberFormatException ignored) { }
     }
 
-    /** @return firmware __testmode name for a raw value. */
+    /** @return firmware __testmode name for a raw value. Called by: _recvTestMode() only. */
     private String SET_TestModeName(int m) {
         switch (m) {
             case 1:  return "TV ON";
@@ -679,25 +770,25 @@ public class UDPReceive {
         }
     }
 
-    /** 'HTTHH' – climate: temperature + humidity (each 2-hex, degrees / %). */
+    /** 'HTTHH' – climate: temperature + humidity (each 2-hex, degrees / %). Called by: _parsePacket() only. */
     private void _recvClimate(String message, int size) {
-        Log.v("UDP_R", "Processing climate: " + message);
+        Log.v("DATA_R", "Processing climate: " + message);
         if (size < 5) return;
         try {
             int temp = Integer.parseInt(message.substring(1, 3), 16);
             int hum  = Integer.parseInt(message.substring(3, 5), 16);
-            Log.v("UDP_R", "Climate - temp: " + temp + " humidity: " + hum);
+            Log.v("DATA_R", "Climate - temp: " + temp + " humidity: " + hum);
             STS.applyClimate(temp, hum);
         } catch (NumberFormatException ignored) { }
     }
 
-    /** 'Ee' – global LED enable (1) / disable (0). */
+    /** 'Ee' – global LED enable (1) / disable (0). Called by: _parsePacket() only. */
     private void _recvEnable(String message, int size) {
-        Log.v("UDP_R", "Processing enable: " + message);
+        Log.v("DATA_R", "Processing enable: " + message);
         if (size < 2) return;
         try {
             int en = Integer.parseInt(message.substring(1, 2), 16);
-            Log.v("UDP_R", "Enable state: " + (en != 0));
+            Log.v("DATA_R", "Enable state: " + (en != 0));
             STS.applyEnable(en != 0);
         } catch (NumberFormatException ignored) { }
     }
@@ -706,17 +797,19 @@ public class UDPReceive {
      * 'wRRWW' – |rssi| dBm + NET_WiFiStatus. The board buckets the signal so
      * this only arrives when the strength band or wifi state actually changes.
      * Feeds the top-left Arduino/WiFi indicator.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvLink(String message, int size) {
-        Log.v("UDP_R", "Processing link: " + message);
+        Log.v("DATA_R", "Processing link: " + message);
         if (size < 5) return;
         try {
             int mag   = Integer.parseInt(message.substring(1, 3), 16);
             rssi      = (mag == 0) ? 0 : -mag;
             wifiState = Integer.parseInt(message.substring(3, 5), 16);
-            Log.v("UDP_R", "Link - rssi: " + rssi + " wifiState: " + wifiState);
+            Log.v("DATA_R", "Link - rssi: " + rssi + " wifiState: " + wifiState);
             Main.updateWifiSignal(mag, wifiState);
-            Log.i("UDP_R", "LINK rssi [" + rssi + "] wifi [" + wifiState + "]");
+            Log.i("DATA_R", "LINK rssi [" + rssi + "] wifi [" + wifiState + "]");
         } catch (NumberFormatException ignored) { }
     }
 
@@ -724,29 +817,31 @@ public class UDPReceive {
      * 'k' – keep-alive ping from the board (every ~10 s). Reply with a bare 'k'
      * so it knows the app is still here; the reply is un-enveloped on purpose
      * (the firmware treats a 1-char 'k' as liveness only).
+     *
+     * Called by: _parsePacket() only. Calls DataSend.sendKeepAlive() in reply.
      */
     private void _recvKeepAlive() {
-        Log.v("UDP_R", "Keep-alive received, sending response");
-        if (UDPs != null) UDPs.sendKeepAlive();
+        Log.v("DATA_R", "Keep-alive received, sending response");
+        if (DATAs != null) DATAs.sendKeepAlive();
     }
 
-    /** 'fffff' – fault bitmask; only transitions are worth a console line. */
+    /** 'fffff' – fault bitmask; only transitions are worth a console line. Called by: _parsePacket() only. */
     private void _recvFaults(String message, int size) {
-        Log.v("UDP_R", "Processing faults: " + message);
+        Log.v("DATA_R", "Processing faults: " + message);
         if (size < 5) return;
         try {
             int now = Integer.parseInt(message.substring(1, 5), 16);
             int raised  = now & ~faults;
             int cleared = faults & ~now;
             faults = now;
-            Log.v("UDP_R", "Faults - now: " + now + " raised: " + raised + " cleared: " + cleared);
+            Log.v("DATA_R", "Faults - now: " + now + " raised: " + raised + " cleared: " + cleared);
 
             if (raised  != 0) Main._Console(true, "\u25c4\u25c4", "{#R}FAULT{##} [" + _faultNames(raised) + "]");
             if (cleared != 0) Main._Console(true, "\u25c4\u25c4", "{#G}FAULT CLEARED{##} [" + _faultNames(cleared) + "]");
         } catch (NumberFormatException ignored) { }
     }
 
-    /** @return comma-joined names for the set bits of a fault mask. */
+    /** @return comma-joined names for the set bits of a fault mask. Called by: _recvFaults() only. */
     private String _faultNames(int mask) {
         StringBuilder b = new StringBuilder();
         if ((mask & FAULT_WIFI)         != 0) b.append("WIFI ");
@@ -764,13 +859,15 @@ public class UDPReceive {
      * A command ack only means "accepted"; settings live in RAM until the
      * delayed write runs, so this is the first point at which a change is
      * safe across a power cut.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvSaved(String message, int size) {
-        Log.v("UDP_R", "Processing saved: " + message);
+        Log.v("DATA_R", "Processing saved: " + message);
         if (size < 3) return;
         try {
             int result = Integer.parseInt(message.substring(1, 3), 16);
-            Log.v("UDP_R", "EEPROM save result: " + result);
+            Log.v("DATA_R", "EEPROM save result: " + result);
             Main._Console(true, "\u25c4\u25c4", (result == 0)
                     ? "SETTINGS SAVED [OK]"
                     : "SETTINGS SAVE [{#R}FAILED{##}] code [" + result + "]");
@@ -787,9 +884,11 @@ public class UDPReceive {
      *
      * @param message  Text after the leading '*' (envelope header included).
      * @param size     Total packet size.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvMsg(String message, int size) {
-        Log.v("UDP_R", "Processing message: " + message);
+        Log.v("DATA_R", "Processing message: " + message);
         String clean = message.replace("\n", "").replace("\r", "");
 
         // Try new format with PRNT and _Debug parameters (header = 1 + 2 + 2 + 4 + 6 = 15 chars)
@@ -804,9 +903,9 @@ public class UDPReceive {
                 
                 // Verify it's the new format by checking for "PRNT"
                 if ("PRNT".equals(prnt)) {
-                    Log.v("UDP_R", "New format log - level: " + level + " src: " + src + " seq: " + seq);
+                    Log.v("DATA_R", "New format log - level: " + level + " src: " + src + " seq: " + seq);
                     Main._ConsoleLog(level, src, seq, text);
-                    Log.i("UDP_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "] prnt [" + prnt + "] debug [" + debug + "]");
+                    Log.i("DATA_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "] prnt [" + prnt + "] debug [" + debug + "]");
                     return;
                 }
             } catch (NumberFormatException ignored) {
@@ -820,18 +919,18 @@ public class UDPReceive {
                 int level = Integer.parseInt(clean.substring(0, 1), 16);
                 int src   = Integer.parseInt(clean.substring(1, 3), 16);
                 int seq   = Integer.parseInt(clean.substring(3, 5), 16);
-                Log.v("UDP_R", "Old format log - level: " + level + " src: " + src + " seq: " + seq);
+                Log.v("DATA_R", "Old format log - level: " + level + " src: " + src + " seq: " + seq);
                 Main._ConsoleLog(level, src, seq, clean.substring(ConsoleAdapter.LOG_HDR));
-                Log.i("UDP_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "]");
+                Log.i("DATA_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "]");
                 return;
             } catch (NumberFormatException ignored) {
                 // malformed header - fall through to the legacy path
             }
         }
 
-        Log.v("UDP_R", "Legacy format message: " + clean);
+        Log.v("DATA_R", "Legacy format message: " + clean);
         Main._Console(true, "{#C}*{##} ", clean);
-        Log.i("UDP_R", "PRINT [" + clean + "] SIZE [" + size + "]");
+        Log.i("DATA_R", "PRINT [" + clean + "] SIZE [" + size + "]");
     }
 
     /**
@@ -840,14 +939,16 @@ public class UDPReceive {
      *
      * @param message  Full 4-char packet.  e.g. "LB3f"
      * @param size     Must be 4.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvLedBrightness(String message, int size) {
-        Log.v("UDP_R", "Processing LED brightness: " + message);
+        Log.v("DATA_R", "Processing LED brightness: " + message);
         if (size == 4) {
             int brightness = Integer.parseInt(message.substring(2, 4), 16);
-            Log.v("UDP_R", "Brightness value: " + brightness);
+            Log.v("DATA_R", "Brightness value: " + brightness);
             LED.setBrightnessProgress(brightness);
-            Log.i("UDP_R", "BRIGHTNESS PROGRESS [" + brightness + "]");
+            Log.i("DATA_R", "BRIGHTNESS PROGRESS [" + brightness + "]");
             Main._Console(true, "◄◄",
                     "BRIGHTNESS PROGRESS [{#Y}" + brightness + "{##}]");
         }
@@ -860,9 +961,12 @@ public class UDPReceive {
      *
      * @param message  Full packet.
      * @param size     10 (single LED) or 2 + 8*N (multiple LEDs).
+     *
+     * Called by: _parsePacket() only (legacy ASCII path - see
+     * _recvLedColorBin() for the compressed replacement).
      */
     private void _recvLedColor(String message, int size) {
-        Log.v("UDP_R", "Processing LED color: " + message + " size: " + size);
+        Log.v("DATA_R", "Processing LED color: " + message + " size: " + size);
         if (size == 10 || ((size - 2) % 8 == 0)) {
             for (int i = 2; i < size; i += 8) {
                 int l = Integer.parseInt(message.substring(i,     i + 2), 16);
@@ -871,23 +975,23 @@ public class UDPReceive {
                 int b = Integer.parseInt(message.substring(i + 6, i + 8), 16);
 
                 if (l < LED.LED_TOTAL) {
-                    Log.v("UDP_R", "LED " + l + " color - R:" + r + " G:" + g + " B:" + b);
+                    Log.v("DATA_R", "LED " + l + " color - R:" + r + " G:" + g + " B:" + b);
                     LED.updateColor(l, r, g, b);
                     if (size == 10) {
-                        Log.i("UDP_R", "LED [" + l + "] COLOR [R:" + r
+                        Log.i("DATA_R", "LED [" + l + "] COLOR [R:" + r
                                 + "][G:" + g + "][B:" + b + "]");
                     } else if (i == 2) {
-                        Log.i("UDP_R", "MULTIPLE COLOR [" + size
+                        Log.i("DATA_R", "MULTIPLE COLOR [" + size
                                 + "] LEDS [" + (size - 2) / 8 + "]");
                     }
                 } else {
-                    Log.i("UDP_R", "LED [" + l + "] NOT FOUND");
+                    Log.i("DATA_R", "LED [" + l + "] NOT FOUND");
                     Main._Console(true, "◄◄",
                             "LED [{#Y}" + l + "{##}] {#R}NOT FOUND{##}");
                 }
             }
         } else {
-            Log.i("UDP_R", "LED COLOR SIZE NOT VALID [" + message
+            Log.i("DATA_R", "LED COLOR SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             Main._Console(true, "◄◄",
                     "SIZE NOT VALID [{#Y}" + message
@@ -906,9 +1010,13 @@ public class UDPReceive {
      *
      * @param d    Packet bytes ('L''K' at [0..1]).
      * @param len  Packet length.
+     *
+     * Called by: internal only - NOT via _parsePacket() (binary payloads
+     * skip the ASCII switch). Called directly from the local receive loop
+     * in startReceiving() and from onCloudMessageBin().
      */
     private void _recvLedColorBin(byte[] d, int len) {
-        Log.v("UDP_R", "Processing binary LED color, length: " + len);
+        Log.v("DATA_R", "Processing binary LED color, length: " + len);
         int i     = 2;   // skip 'L''K'
         int total = 0;
         while (i < len) {
@@ -918,13 +1026,13 @@ public class UDPReceive {
                 int start = d[i++] & 0xFF;
                 int count = d[i++] & 0xFF;
                 int r = d[i++] & 0xFF, g = d[i++] & 0xFF, b = d[i++] & 0xFF;
-                Log.v("UDP_R", "FILL op - start: " + start + " count: " + count + " RGB: " + r + "," + g + "," + b);
+                Log.v("DATA_R", "FILL op - start: " + start + " count: " + count + " RGB: " + r + "," + g + "," + b);
                 LED.updateColorBulk(start, count, r, g, b);   // one shot, no per-pixel animator
                 total += count;
             } else if (op == 0x02) {                  // SETN count {idx r g b}
                 if (i >= len) break;
                 int count = d[i++] & 0xFF;
-                Log.v("UDP_R", "SETN op - count: " + count);
+                Log.v("DATA_R", "SETN op - count: " + count);
                 int[]   idx = new int[count];
                 int[][] rgb = new int[count][3];
                 int f = 0;                            // valid entries actually read
@@ -944,11 +1052,11 @@ public class UDPReceive {
                 }
                 total += f;
             } else {
-                Log.i("UDP_R", "LK BAD OPCODE [" + op + "] at [" + (i - 1) + "]");
+                Log.i("DATA_R", "LK BAD OPCODE [" + op + "] at [" + (i - 1) + "]");
                 break;
             }
         }
-        Log.i("UDP_R", "LK COLOR LEDS [" + total + "] BYTES [" + len + "]");
+        Log.i("DATA_R", "LK COLOR LEDS [" + total + "] BYTES [" + len + "]");
     }
 
     /**
@@ -957,9 +1065,11 @@ public class UDPReceive {
      *
      * @param message  14-char packet.
      * @param size     Must be 14.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvDualColor(String message, int size) {
-        Log.v("UDP_R", "Processing dual color: " + message);
+        Log.v("DATA_R", "Processing dual color: " + message);
         if (size == 14) {
             int r1 = Integer.parseInt(message.substring(2,  4),  16);
             int g1 = Integer.parseInt(message.substring(4,  6),  16);
@@ -969,16 +1079,16 @@ public class UDPReceive {
             int b2 = Integer.parseInt(message.substring(12, 14), 16);
 
             // Delegate save + UI refresh to LED
-            Log.v("UDP_R", "Dual color - L: " + r1 + "," + g1 + "," + b1 + " R: " + r2 + "," + g2 + "," + b2);
+            Log.v("DATA_R", "Dual color - L: " + r1 + "," + g1 + "," + b1 + " R: " + r2 + "," + g2 + "," + b2);
             LED.addDualColor(r1, g1, b1, r2, g2, b2);
 
-            Log.i("UDP_R", "DUAL COLOR [" + r1 + " " + g1 + " " + b1
+            Log.i("DATA_R", "DUAL COLOR [" + r1 + " " + g1 + " " + b1
                     + "] <> [" + r2 + " " + g2 + " " + b2 + "]");
             Main._Console(true, "◄◄",
                     "DUAL COLOR [" + r1 + "," + g1 + "," + b1
                     + "] -- [" + r2 + "," + g2 + "," + b2 + "]");
         } else {
-            Log.i("UDP_R", "DUAL COLOR SIZE NOT VALID [" + message
+            Log.i("DATA_R", "DUAL COLOR SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             Main._Console(true, "◄◄",
                     "DUAL COLOR SIZE NOT VALID [{#Y}" + message
@@ -992,18 +1102,20 @@ public class UDPReceive {
      *
      * @param message  4-char packet.
      * @param size     Must be 4.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvMaxBrightness(String message, int size) {
-        Log.v("UDP_R", "Processing max brightness: " + message);
+        Log.v("DATA_R", "Processing max brightness: " + message);
         if (size == 4) {
             int brightness = Integer.parseInt(message.substring(2, 4), 16);
-            Log.v("UDP_R", "Max brightness value: " + brightness);
+            Log.v("DATA_R", "Max brightness value: " + brightness);
             LED.setMaxBrightness(brightness);
-            Log.i("UDP_R", "MAX BRIGHTNESS [" + brightness + "]");
+            Log.i("DATA_R", "MAX BRIGHTNESS [" + brightness + "]");
             Main._Console(true, "◄◄",
                     "MAX BRIGHTNESS [{#Y}" + brightness + "{##}]");
         } else {
-            Log.i("UDP_R", "MAX BRIGHTNESS SIZE NOT VALID [" + message
+            Log.i("DATA_R", "MAX BRIGHTNESS SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             Main._Console(true, "◄◄",
                     "MAX BRIGHTNESS SIZE NOT VALID [{#Y}" + message
@@ -1017,9 +1129,11 @@ public class UDPReceive {
      *
      * @param message  Packet starting with 'S'.
      * @param size     5 (single) or 1 + 4*N (multiple).
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvSettings(String message, int size) {
-        Log.v("UDP_R", "Processing settings: " + message + " size: " + size);
+        Log.v("DATA_R", "Processing settings: " + message + " size: " + size);
         if (size == 5 || ((size - 1) % 4 == 0)) {
             StringBuilder validLog = new StringBuilder("SETTING ");
             for (int i = 1; i < size; i += 4) {
@@ -1041,12 +1155,12 @@ public class UDPReceive {
                     validLog.append("[").append(id).append(":")
                             .append(value).append("] ");
                 } else {
-                    Log.i("UDP_R", "SETTING [" + id + "] NOT FOUND");
+                    Log.i("DATA_R", "SETTING [" + id + "] NOT FOUND");
                 }
             }
-            Log.i("UDP_R", validLog.toString());
+            Log.i("DATA_R", validLog.toString());
         } else {
-            Log.i("UDP_R", "SETTINGS SIZE NOT VALID [" + message
+            Log.i("DATA_R", "SETTINGS SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             Main._Console(true, "◄◄",
                     "SETTINGS SIZE NOT VALID [{#Y}" + message
@@ -1064,16 +1178,18 @@ public class UDPReceive {
      *
      * @param message  11-char packet.
      * @param size     Must be 11.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvStatus(String message, int size) {
-        Log.v("UDP_R", "Processing status: " + message);
+        Log.v("DATA_R", "Processing status: " + message);
         if (size != 11) {
-            Log.i("UDP_R", "STATUS SIZE NOT VALID [" + message
+            Log.i("DATA_R", "STATUS SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             return;
         }
 
-        Log.i("UDP_R", "STATUS [" + message + "]");
+        Log.i("DATA_R", "STATUS [" + message + "]");
         STS.applyStatus(message);
         LED._refreshHBDualSplit(); // TV on/off can flip HB into/out of dual split
     }
@@ -1085,22 +1201,24 @@ public class UDPReceive {
      *
      * @param message  Full 5-char packet starting with 'p'.
      * @param size     Byte-length of the message (must be 5).
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvParfum(String message, int size) {
-        Log.v("UDP_R", "Processing parfum: " + message);
+        Log.v("DATA_R", "Processing parfum: " + message);
         if (size != 5) {
-            Log.i("UDP_R", "PARFUM SIZE NOT VALID [" + message
+            Log.i("DATA_R", "PARFUM SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             return;
         }
 
         try {
             int minutes = Integer.parseInt(message.substring(1, 5), 16);
-            Log.v("UDP_R", "Parfum minutes: " + minutes);
-            Log.i("UDP_R", "PARFUM [" + minutes + " min]");
+            Log.v("DATA_R", "Parfum minutes: " + minutes);
+            Log.i("DATA_R", "PARFUM [" + minutes + " min]");
             STS.applyParfumRemaining(minutes);
         } catch (NumberFormatException e) {
-            Log.i("UDP_R", "PARFUM PARSE ERROR [" + message + "]");
+            Log.i("DATA_R", "PARFUM PARSE ERROR [" + message + "]");
         }
     }
 
@@ -1113,11 +1231,13 @@ public class UDPReceive {
      *
      * @param message  Full 15-char packet starting with 'u'.
      * @param size     Byte-length of the message (must be 15).
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvDiffuserUsage(String message, int size) {
-        Log.v("UDP_R", "Processing diffuser usage: " + message);
+        Log.v("DATA_R", "Processing diffuser usage: " + message);
         if (size != 15) {
-            Log.i("UDP_R", "DIFFUSER USAGE SIZE NOT VALID [" + message
+            Log.i("DATA_R", "DIFFUSER USAGE SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             return;
         }
@@ -1127,27 +1247,29 @@ public class UDPReceive {
             int avgMin       = Integer.parseInt(message.substring(5, 9), 16);
             int refillCount  = Integer.parseInt(message.substring(9, 11), 16);
             int totalRefills = Integer.parseInt(message.substring(11, 15), 16);
-            Log.i("UDP_R", "DIFFUSER USAGE [accum=" + accumMin + "min avg=" + avgMin
+            Log.i("DATA_R", "DIFFUSER USAGE [accum=" + accumMin + "min avg=" + avgMin
                     + "min refills=" + refillCount + "/10 total=" + totalRefills + "]");
             STS.applyDiffuserUsage(accumMin, avgMin, refillCount, totalRefills);
         } catch (NumberFormatException e) {
-            Log.i("UDP_R", "DIFFUSER USAGE PARSE ERROR [" + message + "]");
+            Log.i("DATA_R", "DIFFUSER USAGE PARSE ERROR [" + message + "]");
         }
     }
 
     /**
      * 'Dh' + 2-hex count + 10x4-hex minutes - full refill-cycle history, sent
-     * only on demand (see UDPSend.sendDiffuserHistory()) and never cached by
+     * only on demand (see DataSend.sendDiffuserHistory()) and never cached by
      * SmartTV, which just relays the diffuser's reply straight through.
      * Oldest cycle first; slots beyond the valid count are 0 (unused).
      *
      * @param message  Full 44-char packet starting with "Dh".
      * @param size     Byte-length of the message (must be 44).
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvDiffuserHistory(String message, int size) {
-        Log.v("UDP_R", "Processing diffuser history: " + message);
+        Log.v("DATA_R", "Processing diffuser history: " + message);
         if (size != 44) {
-            Log.i("UDP_R", "DIFFUSER HISTORY SIZE NOT VALID [" + message
+            Log.i("DATA_R", "DIFFUSER HISTORY SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             return;
         }
@@ -1159,10 +1281,10 @@ public class UDPReceive {
                 int start = 4 + i * 4;
                 minutes[i] = Integer.parseInt(message.substring(start, start + 4), 16);
             }
-            Log.i("UDP_R", "DIFFUSER HISTORY [" + count + "/10] " + java.util.Arrays.toString(minutes));
+            Log.i("DATA_R", "DIFFUSER HISTORY [" + count + "/10] " + java.util.Arrays.toString(minutes));
             STS.applyDiffuserHistory(count, minutes);
         } catch (NumberFormatException e) {
-            Log.i("UDP_R", "DIFFUSER HISTORY PARSE ERROR [" + message + "]");
+            Log.i("DATA_R", "DIFFUSER HISTORY PARSE ERROR [" + message + "]");
         }
     }
 
@@ -1172,6 +1294,9 @@ public class UDPReceive {
      *
      * @param hex  Exactly 8 hex digits, case-insensitive.
      * @return Dotted-decimal address, or null if the input isn't valid hex.
+     *
+     * Called by: nobody currently - no call sites found (dead code as of
+     * this pass, not wired into any _recv* handler).
      */
     private String _hexToIp(String hex) {
         try {
@@ -1190,15 +1315,17 @@ public class UDPReceive {
      *
      * @param message  5-char packet.
      * @param size     Must be 5.
+     *
+     * Called by: _parsePacket() only.
      */
     private void _recvLux(String message, int size) {
-        Log.v("UDP_R", "Processing lux: " + message);
+        Log.v("DATA_R", "Processing lux: " + message);
         if (size == 5) {
             int lux = Integer.parseInt(message.substring(1, 5), 16);
-            Log.v("UDP_R", "Lux level: " + lux);
+            Log.v("DATA_R", "Lux level: " + lux);
             STS.applyLux(lux);
         } else {
-            Log.i("UDP_R", "LUX SIZE NOT VALID [" + message
+            Log.i("DATA_R", "LUX SIZE NOT VALID [" + message
                     + "] SIZE [" + size + "]");
             Main._Console(true, "◄◄",
                     "LUX SIZE NOT VALID [{#Y}" + message
@@ -1221,18 +1348,33 @@ public class UDPReceive {
      * Live-status flavour: CLOUD MODE when the controller is reached over MQTT
      * (no local WiFi), otherwise the local Connected (IP:port) label. Call on
      * every liveness confirmation so the top label tracks the active transport.
+     *
+     * Called by: internal _parsePacket() (every recognized local-UDP or
+     * cloud packet) and MqttTransport.connect()'s success callback (broker
+     * session just came up - may still resolve to CloudNoReply below).
      */
     public void _confirmLive() {
-        Log.v("UDP_R", "Confirming live status");
+        Log.v("DATA_R", "Confirming live status");
         Main._ClearBootLoading();   // first real confirmation - stop waiting on the 10s timeout
         Main._CancelTransportFallback(); // any transport answered - stop the UDP->MQTT fallback timer
-        if (!Main._UDP_Available() && Main._MqttConnected()) _setStatus(Status.Cloud);
-        else                                                 _setStatus(Status.Connected);
+        // NOTE: this also fires right after the MQTT SESSION connects (see
+        // MqttTransport.connect()), before the board has said anything -
+        // isMqttArduinoAlive() (not just _MqttConnected()) is what keeps
+        // that case from claiming "CLOUD MODE" with nothing on the other end.
+        if (Main._UDP_Available())         _setStatus(Status.Connected);
+        else if (isMqttArduinoAlive())      _setStatus(Status.Cloud);
+        else                                _setStatus(Status.CloudNoReply);
     }
 
+    /**
+     * Called by: _confirmLive() and the timeoutRunnable watchdog (internal),
+     * MainActivity._refreshTransportStatus() (periodic supervisor tick and
+     * onResume()), and MqttTransport's connectionLost() callback (drops the
+     * CLOUD label if the broker session dies while off-WiFi).
+     */
     public void _setStatus(Status status) {
         if (status == currentStatus) return;   // no change
-        Log.v("UDP_R", "Status changing from " + currentStatus + " to " + status);
+        Log.v("DATA_R", "Status changing from " + currentStatus + " to " + status);
         currentStatus = status;
 
         switch (status) {
@@ -1242,15 +1384,22 @@ public class UDPReceive {
                 break;
             case Connected:
                 Main.TEXT_ConnectInfo.setText(
-                        "~~ " + UDPSend.ARDUINO_IP + ":" + UDPSend.ARDUINO_PORT + " ~~");
+                        "~~ " + DataSend.ARDUINO_IP + ":" + DataSend.ARDUINO_PORT + " ~~");
                 Main._Console(true, "--",
-                        "CONNECT {#G}" + UDPSend.ARDUINO_IP
-                        + "{##}:{#Y}" + UDPSend.ARDUINO_PORT + "{##}");
+                        "CONNECT {#G}" + DataSend.ARDUINO_IP
+                        + "{##}:{#Y}" + DataSend.ARDUINO_PORT + "{##}");
                 break;
             case Cloud:
                 // Reached over the HiveMQ cloud link (local UDP isn't the active transport).
                 Main.TEXT_ConnectInfo.setText("~~ CLOUD MODE ~~");
                 Main._Console(true, "☁", "{#G}CLOUD MODE{##}");
+                break;
+            case CloudNoReply:
+                // Broker session is up (phone reached HiveMQ), but the board
+                // itself has not actually replied over it - distinct from a
+                // genuine "CLOUD MODE" so this doesn't read as connected.
+                Main.TEXT_ConnectInfo.setText("~~ CLOUD - NO REPLY ~~");
+                Main._Console(true, "☁", "{#R}CLOUD - NO REPLY{##}");
                 break;
             case ConnectionLost:
                 Main.TEXT_ConnectInfo.setText("~~ CONNECTION LOST ~~");

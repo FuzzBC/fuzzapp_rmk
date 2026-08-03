@@ -23,7 +23,7 @@ package com.fuzz.colors;
  *      2.  Bind views (call after setContentView):
  *              STS.init();
  *
- *      3.  Called by UDPr when status packets arrive:
+ *      3.  Called by DATAr when status packets arrive:
  *              STS.applyStatus(message)   – core status packet
  *              STS.applyClimate(t, h)     – temperature + humidity
  *              STS.applyEnable(on)        – LED enable
@@ -37,8 +37,8 @@ package com.fuzz.colors;
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
- *      UDPs  = UDPSend
- *      UDPr  = UDPReceive
+ *      DATAs  = DataSend
+ *      DATAr  = DataReceive
  *      LED   = LEDManager
  *      SET   = SettingsManager
  *      STS   = StatusManager    (this class)
@@ -156,7 +156,7 @@ public class StatusManager {
 
     /**
      * Full refill-cycle history in minutes, oldest first - only populated on
-     * demand (see UDPSend.sendDiffuserHistory()/applyDiffuserHistory()), not
+     * demand (see DataSend.sendDiffuserHistory()/applyDiffuserHistory()), not
      * part of the periodic status push. Entries beyond diffuserHistoryCount
      * are stale/unused.
      */
@@ -259,11 +259,11 @@ public class StatusManager {
     private SettingsManager SET;
 
     /**
-     * UDPs – used to:
-     *   UDPs.sendAmbientMode(true/false)  when user taps the icon
-     * Alias: UDPs (UDPSend)
+     * DATAs – used to:
+     *   DATAs.sendAmbientMode(true/false)  when user taps the icon
+     * Alias: DATAs (DataSend)
      */
-    private final UDPSend UDPs;
+    private final DataSend DATAs;
 
     // --------------------------------------------------------
     // Constructor
@@ -272,14 +272,14 @@ public class StatusManager {
      * @param main  Running MainActivity (alias: Main).
      * @param led   LEDManager instance  (alias: LED).
      * @param set   SettingsManager instance (alias: SET).
-     * @param udps  UDPSend instance      (alias: UDPs).
+     * @param udps  DataSend instance      (alias: DATAs).
      */
     public StatusManager(MainActivity main, LEDManager led,
-                         SettingsManager set, UDPSend udps) {
+                         SettingsManager set, DataSend udps) {
         this.Main = main;
         this.LED  = led;
         this.SET  = set;
-        this.UDPs = udps;
+        this.DATAs = udps;
     }
 
     /**
@@ -326,7 +326,7 @@ public class StatusManager {
         // Click: enable AmbientMode (only valid from READY status)
         STS_Cell_AmbientMode.setOnClickListener(v -> {
             if (currentAmbientMode != STS_AmbientMode.READY) return;
-            UDPs.sendAmbientMode(true);
+            DATAs.sendAmbientMode(true);
             LED._deselectAll();
             Main._Toast("{ AMBIENT MODE ON }");
             Main._Console(false, "►►", "AMBIENT MODE {#G}ON{##}");
@@ -335,7 +335,7 @@ public class StatusManager {
         // Long-click: disable AmbientMode (only if currently ON)
         STS_Cell_AmbientMode.setOnLongClickListener(v -> {
             if (currentAmbientMode == STS_AmbientMode.ON) {
-                UDPs.sendAmbientMode(false);
+                DATAs.sendAmbientMode(false);
                 Main._Toast("{ AMBIENT MODE OFF }");
                 Main._Console(false, "►►", "AMBIENT MODE {#R}OFF{##}");
             } else {
@@ -352,18 +352,18 @@ public class StatusManager {
         STS_IMG_Diffuser.setOnLongClickListener(v -> {
             // Ask the board for the live parfum minutes so the popup opens with
             // the current value (board replies 'p' only while a window is active).
-            if (UDPs != null) UDPs.sendDiffuserStatus();
+            if (DATAs != null) DATAs.sendDiffuserStatus();
             new ParfumPopup(Main).show(v,
                     currentDiffuser == STS_Diffuser.PARFUM,
                     parfumRemainingMin,
                     (minutes, mode) -> {
-                        UDPs.sendParfum(minutes, mode);
-                        String modeLbl = UDPSend.PARFUM_MODES[mode];
+                        DATAs.sendParfum(minutes, mode);
+                        String modeLbl = DataSend.PARFUM_MODES[mode];
                         Main._Toast("{ PARFUM " + minutes + " MIN · " + modeLbl + " }");
                         Main._Console(false, "►►", "PARFUM {#G}ON{##} [{#C}" + minutes + " MIN{##}] {#C}" + modeLbl + "{##}");
                     },
                     () -> {
-                        UDPs.sendParfumOff();
+                        DATAs.sendParfumOff();
                         Main._Toast("{ PARFUM OFF }");
                         Main._Console(false, "►►", "PARFUM {#R}OFF{##}");
                     });
@@ -406,7 +406,7 @@ public class StatusManager {
     }
 
     // ========================================================
-    //  Status packet parser  (called by UDPr)
+    //  Status packet parser  (called by DATAr)
     // ========================================================
 
     /**
@@ -422,7 +422,7 @@ public class StatusManager {
      *   GG – Enable/Disable    (0 = OFF, non-zero = ON)
      *   HH – Diffuser state    (STS_Diffuser enum ordinal, 4 = PARFUM)
      *
-     * Called by UDPr on the UI thread.
+     * Called by DATAr on the UI thread.
      *
      * @param message  11-char core packet: s TV Motion UDPRAW AmbientMode Diffuser.
      */
@@ -608,11 +608,11 @@ public class StatusManager {
     }
 
     // ========================================================
-    //  Lux update  (called by UDPr)
+    //  Lux update  (called by DATAr)
     // ========================================================
 
     /**
-     * Animate the lux-level display. Called by UDPr when 'Mllll' is received.
+     * Animate the lux-level display. Called by DATAr when 'Mllll' is received.
      * The rolling average ('mA') was dropped in v8.1.
      *
      * @param lux  New classified lux level (1..5).
@@ -751,7 +751,7 @@ public class StatusManager {
 
     /**
      * Store the parfum-mode remaining minutes relayed by the Arduino
-     * ('pTTTT' packet, 0 = inactive). Called by UDPr on the UI thread.
+     * ('pTTTT' packet, 0 = inactive). Called by DATAr on the UI thread.
      * The value itself is only read when the user long-presses the
      * diffuser icon; the icon tint follows the status packet (PARFUM).
      *
@@ -769,7 +769,7 @@ public class StatusManager {
      * Store the diffuser usage/refill stats relayed by the Arduino ('u' packet)
      * and update the top-left refill badge: icon tint, percent text, and the
      * bottom fill bar's width (fraction of the 34dp track defined in
-     * activity_main.xml). Called by UDPr on the UI thread.
+     * activity_main.xml). Called by DATAr on the UI thread.
      *
      * With no refill history yet (refillCount == 0) or no valid average
      * (avgMin == 0) there's no real percentage to show - rather than an
@@ -830,7 +830,7 @@ public class StatusManager {
 
     /**
      * Store the diffuser's full refill-cycle history ('Dh' packet, requested
-     * on demand via UDPs.sendDiffuserHistory() - not part of the periodic
+     * on demand via DATAs.sendDiffuserHistory() - not part of the periodic
      * status push). Oldest cycle first; entries beyond count are unused.
      * No dedicated history view exists yet - values are just stored here
      * (and logged to the console) for now.
@@ -1019,7 +1019,7 @@ public class StatusManager {
         return sb.toString();
     }
 
-    // ========================================================    //  Boolean accessors  (used by LED, SET, UDPs, Main)
+    // ========================================================    //  Boolean accessors  (used by LED, SET, DATAs, Main)
     // ========================================================
 
     /**
@@ -1048,7 +1048,7 @@ public class StatusManager {
 
     /**
      * @return current STS_EnableDisable enum value.
-     *         UDPs.sendEnableDisable() uses this for logging.
+     *         DATAs.sendEnableDisable() uses this for logging.
      */
     public STS_EnableDisable getEnableDisable() {
         return currentEnableDisable;

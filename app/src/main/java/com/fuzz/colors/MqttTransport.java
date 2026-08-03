@@ -12,21 +12,21 @@ package com.fuzz.colors;
  *
  *        OUT  publish(packet)  -> MQTT_TOPIC, tagged TAG_APP
  *        IN   messageArrived() -> drop our own echo (TAG_APP),
- *                                  else strip TAG_DEV -> UDPr.onCloudMessage()
+ *                                  else strip TAG_DEV -> DATAr.onCloudMessage()
  *
  *      No LWT / retained presence flag - online/offline is inferred from
  *      traffic on MQTT_TOPIC (welcome + keep-alive), same as the existing
- *      UDP watchdog (see UDPReceive.CONN_LOST_TIMEOUT).
+ *      UDP watchdog (see DataReceive.CONN_LOST_TIMEOUT).
  *
  *      The wire protocol is byte-identical to the UDP variant (once the
  *      1-byte sender tag is stripped), so the same command builders
- *      (UDPs) and the same parser (UDPr._parsePacket) are reused
- *      unchanged - MQTT only swaps the pipe. The ACK layer in UDPs
+ *      (DATAs) and the same parser (DATAr._parsePacket) are reused
+ *      unchanged - MQTT only swaps the pipe. The ACK layer in DATAs
  *      therefore works over the cloud too: "#SSR" acks come back on
- *      MQTT_TOPIC and are fed into the same UDPr._recvAck() ->
- *      UDPs.ackResolve() path.
+ *      MQTT_TOPIC and are fed into the same DATAr._recvAck() ->
+ *      DATAs.ackResolve() path.
  *
- *  Transport choice (see UDPs._transmit / Main._TransportAvailable):
+ *  Transport choice (see DATAs._transmit / Main._TransportAvailable):
  *      WiFi up   -> local UDP  (fast, LAN)
  *      WiFi down -> this MQTT  (works off the controller's network)
  *
@@ -89,7 +89,7 @@ public class MqttTransport {
     /** Back-reference for console logging + UI thread. */
     private final MainActivity Main;
     /** Inbound sink - cloud payloads go through the same parser as UDP. */
-    private final UDPReceive   UDPr;
+    private final DataReceive   DATAr;
 
     // --------------------------------------------------------
     // State (client touched from a single worker thread)
@@ -105,9 +105,9 @@ public class MqttTransport {
      * @param main  Running MainActivity (console + UI thread + ANDROID_ID).
      * @param udpr  Receiver whose parser handles cloud status packets.
      */
-    public MqttTransport(MainActivity main, UDPReceive udpr) {
+    public MqttTransport(MainActivity main, DataReceive udpr) {
         this.Main = main;
-        this.UDPr = udpr;
+        this.DATAr = udpr;
     }
 
     // --------------------------------------------------------
@@ -145,11 +145,11 @@ public class MqttTransport {
                 Log.i("MQTT", "connected, subscribed " + MQTT_TOPIC);
                 Main.runOnUiThread(() -> {
                     Main._Console(false, "☁", "{#G}CLOUD ON{##}");
-                    if (UDPr != null) UDPr._confirmLive();   // flip top label to CLOUD MODE
+                    if (DATAr != null) DATAr._confirmLive();   // flip top label to CLOUD MODE
                     // Local UDP already got the boot welcome (Main.onCreate step 8).
                     // If it didn't - starting off-WiFi / pinned CLOUD ONLY - announce
                     // over the cloud link now so the board pushes a fresh full state.
-                    if (!Main._UDP_Available()) Main.UDPs.sendWelcome("mqtt connect");
+                    if (!Main._UDP_Available()) Main.DATAs.sendWelcome("mqtt connect");
                 });
             } catch (Exception e) {
                 Log.e("MQTT", "connect failed: " + e.getMessage());
@@ -163,7 +163,7 @@ public class MqttTransport {
 
     /**
      * Publish one command packet to LEDs/cmd on a background thread. Bytes are
-     * already enveloped/built by UDPs, so this is a straight pass-through.
+     * already enveloped/built by DATAs, so this is a straight pass-through.
      *
      * @param packet  Exact wire string (e.g. "#a3LBff" or "Z").
      */
@@ -233,7 +233,7 @@ public class MqttTransport {
             // bytes to the binary sink; everything else keeps the ASCII path.
             if (raw.length >= 3 && raw[1] == 'L' && raw[2] == 'K') {
                 final byte[] body = java.util.Arrays.copyOfRange(raw, 1, raw.length);
-                if (UDPr != null) UDPr.onCloudMessageBin(body, body.length);
+                if (DATAr != null) DATAr.onCloudMessageBin(body, body.length);
                 return;
             }
 
@@ -243,7 +243,7 @@ public class MqttTransport {
             final String payload = new String(raw, 1, raw.length - 1);
             if (Main._MqttLogEnabled())
                 Main.runOnUiThread(() -> Main._Console(true, "☁", "MQTT R [{#C}" + payload + "{##}]"));
-            if (UDPr != null) UDPr.onCloudMessage(payload);      // marshals to UI thread itself
+            if (DATAr != null) DATAr.onCloudMessage(payload);      // marshals to UI thread itself
         }
 
         @Override
@@ -253,7 +253,7 @@ public class MqttTransport {
                 Main._Console(false, "☁", "{#Y}CLOUD LOST{##}");
                 // Cloud dropped while off-WiFi -> drop the CLOUD MODE label.
                 if (!Main._IsWifiConn())
-                    UDPr._setStatus(UDPReceive.Status.NoWifi);
+                    DATAr._setStatus(DataReceive.Status.NoWifi);
             });
         }
 
