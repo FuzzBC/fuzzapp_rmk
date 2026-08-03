@@ -5,7 +5,7 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
-## 1.007
+## 1.010
 - Added themed "Update available" and "Downloading update" popups (percent,
   size, speed, Cancel), replacing the plain system dialog and silent Toast.
 - The "Update available" popup now shows what's actually new in that
