@@ -98,6 +98,8 @@ import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.provider.Settings;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -220,6 +222,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private boolean telnetEnabled = false;
     /** MQTT wire-level trace toggle (Debug dialog grid) -- shows every broker publish/receive in the console. */
     private boolean mqttLogEnabled = false;
+    /** SmartTV debug toggle - enables detailed logging for SmartTV diffuser relay operations. */
+    public static boolean smartTvDebugEnabled = false;
 
     /** Detects horizontal swipes anywhere on screen to move between TERM / LEDS / SET */
     private GestureDetector SwipeDetector;
@@ -263,6 +267,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** True once the user drags the console away from the bottom; see the
      *  RV_Console scroll listener in onCreate() and _TermAppend() below. */
     private boolean termUserScrolledAway = false;
+    private UpdateInstaller updateInstaller;
 
     /**
      * Seq of the last framed log packet, for loss detection. UDP gives no
@@ -438,6 +443,68 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             SHAKE_Accelerometer = SHAKE_SensManager
                     .getDefaultSensor(Sensor.TYPE_ACCELEROMETER); // Acquire default accelerometer sensor
         } // End sensor retrieval check
+
+        // ── 11. Check for a newer app version ─────────────────
+        _CheckForUpdate(); // Silent unless a newer release is found
+    }
+
+    /* ====================================================== */
+    /*  In-app update check (GitHub Releases)                 */
+    /* ====================================================== */
+
+    /**
+     * Fire-and-forget check against the public releases repo. Only surfaces
+     * a dialog when a strictly newer versionCode is found; stays silent on
+     * "up to date" or network/parse errors (logged only) so it never nags
+     * on a flaky connection.
+     */
+    private void _CheckForUpdate() {
+        UpdateChecker.check(this, new UpdateChecker.Callback() {
+            @Override
+            public void onUpdateAvailable(String tagName, int versionCode, String apkUrl, String releaseNotes) {
+                _ShowUpdateDialog(tagName, apkUrl);
+            }
+
+            @Override
+            public void onUpToDate() {
+                // nothing to do
+            }
+
+            @Override
+            public void onError(String message) {
+                Log.w("UpdateChecker", "update check failed: " + message);
+            }
+        });
+    }
+
+    private void _ShowUpdateDialog(String tagName, String apkUrl) {
+        new AlertDialog.Builder(this)
+                .setTitle("Update available")
+                .setMessage("A new version (" + tagName + ") is available. Download and install it now?")
+                .setPositiveButton("Update", (d, w) -> _StartUpdateDownload(apkUrl, tagName))
+                .setNegativeButton("Later", null)
+                .setCancelable(true)
+                .show();
+    }
+
+    /**
+     * Kicks off the APK download. On API 26+, installing from a downloaded
+     * file requires the user to have granted "install unknown apps" for
+     * this app first - if not granted, sends them straight to that settings
+     * screen instead of downloading (they can just tap Update again after).
+     */
+    private void _StartUpdateDownload(String apkUrl, String tagName) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            _Toast("Allow \"install unknown apps\" for FuZz LED, then tap Update again");
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())));
+            return;
+        }
+
+        if (updateInstaller == null) updateInstaller = new UpdateInstaller(this);
+        updateInstaller.download(apkUrl, tagName);
+        _Toast("Downloading update " + tagName + "...");
     }
 
     /**
@@ -561,6 +628,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         UDPr.destroy();
         if (MQTT != null) MQTT.disconnect();
         if (TELNET != null) TELNET.setEnabled(false);  // close both telnet sockets/threads
+        if (updateInstaller != null) updateInstaller.unregister();
     }
 
     /* ====================================================== */
