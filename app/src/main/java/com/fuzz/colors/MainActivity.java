@@ -222,7 +222,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private boolean telnetEnabled = false;
     /** MQTT wire-level trace toggle (Debug dialog grid) -- shows every broker publish/receive in the console. */
     private boolean mqttLogEnabled = false;
-    /** SmartTV debug toggle - enables detailed logging for SmartTV diffuser relay operations. */
+    /** SmartTV debug toggle - enables detailed logging for SmartTV diffuser relay operations. 
+     *  Set to true to enable SmartTV-specific debug logs in UDPReceive.java for troubleshooting
+     *  communication between Android app, SmartTV, and Diffuser. */
     public static boolean smartTvDebugEnabled = false;
 
     /** Detects horizontal swipes anywhere on screen to move between TERM / LEDS / SET */

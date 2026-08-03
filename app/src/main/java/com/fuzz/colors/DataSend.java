@@ -187,8 +187,8 @@ public class DataSend {
     // --------------------------------------------------------
     // ACK bookkeeping (all touched on the main looper only)
     // --------------------------------------------------------
-    /** Rolling command sequence id, 0-255. */
-    private int seq = 0;
+    /** Rolling command sequence id, 0-255. Started at 1 to avoid "L0000" confusion. */
+    private int seq = 1;
 
     /** In-flight commands awaiting an ACK, keyed by sequence id. */
     private final HashMap<Integer, Pending> pending = new HashMap<>();

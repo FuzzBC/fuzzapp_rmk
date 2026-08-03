@@ -114,6 +114,7 @@ desktop.ini
 # =========================
 .idea/
 .codex/
+.chatgpt/
 .claude/
 android.lock
 

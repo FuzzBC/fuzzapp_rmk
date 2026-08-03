@@ -14,7 +14,7 @@ package com.fuzz.colors;
  *      class locally re-runs the same effect algorithms the firmware
  *      runs (mirrors HB::T_EFFECT_HB_1..14 and TV::T_EFFECT_H_FadeOn/
  *      CenterBloom/LinearSweep/QuadPoint in
- *      _FuZzAPP_SmartTV_R4_8_0_MQTT.ino), seeded only from the
+ *      _FuZzAPP_SmartTV_R4.ino), seeded only from the
  *      configured effect id/speed settings (32/33/34) and the current
  *      HB colour(s), and paints the result onto HeartbeatPatternView's
  *      18 segments.

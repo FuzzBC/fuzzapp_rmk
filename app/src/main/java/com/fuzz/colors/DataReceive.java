@@ -10,7 +10,7 @@ package com.fuzz.colors;
  *      update, STS update, etc.) regardless of which transport delivered
  *      it: the local UDP receive loop below feeds _parsePacket() directly,
  *      while MqttTransport's cloud callback feeds the same parser via
- *      onCloudMessage()/onCloudMessageBin(). Also:
+ *      onCloudMessage()/onCloudMessageBin(). SmartTV debug enabled. Also:
  *      • Opens and owns the shared DatagramSocket (local UDP only).
  *      • Runs the background thread that listens for incoming local UDP
  *        packets from the Arduino.

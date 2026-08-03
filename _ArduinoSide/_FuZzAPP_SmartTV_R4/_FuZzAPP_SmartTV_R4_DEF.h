@@ -1,6 +1,6 @@
 /* =========================================================================== */
 /* _FuZzAPP_SmartTV_R4_DEF.h  -- Master Header / Single-Point Include          */
-/* FuZzAPP SmartTV R4.8.0 -- Arduino UNO R4 WiFi                               */
+/* FuZzAPP SmartTV R4 -- Arduino UNO R4 WiFi                                   */
 /* =========================================================================== */
 /*
 /*  Contains: library includes, compile switches, defines, enums,
@@ -34,6 +34,12 @@
 #include <Arduino.h>
 #include <stdarg.h>
 #include <Adafruit_NeoPixel.h>
+// TaskJockeyMod's diagnostics feature (per-task handler execution time +
+// table high-water marks) is toggled via TASKJOCKEY_ENABLE_DIAGNOSTICS
+// directly in TaskJockeyMod.h, NOT here - it has its own .cpp compiled as a
+// separate translation unit, which never sees a #define made by an includer,
+// only its own header's. Currently on (see that file) for the Dual-Color-
+// spam blocking investigation.
 #include <TaskJockeyMod.h>
 #include <EEPROM.h>
 #include <Wire.h>
@@ -62,30 +68,133 @@ struct CHSV {
 };
 
 /* --- COMPILE-TIME SWITCHES (uncomment to enable) ----------------------------- */
+    // All debug logging OFF for now - uncomment individually to bring any of
+    // it back. Two-tier scheme used throughout below: the base macro is the
+    // normal/lite tier (one line per discrete command/event/state-change -
+    // cheap, safe to leave on). Its "_VERBOSE" sibling is the deep tier
+    // (per-tick/per-packet/internal-churn detail - noisy, can measurably slow
+    // animations down, e.g. LED_VERBOSE - confirmed live during this
+    // session's LD/Ld investigation). Enabling a _VERBOSE macro always pulls
+    // in its own base tier too, so you never have to define both by hand -
+    // see the cascade block below all the switches.
+
 //  #define ENABLE_EXECUTIONTIME
-    #define ENABLE_LOG_APP
+    // Loop/task timing probe (us per section). Standalone - already a single
+    // deep diagnostic, no lighter counterpart to split it against.
+
+//  #define ENABLE_LOG_APP
+//  #define ENABLE_LOG_APP_VERBOSE
+    // APP_VERBOSE = raw per-packet "sent [...]" confirmations from
+    // termMsgSend()/termMsgSendBin() - fires on every LK color-sync flush
+    // during an active animation, too frequent for lite. APP alone still
+    // covers recv/exec/settings/status/link/fault one-line events.
+
 //  #define ENABLE_LOG_LUX
+//  #define ENABLE_LOG_LUX_VERBOSE
+
 //  #define ENABLE_LOG_UDPRAW
+//  #define ENABLE_LOG_UDPRAW_VERBOSE
+
 //  #define ENABLE_LOG_BME280
-    #define ENABLE_LOG_TASK
-  #define ENABLE_LOG_TASKINFO
+//  #define ENABLE_LOG_BME280_VERBOSE
+
+//  #define ENABLE_LOG_TASK
+//  #define ENABLE_LOG_TASK_VERBOSE
+    // TASK_VERBOSE is the scheduler-internal tier (formerly its own macro,
+    // ENABLE_LOG_TASKINFO) - TSK::AddTask/KillID/KillTasksAvoidLocked/
+    // ResetTime/setTaskInterval churn. TASK alone is the narrative
+    // "effect task started/ended" tier.
+
 //  #define ENABLE_LOG_LED
-//  #define ENABLE_LOG_LED_TASK
+//  #define ENABLE_LOG_LED_VERBOSE
+    // LED_VERBOSE is the per-tick animation-task tier (formerly its own
+    // macro, ENABLE_LOG_LED_TASK) - T_SMOOTH_CHANGE/T_DUAL_COLOR/
+    // T_SHAKE_DUAL_COLOR/etc. Stay off during normal use - fires every
+    // single animation tick and measurably slows transitions down
+    // (confirmed live during this session's LD/Ld investigation).
+
 //  #define ENABLE_LOG_EEPROM
+//  #define ENABLE_LOG_EEPROM_VERBOSE
+
 //  #define ENABLE_LOG_MOTION
-//  #define ENABLE_LOG_MOTION_TASK
+//  #define ENABLE_LOG_MOTION_VERBOSE
+    // MOTION_VERBOSE is the per-effect motion-task tier (formerly its own
+    // macro, ENABLE_LOG_MOTION_TASK). MOTION alone is TV::Status()'s
+    // TV-pin + motion-sensor polling.
+
 //  #define ENABLE_LOG_NET
+//  #define ENABLE_LOG_NET_VERBOSE
+
 //  #define ENABLE_LOG_DIF
+//  #define ENABLE_LOG_DIF_VERBOSE
+
 //  #define ENABLE_LOG_MQTT
-    // Left on per request, for ongoing live troubleshooting via serial monitor.
-    // ENABLE_LOG_LED / ENABLE_LOG_LED_TASK stay off - they fire every single
-    // animation tick and measurably slow transitions down (confirmed live
-    // during this session's LD/Ld investigation).
+//  #define ENABLE_LOG_MQTT_VERBOSE
+    // MQTT_VERBOSE = per-packet "sent [...]" confirmations from Publish() -
+    // same split as APP/APP_VERBOSE on the UDP side. MQTT alone still covers
+    // recv/dispatch and link-down/dropped events.
+
+    // --- Effect/animation tracing (TV-ON/TV-OFF/motion/idle-HB sub-effects) ---
+    // Same two-tier scheme, named INFO/VERBOSE instead of bare/VERBOSE since
+    // this tag predates the others: INFO = start / phase-transition /
+    // completion events (cheap, one line per state change). VERBOSE =
+    // anything deeper/more frequent a future effect might want to add
+    // (per-tick detail) - reserved for that, nothing uses it yet. Tag every
+    // line from this tier "[ANIME]" so it's greppable on its own, separate
+    // from the general TASK/MOTION task-lifecycle logs above.
+//  #define ENABLE_LOG_ANIME_INFO
+//  #define ENABLE_LOG_ANIME_VERBOSE
+
+    /* --- verbose cascades: enabling any _VERBOSE macro pulls in its base tier too --- */
+    #if defined(ENABLE_LOG_APP_VERBOSE)     && !defined(ENABLE_LOG_APP)
+        #define ENABLE_LOG_APP
+    #endif
+    #if defined(ENABLE_LOG_LUX_VERBOSE)     && !defined(ENABLE_LOG_LUX)
+        #define ENABLE_LOG_LUX
+    #endif
+    #if defined(ENABLE_LOG_UDPRAW_VERBOSE)  && !defined(ENABLE_LOG_UDPRAW)
+        #define ENABLE_LOG_UDPRAW
+    #endif
+    #if defined(ENABLE_LOG_BME280_VERBOSE)  && !defined(ENABLE_LOG_BME280)
+        #define ENABLE_LOG_BME280
+    #endif
+    #if defined(ENABLE_LOG_TASK_VERBOSE)    && !defined(ENABLE_LOG_TASK)
+        #define ENABLE_LOG_TASK
+    #endif
+    #if defined(ENABLE_LOG_LED_VERBOSE)     && !defined(ENABLE_LOG_LED)
+        #define ENABLE_LOG_LED
+    #endif
+    #if defined(ENABLE_LOG_EEPROM_VERBOSE)  && !defined(ENABLE_LOG_EEPROM)
+        #define ENABLE_LOG_EEPROM
+    #endif
+    #if defined(ENABLE_LOG_MOTION_VERBOSE)  && !defined(ENABLE_LOG_MOTION)
+        #define ENABLE_LOG_MOTION
+    #endif
+    #if defined(ENABLE_LOG_NET_VERBOSE)     && !defined(ENABLE_LOG_NET)
+        #define ENABLE_LOG_NET
+    #endif
+    #if defined(ENABLE_LOG_DIF_VERBOSE)     && !defined(ENABLE_LOG_DIF)
+        #define ENABLE_LOG_DIF
+    #endif
+    #if defined(ENABLE_LOG_MQTT_VERBOSE)    && !defined(ENABLE_LOG_MQTT)
+        #define ENABLE_LOG_MQTT
+    #endif
+    #if defined(ENABLE_LOG_ANIME_VERBOSE)   && !defined(ENABLE_LOG_ANIME_INFO)
+        #define ENABLE_LOG_ANIME_INFO
+    #endif
+
+//  #define ENABLE_LOG_RAM_MONITOR
+    // Periodic free-RAM print in loop() (see RAM_MONITOR_INTERVAL_MS below) -
+    // independent of the on-demand K0D debug dump. Added to watch for a leak
+    // while stress-testing rapid-fire Dual Color (LD/Ld) commands, the same
+    // way the earlier Collision-effect RAM leak was caught. Turn off once
+    // that investigation is done - it's a Serial.print per interval, cheap
+    // but pointless noise otherwise.
+    #define RAM_MONITOR_INTERVAL_MS 1000
 
 /* --- GLOBAL MACROS ----------------------------------------------------------- */
 #define NL              "\n"
 #define FW_NAME          "FuZzAPP SmartTV R4"  /* reported in the debug report header */
-#define FW_VERSION       "8.0"                 /* keep in step with the changelog     */
 #define SERIAL_BAUD     115200
 #define TIMEFIELD(t, f) (t[f] < 10 ? "0" : ""), t[f]   /* HH:MM:SS zero-pad */
 #define TIMEVAL(v)      ((v) < 10 ? "0" : ""), (v)     /* zero-pad a raw HH/MM/SS/DD/MM value, e.g. TIMEVAL(hour(epoch)) */
@@ -215,7 +324,8 @@ extern const uint8_t LED_FPS_TABLE[LED_FPS_OPTIONS_TOTAL] PROGMEM; /* refresh pe
                                            fields) and "Dh" (full history reply) to 44 chars; every reply
                                            past the old 16-byte ceiling was silently dropped as "too large"
                                            in DIF::Loop(), which is why usage/history never reached the app */
-#define DIF_UDP_TIMEOUT             100  /* ms -- beginPacket()/endPacket() ceiling (was 5ms - too tight for two marginal-signal WiFi hops, see Send()) */
+#define DIF_UDP_TIMEOUT             100  /* ms -- beginPacket()/endPacket() ceiling per non-blocking attempt (see TickAsyncSend()) - was 5ms, too tight for two marginal-signal WiFi hops */
+#define DIF_MSG_MAX_LEN              48  /* staging buffer for the async sender - matches the "#SS"+longest Dn body sizing already used at the SendCmd() call site */
 #define DIF_MODE_MAX                4  /* CONT, 10 SEC, 2H AFTER SLEEP, 4H AFTER SLEEP -- only range ever sent in a "Dn" command */
 #define DIF_EFFECT_COUNT            8  /* animated effects, EE 1-8 (EE=0 is always static) -- mirrors diffuser firmware */
 #define DIF_PARFUM_MAX_MIN        360  /* max parfum-mode duration, minutes -- mirrors diffuser firmware PARFUM_MAX_MIN */
@@ -866,6 +976,7 @@ void T_WatchdogCheck(taskId_t tID);
 void T_KeepAlive(taskId_t tID);
 uint8_t ClampByte(float v);
 uint8_t HexByte(const char *hex);   uint8_t HexNibble(char c);
+uint16_t HexWord(const char *hex);
 void updTestMode();
 bool updLink();   bool updFaults();   void Notify_Saved(uint8_t result);
 void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func, const char *format, ...);
@@ -912,6 +1023,7 @@ namespace DIF {
 /* --- Diffuser UDP communication ------------------------------------------------ */
 void        Setup();   void Loop();   void UdpSet();
 void        Exec(char *buff, int len);   void Send(const char *msg);
+void        TickAsyncSend();   /* non-blocking beginPacket()/write()/endPacket() step, call every loop() - see Send() */
 void        SendCmd(const char *body, uint8_t relayAppSeq);   void AckParse(char *buff, int len);
 void        PushPending(uint8_t cmdSeq, uint8_t appSeq);   bool PopPendingByCmdSeq(uint8_t cmdSeq, uint8_t &outAppSeq);
 bool        IsAppSeqPending(uint8_t appSeq);   void FlushPending(uint8_t result);   /* small in-flight relayed-ack FIFO, see DIFx comment */

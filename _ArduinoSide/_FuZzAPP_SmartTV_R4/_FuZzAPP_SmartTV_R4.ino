@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------------ */
-/* _FuZzAPP_SmartTV_R4_8_0_MQTT.ino  -- Consolidated Single-File Build   */
-/* FuZzAPP SmartTV R4.8.0 -- Arduino UNO R4 WiFi                              */
+/* _FuZzAPP_SmartTV_R4.ino  -- Consolidated Single-File Build              */
+/* FuZzAPP SmartTV R4 -- Arduino UNO R4 WiFi                                  */
 /* ------------------------------------------------------------------------ */
 /*
 /*  All module implementations merged here in dependency order.
@@ -210,6 +210,7 @@ void loop() {
 
         s = micros();
         DIF::Loop();
+        DIF::TickAsyncSend();   // advance any staged diffuser send one non-blocking step - see DIF::Send()
         t_dif = micros() - s;
 
         s = micros();
@@ -222,6 +223,7 @@ void loop() {
     #else
         APP::Loop();
         DIF::Loop();
+        DIF::TickAsyncSend();   // advance any staged diffuser send one non-blocking step - see DIF::Send()
         MQTT::Loop();
         _TASK.runTasks();
     #endif
@@ -264,6 +266,45 @@ void loop() {
     // Coalesced app colour sync: flush at most one 'LK' packet per FPS period,
     // draining every LED marked dirty since the last flush (see updDeltaColors).
     APP::drainColorSync(TimeNow);
+
+    #ifdef ENABLE_LOG_RAM_MONITOR
+        // Continuous free-RAM watch, independent of the on-demand K0D debug
+        // dump - added to catch a leak while stress-testing rapid-fire Dual
+        // Color (LD/Ld) commands. baseline = first reading after boot, so
+        // "delta" reads negative and keeps growing if something is leaking;
+        // it should hover near 0 (noise only) under normal operation, the
+        // same way idle RAM was confirmed rock-stable during the earlier
+        // Collision-effect investigation.
+        static uint32_t ramLogAt   = 0;
+        static int      ramBaseline = -1;
+        if (TimeNow - ramLogAt >= RAM_MONITOR_INTERVAL_MS) {
+            ramLogAt = TimeNow;
+            int freeRam = APP::getFreeRam();
+            if (ramBaseline < 0) ramBaseline = freeRam;   // first reading = baseline
+            PRNT::_print(PRNT::formatMSG(
+                "%~32s : free [%d] B of [%d] B | vs baseline [%d] B" NL,
+                "RAM_Monitor", freeRam, ARD_RAM_TOTAL, freeRam - ramBaseline));
+
+            #ifdef TASKJOCKEY_ENABLE_DIAGNOSTICS
+                // Task-table health alongside RAM, same cadence - a task-count
+                // climb (vs its own high-water mark) or a handler max-duration
+                // spike points straight at which task is misbehaving, instead
+                // of having to guess from RAM alone. See TaskJockeyMod.h.
+                PRNT::_print(PRNT::formatMSG(
+                    "%~32s : count [%d] | peak [%d] | created [%lu]" NL,
+                    "Task_Monitor", _TASK.getTaskCount(), _TASK.getMaxTaskCountEverSeen(), _TASK.getTotalTasksCreated()));
+                uint8_t tCount = _TASK.getTaskCount();
+                for (uint8_t i = 0; i < tCount; i++) {
+                    taskId_t tid = _TASK.getTaskIdAt(i);
+                    if (tid == TASK_ID_NONE) continue;
+                    PRNT::_print(PRNT::formatMSG(
+                        "%~32s :   [%s] last [%lu] us | max [%lu] us" NL,
+                        "Task_Monitor", _TASK.getTaskName(tid),
+                        _TASK.getTaskLastDurationUs(tid), _TASK.getTaskMaxDurationUs(tid)));
+                }
+            #endif
+        }
+    #endif
 
     #ifdef ENABLE_EXECUTIONTIME
         uint32_t totalLoop = micros() - startLoop;
@@ -318,6 +359,12 @@ namespace TSK {
  * @param  Locked          If true, the task survives KillTasksAvoidLocked().
  *
  * @return Task ID assigned by the scheduler. Store this to kill or reconfigure the task.
+ *
+ * Called by: ~37 call sites across almost every task-registering function in
+ * the file (TV::On/Off, MOTION::Status, DIF::Setup/StatusCheck/IdleCheck,
+ * cmdChangeColor/cmdChangeDualColor, etc.) - not enumerated further since the
+ * caller already self-reports via the `source` parameter, visible directly
+ * in the ENABLE_LOG_TASK_VERBOSE log line below.
  */
 // New API: unit before Interval
 taskId_t AddTask(const char* source, const char* call_func_name, void (*CALL_Func)(taskId_t), taskUnit_t unit, uint32_t Interval, uint32_t StartTime, bool Locked) {
@@ -327,7 +374,7 @@ taskId_t AddTask(const char* source, const char* call_func_name, void (*CALL_Fun
     taskId_t id = _TASK.addTask(CALL_Func, call_func_name, unit, Interval, StartTime, Locked); // Core logic - Action
 
     // Enhanced Log: Link the ID to the function name and source
-    #ifdef ENABLE_LOG_TASKINFO
+    #ifdef ENABLE_LOG_TASK_VERBOSE
         PRNT::_print(PRNT::formatMSG("%~32s : ID:%d | Func:%s | Src:%s | Int:%d | Locked:%T" NL, "TASK_AddTask", id, call_func_name, source, Interval, Locked));    // Info log - Output
     #endif
 
@@ -339,10 +386,14 @@ taskId_t AddTask(const char* source, const char* call_func_name, void (*CALL_Fun
  *
  * @param  tID     Task ID returned by AddTask(). Safe to call with an invalid ID.
  * @param  source  Label of the calling function (used in task-info log output).
+ *
+ * Called by: ~11 call sites (e.g. DIF's relayed-command timeout paths,
+ * cmdTestMode()'s T_END_TEST_MODE cleanup) - the caller self-reports via
+ * `source`, visible in the ENABLE_LOG_TASK_VERBOSE log line below.
  */
 void KillID(taskId_t tID, const char* source) {
     // Enhanced Log: Record which source is killing which task ID
-    #ifdef ENABLE_LOG_TASKINFO
+    #ifdef ENABLE_LOG_TASK_VERBOSE
         PRNT::_print(PRNT::formatMSG("%~32s : ID:%d | ReqBy:%s" NL, "TASK_KillID", tID, source)); // Kill log - Output
     #endif
     
@@ -356,10 +407,16 @@ void KillID(taskId_t tID, const char* source) {
  * Call before launching a new major effect to clear any competing animations.
  *
  * @param  source  Label of the calling function (used in task-info log output).
+ *
+ * Called by: ~27 call sites - every TV::On/Off, MOTION::Status transition,
+ * cmdChangeColor()/cmdChangeDualColor()/cmdSetLed(), DIF turn-on/off, and
+ * effect-starting path that needs to clear whatever animation is currently
+ * running first. The caller self-reports via `source`, visible in the
+ * ENABLE_LOG_TASK_VERBOSE log line below.
  */
 void KillTasksAvoidLocked(const char* source) {
 	// * LOG
-    #ifdef ENABLE_LOG_TASKINFO
+    #ifdef ENABLE_LOG_TASK_VERBOSE
 	    PRNT::_print(PRNT::formatMSG("%~32s : kill all tasks requested by: [%s]" NL, "TASK_KillTasksAvoidLocked", source)); // Log the source - Sync
     #endif
 
@@ -393,7 +450,7 @@ static void LogHandle(const char* label, taskId_t id) {
  */
 void ResetTime(taskId_t tID) {
     if (tID == TASK_ID_NONE) return;                                // Nothing scheduled - Logic
-    #ifdef ENABLE_LOG_TASKINFO
+    #ifdef ENABLE_LOG_TASK_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : ID:[%d] timer reset" NL, "TASK_ResetTime", tID));
     #endif
     _TASK.resetTaskTimer(tID);                                      // Core logic - Action
@@ -413,7 +470,7 @@ void ResetTime(taskId_t tID) {
 // New API: unit before Interval
 void setTaskInterval(const char* source, taskId_t tID, taskUnit_t unit, uint32_t Interval) {
     // Enhanced Log: Record who changed the speed and the new interval value
-    #ifdef ENABLE_LOG_TASKINFO
+    #ifdef ENABLE_LOG_TASK_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : ID:[%d] interval changed to [%d] requested by [%s]" NL, "TASK_SetTaskInterval", tID, Interval, source));
     #endif
     _TASK.setTaskInterval(tID, unit, Interval);                     // Core logic - Action with specified unit
@@ -424,7 +481,7 @@ namespace PRNT {
 void _Debug(uint8_t d) {
 
 	// -- Report header: firmware identity + device clock --
-	APP::termMsgLogSection(APP_SRC_SYS, "PRNT", "_Debug", "%s  v%s", FW_NAME, FW_VERSION);
+	APP::termMsgLogSection(APP_SRC_SYS, "PRNT", "_Debug", "%s", FW_NAME);
 	APP::termMsgLogSection(APP_SRC_RTC, "PRNT", "_Debug", "Debug report  %s%d:%s%d:%s%d  %s%d-%s%d-%d",
 		TIMEFIELD(NET::Date.time, _HH),
 		TIMEFIELD(NET::Date.time, _MI),
@@ -804,7 +861,7 @@ void _Debug(uint8_t d) {
 			const uint32_t up = millis() / 1000;
 
 			APP::termMsgLogSection(APP_SRC_SYS, "PRNT", "_Debug", "ARDUINO  build");
-			APP::termMsgLog(APP_LOG_DBG, APP_SRC_SYS, "PRNT", "_Debug", "Firmware [%s]", FW_VERSION);
+			APP::termMsgLog(APP_LOG_DBG, APP_SRC_SYS, "PRNT", "_Debug", "Firmware build details");
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_SYS, "PRNT", "_Debug", "Built [%s] [%s]", __DATE__, __TIME__);
 			APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "PRNT", "_Debug", "Uptime [%l] h [%l] m [%l] s",
 				up / 3600UL, (up / 60UL) % 60UL, up % 60UL);
@@ -1041,8 +1098,8 @@ void _Debug(uint8_t d) {
 			const uint32_t up  = millis() / 1000;
 
 			APP::termMsgLogSection(APP_SRC_SYS, "PRNT", "_Debug", "SUMMARY  system");
-			APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "PRNT", "_Debug", "Firmware [%s] uptime [%l] h [%l] m",
-				FW_VERSION, up / 3600UL, (up / 60UL) % 60UL);
+			APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "PRNT", "_Debug", "Firmware uptime [%l] h [%l] m",
+				up / 3600UL, (up / 60UL) % 60UL);
 			APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "PRNT", "_Debug", "RAM free [%d] B of [%d] B", APP::getFreeRam(), ARD_RAM_TOTAL);
 
 			APP::termMsgLogSection(APP_SRC_SYS, "PRNT", "_Debug", "SUMMARY  modules");
@@ -1383,7 +1440,7 @@ static inline void ForceShow() {
  * @brief  Dynamic ambient light adjustment task -- re-apply Lux-scaled brightness to all LEDs.
  */
 void T_LUX_BR_CHANGE(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_TASK
+    #ifdef ENABLE_LOG_LED_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : adjusting brightness to ambient lux level" NL, "T_LUX_BR_CHANGE"));
     #endif
 
@@ -1404,7 +1461,7 @@ void T_LUX_BR_CHANGE(taskId_t taskId) {
     if (anyChanged) {
         Show();
     } else {
-        #ifdef ENABLE_LOG_LED_TASK
+        #ifdef ENABLE_LOG_LED_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : lux adjustment complete" NL, "T_LUX_BR_CHANGE"));
         #endif
         TSK::KillTasksAvoidLocked("T_LUX_BR_CHANGE");
@@ -1417,7 +1474,7 @@ void T_LUX_BR_CHANGE(taskId_t taskId) {
  * @brief  Versatile smooth transition task -- animate selected LEDs to a new colour or brightness.
  */
 void T_SMOOTH_CHANGE(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_TASK
+    #ifdef ENABLE_LOG_LED_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : mode [%s] - animating selected LEDs" NL, "T_SMOOTH_CHANGE", (TASK.ParamA == 1) ? "BRIGHTNESS" : "COLOR"));
     #endif
 
@@ -1473,7 +1530,7 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
     if (moving) {
         Show();
     } else {
-        #ifdef ENABLE_LOG_LED_TASK
+        #ifdef ENABLE_LOG_LED_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : animation complete - chaining next task" NL, "T_SMOOTH_CHANGE"));
         #endif
 
@@ -1504,7 +1561,7 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
         }
 
         if (APP::Am.Status) {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : chaining -> T_AMBIENT_MODE_ON" NL, "T_SMOOTH_CHANGE"));
             #endif
             TASK.Phase = 3;
@@ -1512,7 +1569,7 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
                          EE::Get(EE_OTHER_BR_CL_DEL) * 3,
                          (uint32_t)EE::Get(EE_OTHER_AMBIENT_MODE_TIME) * 60000, false);
         } else if (!TV::State.Status) {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : chaining -> T_LEDS_TO_OFF" NL, "T_SMOOTH_CHANGE"));
             #endif
             TSK::AddTask("T_SMOOTH_CHANGE", "T_LEDS_TO_OFF", T_LEDS_TO_OFF, TASK_MS,
@@ -1530,7 +1587,7 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
  * @brief  Dual-colour zone transition task -- fade out, map two colours, fade back in.
  */
 void T_DUAL_COLOR(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_TASK
+    #ifdef ENABLE_LOG_LED_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : phase [%d] - dual color transition" NL, "T_DUAL_COLOR", TASK.Phase));
     #endif
 
@@ -1539,7 +1596,7 @@ void T_DUAL_COLOR(taskId_t taskId) {
         if (FadeAllToZero(EE::Get(EE_TV_ON_BR_CL_INC))) {
             Show();
         } else {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : phase 1 complete - applying dual color mapping" NL, "T_DUAL_COLOR"));
             #endif
             // --- PREPARE NEW COLORS ---
@@ -1584,7 +1641,7 @@ void T_DUAL_COLOR(taskId_t taskId) {
         if (moving) {
             Show();
         } else {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : phase 2 complete - dual color transition finished" NL, "T_DUAL_COLOR"));
             #endif
 
@@ -1613,7 +1670,7 @@ void T_DUAL_COLOR(taskId_t taskId) {
  * @brief  Shake dual-colour task -- chaotic strobe then smooth dual-colour fade.
  */
 void T_SHAKE_DUAL_COLOR(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_TASK
+    #ifdef ENABLE_LOG_LED_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : phase [%d] - shake dual color" NL, "T_SHAKE_DUAL_COLOR", TASK.Phase));
     #endif
 
@@ -1654,7 +1711,7 @@ void T_SHAKE_DUAL_COLOR(taskId_t taskId) {
             TASK.ParamB++;
             TSK::setTaskInterval("T_SHAKE_DUAL_COLOR", taskId, TASK_MS, 50);
         } else {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : phase 1 (shake) complete - transitioning to phase 2" NL, "T_SHAKE_DUAL_COLOR"));
             #endif
             TASK.Phase = 2; TASK.ParamB = 0;
@@ -1663,7 +1720,7 @@ void T_SHAKE_DUAL_COLOR(taskId_t taskId) {
     }
     // --- PHASE 2: SET MAIN TARGETS ---
     else if (TASK.Phase == 2) {
-        #ifdef ENABLE_LOG_LED_TASK
+        #ifdef ENABLE_LOG_LED_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : phase 2 - applying dual color mapping" NL, "T_SHAKE_DUAL_COLOR"));
         #endif
 
@@ -1708,7 +1765,7 @@ void T_SHAKE_DUAL_COLOR(taskId_t taskId) {
         if (moving) {
             Show();
         } else {
-            #ifdef ENABLE_LOG_LED_TASK
+            #ifdef ENABLE_LOG_LED_VERBOSE
                 PRNT::_print(PRNT::formatMSG("%32s : phase 3 complete - shake dual color finished" NL, "T_SHAKE_DUAL_COLOR"));
             #endif
 
@@ -1838,14 +1895,14 @@ void T_AMBIENT_MODE_ON(taskId_t taskId) { // Low-Power Environmental Lighting Mo
  * @brief  Auto-off task -- smoothly fade all LEDs to black (sleep timer).
  */
 void T_LEDS_TO_OFF(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_TASK
+    #ifdef ENABLE_LOG_LED_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : fading all LEDs to off" NL, "T_LEDS_TO_OFF"));
     #endif
 
     if (FadeAllToZero(EE::Get(EE_TV_ON_BR_CL_INC))) {
         Show();
     } else {
-        #ifdef ENABLE_LOG_LED_TASK
+        #ifdef ENABLE_LOG_LED_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : fade complete - all LEDs off" NL, "T_LEDS_TO_OFF"));
         #endif
 
@@ -2036,10 +2093,18 @@ uint16_t HB(uint16_t i) {
 /* -- Helper functions (under setPixel per spec) ------------------- */
 
 /**
- * @brief  Return the Lux-adjusted base brightness for the HB strip.
+ * @brief  Return the Lux-adjusted base brightness for the HB strip, capped to
+ *         HB_BRIGHTNESS_MAX (same ceiling TG_BRIGHTNESS()/setPixel() enforce -
+ *         callers that skip TG_BRIGHTNESS() and compare against this value
+ *         directly still get a reachable target).
+ *
+ * Called by: APP::_Debug() (K0D debug dump), T_LUX_BR_CHANGE(), and 13 of
+ * the 14 idle HB effects - T_EFFECT_HB_2_Heartbeat() through
+ * T_EFFECT_HB_14_RainbowWavePulse() (only _1_WhiteMove doesn't use it).
  */
 int HB_GetBaseBr() {
-    return getLuxBrightness(LED::State.StoredBrightness[LED_START_I_HB]);
+    int br = getLuxBrightness(LED::State.StoredBrightness[LED_START_I_HB]);
+    return (br > HB_BRIGHTNESS_MAX) ? HB_BRIGHTNESS_MAX : br;
 }
 
 /**
@@ -2268,6 +2333,15 @@ void setDualColorMapping(uint8_t r1, uint8_t g1, uint8_t b1,
 
 /**
  * @brief  Set the colour and brightness of one LED and optionally push to hardware.
+ *
+ * Called by: the most-called function in the file (~115 call sites) -
+ * every effect that changes a pixel calls this right after TG_BRIGHTNESS()/
+ * TG_COLOR() report a step, across every T_EFFECT_TV_ON_x / TV_OFF_x / H_x,
+ * T_EFFECT_MOTION_ON_x / MOTION_OFF, T_EFFECT_HB_1..14, T_SMOOTH_CHANGE,
+ * T_DUAL_COLOR/T_SHAKE_DUAL_COLOR, T_AMBIENT_MODE_ON, T_LEDS_TO_OFF, plus
+ * setAll()/HB_SetAll()/HB_SetPixelFromPreColor() and a handful of command
+ * handlers. Not enumerated further - see each family's own "Called by:"
+ * note instead.
  */
 void setPixel(int p, int r, int g, int b, int brVal, bool s) {
     if (p >= LED_NUM_TOTAL) {
@@ -2275,9 +2349,17 @@ void setPixel(int p, int r, int g, int b, int brVal, bool s) {
         return;
     }
 
-    // Hard cap: HB (heartbeat) strip must never exceed HB_BRIGHTNESS_MAX, no matter
-    // which effect/bloom/lux computation produced brVal upstream.
-    if (IsHB(p) && brVal > HB_BRIGHTNESS_MAX) brVal = HB_BRIGHTNESS_MAX;
+    // Hard cap: HB (heartbeat) strip must never exceed HB_BRIGHTNESS_MAX, and
+    // the main strip (TV/COM/UCOM/BED/LAMP) must never exceed
+    // LED_BRIGHTNESS_MAX, no matter which effect/bloom/lux computation
+    // produced brVal upstream. TG_BRIGHTNESS() already clamps its own target
+    // to the same ceilings before stepping, so this is the backstop for any
+    // caller that writes brightness directly without going through it.
+    if (IsHB(p)) {
+        if (brVal > HB_BRIGHTNESS_MAX) brVal = HB_BRIGHTNESS_MAX;
+    } else {
+        if (brVal > LED_BRIGHTNESS_MAX) brVal = LED_BRIGHTNESS_MAX;
+    }
 
     uint8_t scaledR = (uint8_t)((r * brVal + 1) >> 8);
     uint8_t scaledG = (uint8_t)((g * brVal + 1) >> 8);
@@ -2389,11 +2471,40 @@ void shuffleArray(uint8_t *array, int size) {
 
 /**
  * @brief  Step LED::State.CurrentBrightness[led] one increment toward a target brightness.
+ *
+ * @note   brVal is clamped to the zone's hardware ceiling (HB_BRIGHTNESS_MAX
+ *         for HB, LED_BRIGHTNESS_MAX for the main strip) before stepping.
+ *         Without this, a caller passing a raw lux-boosted target above the
+ *         ceiling (StoredBrightness + LISENS auto-brightness offset can push
+ *         well past 120/100) would step CurrentBrightness up while
+ *         setPixel() silently clamps every write back down - current never
+ *         reaches that unreachable target, TG_Step() never reports
+ *         convergence, and the calling effect's "done expanding/blooming"
+ *         check never fires. Confirmed live: this is exactly what froze the
+ *         TV-on HB Quad-Point and Center-Bloom effects partway through
+ *         (only the first ~4 anchor pixels ever lit, forever) whenever the
+ *         configured HB brightness setting's lux-adjusted value exceeded
+ *         HB_BRIGHTNESS_MAX. Clamping here fixes every current and future
+ *         caller in one place, rather than each effect needing to know and
+ *         apply the right zone ceiling itself before computing its target.
+ *
+ * Called by: the single most shared LED primitive in the file (~74 call
+ * sites) - effectively every brightness-changing effect goes through this,
+ * including T_SMOOTH_CHANGE, T_DUAL_COLOR, T_SHAKE_DUAL_COLOR,
+ * T_AMBIENT_MODE_ON, T_LEDS_TO_OFF, every T_EFFECT_TV_ON_x / TV_OFF_x / H_x
+ * sub-effect, every T_EFFECT_MOTION_ON_x / MOTION_OFF sub-effect, every
+ * T_EFFECT_HB_1..14 idle effect, plus setBrightnessToSelected() and
+ * cmdChangeBrightness(). Not enumerated further - see each family's own
+ * "Called by:" note for its specific callers instead.
  */
 bool TG_BRIGHTNESS(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
     if (led >= LED_NUM_TOTAL) {
         PRNT::_print(PRNT::formatMSG("%32s ! invalid LED index [%d]" NL, "LED_TG_BRIGHTNESS", led));
         return false;
+    }
+    {
+        const uint8_t cap = IsHB(led) ? HB_BRIGHTNESS_MAX : LED_BRIGHTNESS_MAX;
+        if (brVal > cap) brVal = cap;
     }
     inc = (inc > 0) ? inc : 1;
     const uint8_t before = LED::State.CurrentBrightness[led];              // Snapshot pre-step, for the on/off check below - Setup
@@ -2426,6 +2537,9 @@ bool TG_BRIGHTNESS(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
 
 /**
  * @brief  Step LED::State.CurrentColor[led] one increment toward a target RGB in the live colour buffer.
+ *
+ * Called by: T_SMOOTH_CHANGE(), T_SHAKE_DUAL_COLOR(), T_EFFECT_TV_ON_2_MidToOutSep(),
+ * T_EFFECT_TV_ON_3_MidToOutAll(), T_MOTION_CHANGE_COLOR().
  */
 bool TG_COLOR(int led, int r, int g, int b, int inc, bool lisensReset) {
     if (led >= LED_NUM_TOTAL) {
@@ -2456,6 +2570,9 @@ bool TG_COLOR(int led, int r, int g, int b, int inc, bool lisensReset) {
 
 /**
  * @brief  Step a single uint8_t value one increment toward a target.
+ *
+ * Called by: internal only - TG_BRIGHTNESS(), TG_COLOR(), TG_TEMPCOLOR()
+ * (once per colour channel for the latter two).
  */
 bool TG_Step(uint8_t &current, uint8_t target, uint8_t inc) {
     if (current == target) return false;
@@ -2467,6 +2584,9 @@ bool TG_Step(uint8_t &current, uint8_t target, uint8_t inc) {
 
 /**
  * @brief  Step LED::State.TargetColor[led] one increment toward a target RGB in the temp buffer.
+ *
+ * Called by: T_EFFECT_TV_ON_1_RandomStatic(), T_EFFECT_TV_ON_10_LiquidFill(),
+ * T_EFFECT_TV_ON_11_PixelBoot().
  */
 bool TG_TEMPCOLOR(int led, int r, int g, int b, int inc, bool lisensReset) {
     if (led >= LED_NUM_TOTAL) {
@@ -3447,6 +3567,8 @@ void Status() {
  *   app, kills this task, and hands off to HB::StartEffect().
  *
  * @param  taskId  Task handle supplied by the scheduler.
+ *
+ * Called by: TV::On() (TSK::AddTask, registered unlocked, TASK_MS interval).
  */
 void T_EFFECT_TV_ON(taskId_t taskId) {
 
@@ -3462,6 +3584,15 @@ void T_EFFECT_TV_ON(taskId_t taskId) {
 
             TSK::setTaskInterval("T_EFFECT_TV_ON", taskId, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_TV_ON_BR_CL_DEL))); // Apply animation delay - Timing
             APP::updDeltaColors();                                    // Sync app UI state - Sync
+
+            #ifdef ENABLE_LOG_ANIME_INFO
+                {
+                    int tvEffIdx = EE::Get(EE_TV_ON_EFF);
+                    int hbEffIdx = EE::Get(EE_TV_ON_HB_EFF);
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # dispatching TV effect [%d] + HB effect [%d]" NL,
+                        "T_EFFECT_TV_ON", tvEffIdx, hbEffIdx));
+                }
+            #endif
         }
         return;
     }
@@ -3492,7 +3623,7 @@ void T_EFFECT_TV_ON(taskId_t taskId) {
     // --- FINALIZATION BARRIER: both TV strip and HB must be taskDone ---
     if (TASK.Phase == taskDone && HB::State.Phase == taskDone) {
         #ifdef ENABLE_LOG_TASK
-            PRNT::_print(PRNT::formatMSG("%~32s # TV full on" NL, "T_EFFECT_TV_ON")); // Log completion - Debug
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # TV full on" NL, "T_EFFECT_TV_ON")); // Log completion - Debug
         #endif
 
         APP::updDeltaColors();                                        // Final UI sync - Sync
@@ -3511,6 +3642,8 @@ void T_EFFECT_TV_ON(taskId_t taskId) {
  * Sets TASK.Phase = taskDone when main strip is complete.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[0]).
  */
 void T_EFFECT_TV_ON_Default(taskId_t tID) {
     bool LedChanged = false;                                             // Track normal LED changes - State
@@ -3529,6 +3662,9 @@ void T_EFFECT_TV_ON_Default(taskId_t tID) {
     if (!LedChanged) {
         APP::updDeltaColors();                                        // Send delta to app - Sync
         TASK.Phase = taskDone;                                            // Main strip done - State
+        #ifdef ENABLE_LOG_ANIME_INFO
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # main strip done" NL, "TV_ON_Default"));
+        #endif
     } else {
         LED::Show();
     }
@@ -3543,6 +3679,8 @@ void T_EFFECT_TV_ON_Default(taskId_t tID) {
  * Sets TASK.Phase = taskDone when both phases complete.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[1]).
  */
 void T_EFFECT_TV_ON_1_RandomStatic(taskId_t tID) {
     const int maxLeds = LED_NUM - LED_HB_NUM_FAKE;                       // Cache bounds - Setup
@@ -3588,6 +3726,9 @@ void T_EFFECT_TV_ON_1_RandomStatic(taskId_t tID) {
         } else {
             APP::updDeltaColors();
             TASK.Phase = taskDone;                                        // TV animation complete - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_1_RandomStatic"));
+            #endif
         }
         return;
     }
@@ -3602,8 +3743,10 @@ void T_EFFECT_TV_ON_1_RandomStatic(taskId_t tID) {
  * HB runs in parallel via T_EFFECT_H_CenterBloom.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[2]).
  */
-void T_EFFECT_TV_ON_2_MidToOutSep(taskId_t tID) { 
+void T_EFFECT_TV_ON_2_MidToOutSep(taskId_t tID) {
     const int phase = TASK.Phase;                                         // Cache current phase - Setup
     const int ta    = TASK.ParamA;                                           // Cache animation index - Setup
     const int brInc = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));                       // Cache increment - Setup
@@ -3667,6 +3810,9 @@ void T_EFFECT_TV_ON_2_MidToOutSep(taskId_t tID) {
         if (tvLedsDone) {
             APP::updDeltaColors();
             TASK.Phase = taskDone;                                        // TV finished - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_2_MidToOutSep"));
+            #endif
         }
     }
 }
@@ -3679,8 +3825,10 @@ void T_EFFECT_TV_ON_2_MidToOutSep(taskId_t tID) {
  * HB runs in parallel via T_EFFECT_H_CenterBloom.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[3]).
  */
-void T_EFFECT_TV_ON_3_MidToOutAll(taskId_t tID) { 
+void T_EFFECT_TV_ON_3_MidToOutAll(taskId_t tID) {
     const int phase = TASK.Phase;
     const int ta    = TASK.ParamA;
     const int brInc = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));
@@ -3741,6 +3889,9 @@ void T_EFFECT_TV_ON_3_MidToOutAll(taskId_t tID) {
             TASK.Phase = (phase == 2) ? 3 : taskDone;
             TASK.ParamA = 0;
             APP::updDeltaColors();
+            #ifdef ENABLE_LOG_ANIME_INFO
+                if (TASK.Phase == taskDone) PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_3_MidToOutAll"));
+            #endif
         }
         if (mainMoving) LED::Show();
     }
@@ -3754,8 +3905,10 @@ void T_EFFECT_TV_ON_3_MidToOutAll(taskId_t tID) {
  * HB runs in parallel via T_EFFECT_H_CenterBloom.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[4] and [5]).
  */
-void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) { 
+void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) {
     const int phase    = TASK.Phase;
     const int ta      = TASK.ParamA;
     const int offset  = TASK.ParamB;
@@ -3809,6 +3962,9 @@ void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) {
         if (!mainMoving) {
             APP::updDeltaColors();
             TASK.Phase = taskDone;                                        // TV finished - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_4_5_HalfRun"));
+            #endif
         }
     }
 }
@@ -3821,8 +3977,10 @@ void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) {
  * HB runs in parallel via T_EFFECT_H_CenterBloom.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[6] and [7]).
  */
-void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) { 
+void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) {
     const int phase  = TASK.Phase;
     const int ta    = TASK.ParamA;
     const int brInc = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));
@@ -3878,6 +4036,9 @@ void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) {
         if (!mainMoving) {
             APP::updDeltaColors();
             TASK.Phase = (phase == 2) ? 3 : taskDone;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                if (TASK.Phase == taskDone) PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_6_7_MidToExt"));
+            #endif
         }
         if (mainMoving) LED::Show();
     }
@@ -3891,8 +4052,10 @@ void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) {
  * HB runs in parallel via T_EFFECT_H_LinearSweep.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[8]).
  */
-void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) { 
+void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) {
     const int phase     = TASK.Phase;
     const int ta       = TASK.ParamA;
     const int brInc    = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));
@@ -3964,7 +4127,12 @@ void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) {
                 mainBusy = true;
             }
         }
-        if (!mainBusy) { APP::updDeltaColors(); TASK.Phase = taskDone; }
+        if (!mainBusy) {
+            APP::updDeltaColors(); TASK.Phase = taskDone;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_8_ComEffect"));
+            #endif
+        }
         else            { LED::Show(); }
     }
 }
@@ -3978,8 +4146,10 @@ void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) {
  * HB driven inline by T_EFFECT_H_QuadPoint called from T_EFFECT_TV_ON each tick.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[9]).
  */
-void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) { 
+void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
     const int phase      = TASK.Phase;
     const int brInc     = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));
     const int animDelay = LED::getLuxAdaptDelay(EE::Get(EE_TV_ON_BR_CL_DEL));
@@ -4026,7 +4196,12 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
             }
         }
         // Advance only when TV is stable AND HB has passed its expand phase
-        if (tvDone && HB::State.Phase >= 2) { APP::updDeltaColors(); TASK.Phase = 3; }
+        if (tvDone && HB::State.Phase >= 2) {
+            APP::updDeltaColors(); TASK.Phase = 3;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # step2->3 (TV stable, HB past expand)" NL, "TV_ON_9_QuadPointHB"));
+            #endif
+        }
         LED::Show();
         return;
     }
@@ -4040,7 +4215,12 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
                 roomBusy = true;
             }
         }
-        if (!roomBusy) { APP::updDeltaColors(); TASK.Phase = taskDone; }
+        if (!roomBusy) {
+            APP::updDeltaColors(); TASK.Phase = taskDone;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_9_QuadPointHB"));
+            #endif
+        }
         LED::Show();
     }
 }
@@ -4089,6 +4269,8 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
  * Sets TASK.Phase = taskDone when complete.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[10]).
  */
 void T_EFFECT_TV_ON_10_LiquidFill(taskId_t tID) {
     const int inc = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));                         // Brightness step - Setup
@@ -4210,7 +4392,12 @@ void T_EFFECT_TV_ON_10_LiquidFill(taskId_t tID) {
             }
         }
         if (changed) { LED::Show(); }
-        else          { APP::updDeltaColors(); TASK.Phase = taskDone; }
+        else          {
+            APP::updDeltaColors(); TASK.Phase = taskDone;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_10_LiquidFill"));
+            #endif
+        }
         return;
     }
 
@@ -4227,6 +4414,8 @@ void T_EFFECT_TV_ON_10_LiquidFill(taskId_t tID) {
  * Sets TASK.Phase = taskDone when both phases complete.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (TV_ON_HANDLERS[11]).
  */
 void T_EFFECT_TV_ON_11_PixelBoot(taskId_t tID) {
     const int maxLeds = LED_NUM - LED_HB_NUM_FAKE;                       // Exclude HB placeholder - Setup
@@ -4264,7 +4453,12 @@ void T_EFFECT_TV_ON_11_PixelBoot(taskId_t tID) {
             }
         }
         if (changed) { LED::Show(); }
-        else          { APP::updDeltaColors(); TASK.Phase = taskDone; }
+        else          {
+            APP::updDeltaColors(); TASK.Phase = taskDone;
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_ON_11_PixelBoot"));
+            #endif
+        }
         return;
     }
 }
@@ -4283,6 +4477,8 @@ void T_EFFECT_TV_ON_11_PixelBoot(taskId_t tID) {
  *
  * Used by: EE_TV_ON_HB_EFF = 0 (default).
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (HB_ON_HANDLERS[0]).
  */
 void T_EFFECT_H_FadeOn(taskId_t tID) {
     const uint8_t inc      = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));               // Fade step speed - Setup
@@ -4311,6 +4507,9 @@ void T_EFFECT_H_FadeOn(taskId_t tID) {
     if (!busy) {
         APP::updDeltaColors();                                       // Notify app - Sync
         HB::State.Phase = taskDone;                                             // HB complete - State
+        #ifdef ENABLE_LOG_ANIME_INFO
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "H_FadeOn"));
+        #endif
     }
 }
 
@@ -4324,6 +4523,8 @@ void T_EFFECT_H_FadeOn(taskId_t tID) {
  *
  * Used by: Effects 2, 3, 4/5, 6/7 (all share identical HB bloom behaviour).
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (HB_ON_HANDLERS[1]).
  */
 void T_EFFECT_H_CenterBloom(taskId_t tID) {
     const uint8_t inc    = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));                 // Step increment - Setup
@@ -4349,6 +4550,9 @@ void T_EFFECT_H_CenterBloom(taskId_t tID) {
         } else {
             APP::updDeltaColors();                                   // Bloom done - Sync
             HB::State.Phase = 2; HB::State.ParamA = 0;                                    // Enter settle phase - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # phase1->2 (bloom done)" NL, "H_CenterBloom"));
+            #endif
         }
         return;
     }
@@ -4368,6 +4572,9 @@ void T_EFFECT_H_CenterBloom(taskId_t tID) {
         if (!busy) {
             APP::updDeltaColors();                                   // Notify app - Sync
             HB::State.Phase = taskDone;                                         // HB complete - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "H_CenterBloom"));
+            #endif
         }
     }
 }
@@ -4382,6 +4589,8 @@ void T_EFFECT_H_CenterBloom(taskId_t tID) {
  *
  * Used by: Effect 8 (ComEffect).
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (HB_ON_HANDLERS[2]).
  */
 void T_EFFECT_H_LinearSweep(taskId_t tID) {
     const uint8_t inc    = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));                 // Step increment - Setup
@@ -4402,6 +4611,9 @@ void T_EFFECT_H_LinearSweep(taskId_t tID) {
         if (HB::State.ParamA >= LED_HB_NUM && !active) {
             APP::updDeltaColors();                                   // Sweep done - Sync
             HB::State.Phase = 2;                                                // Enter settle phase - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # phase1->2 (sweep done)" NL, "H_LinearSweep"));
+            #endif
         }
         return;
     }
@@ -4419,6 +4631,9 @@ void T_EFFECT_H_LinearSweep(taskId_t tID) {
         if (!busy) {
             APP::updDeltaColors();                                   // Notify app - Sync
             HB::State.Phase = taskDone;                                         // HB complete - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "H_LinearSweep"));
+            #endif
         }
     }
 }
@@ -4432,6 +4647,8 @@ void T_EFFECT_H_LinearSweep(taskId_t tID) {
  *
  * Used by: Effect 9 (QuadPointHB).
  * @param  tID  Task handle (passed from T_EFFECT_TV_ON).
+ *
+ * Called by: T_EFFECT_TV_ON() (HB_ON_HANDLERS[3]).
  */
 void T_EFFECT_H_QuadPoint(taskId_t tID) {
     const uint8_t inc     = LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC));                // Step increment - Setup
@@ -4467,7 +4684,12 @@ void T_EFFECT_H_QuadPoint(taskId_t tID) {
                 }
             }
             if (!active && HB::State.ParamA < reach)  { HB::State.ParamA++; }               // Advance expansion - State
-            else if (!active)              { HB::State.Phase = 2; HB::State.ParamA = 0; } // Expansion complete - State
+            else if (!active)              {
+                HB::State.Phase = 2; HB::State.ParamA = 0; // Expansion complete - State
+                #ifdef ENABLE_LOG_ANIME_INFO
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # phase1->2 (expand done)" NL, "H_QuadPoint"));
+                #endif
+            }
         }
         return;
     }
@@ -4486,6 +4708,9 @@ void T_EFFECT_H_QuadPoint(taskId_t tID) {
         if (!busy) {
             APP::updDeltaColors();                                   // Final UI sync - Sync
             HB::State.Phase = taskDone;                                         // HB complete - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "H_QuadPoint"));
+            #endif
         }
     }
 }
@@ -4501,6 +4726,8 @@ void T_EFFECT_H_QuadPoint(taskId_t tID) {
  * syncs status and colours to the app, kills all tasks.
  *
  * @param  taskId  Task handle supplied by the scheduler.
+ *
+ * Called by: TV::Off() (TSK::AddTask, registered unlocked, TASK_MS interval).
  */
 void T_EFFECT_TV_OFF(taskId_t taskId) {
     if (TASK.Phase != taskDone) {                                        // Check if task is active - Logic
@@ -4517,7 +4744,7 @@ void T_EFFECT_TV_OFF(taskId_t taskId) {
     // --- TERMINATION SEQUENCE ---
     if (TASK.Phase == taskDone) {                 // Ensure everything is off - State
         #ifdef ENABLE_LOG_TASK
-            PRNT::_print(PRNT::formatMSG("%~32s # TV full off" NL, "T_EFFECT_TV_OFF"));     // Debug logging - Logic
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # TV full off" NL, "T_EFFECT_TV_OFF"));     // Debug logging - Logic
         #endif
         
         MOTION::State.Status = motON;                                          // Re-enable motion detection - State
@@ -4538,6 +4765,8 @@ void T_EFFECT_TV_OFF(taskId_t taskId) {
  * using EE_TV_ON_BR_CL_INC. Sets taskDone when all LEDs are off.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[0]).
  */
 void T_EFFECT_TV_OFF_Default(taskId_t tID) { // Standard Fade-Off Animation
     bool moving = false;                                                // Activity tracker - State
@@ -4570,6 +4799,9 @@ void T_EFFECT_TV_OFF_Default(taskId_t tID) { // Standard Fade-Off Animation
     } else {
         TASK.Phase = taskDone;                                           // Mark task complete - State
         APP::updDeltaColors();                                     // Final UI sync - Sync
+        #ifdef ENABLE_LOG_ANIME_INFO
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_Default"));
+        #endif
     }
 }
 
@@ -4581,6 +4813,8 @@ void T_EFFECT_TV_OFF_Default(taskId_t tID) { // Standard Fade-Off Animation
  * each with an EE_TV_OFF_TIME pause between. HB pixels track each zone's progress.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[1]).
  */
 void T_EFFECT_TV_OFF_1_DelayWTvOff(taskId_t tID) { // Delayed Zone Shutdown
     const int phase = TASK.Phase;                                         // Cache current phase - Setup
@@ -4663,7 +4897,12 @@ void T_EFFECT_TV_OFF_1_DelayWTvOff(taskId_t tID) { // Delayed Zone Shutdown
             }
         } else {
             TASK.ParamA = 0; TASK.Phase++;                                   // Move to next zone index - State
-            if (TASK.Phase > 5) TASK.Phase = taskDone;                    // Finish effect - State
+            if (TASK.Phase > 5) {
+                TASK.Phase = taskDone;                    // Finish effect - State
+                #ifdef ENABLE_LOG_ANIME_INFO
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_1_DelayWTvOff"));
+                #endif
+            }
         }
     }
 }
@@ -4675,6 +4914,8 @@ void T_EFFECT_TV_OFF_1_DelayWTvOff(taskId_t tID) { // Delayed Zone Shutdown
  * waiting EE_TV_OFF_TIME seconds between each LED::State. Produces a spreading darkness effect.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[2]).
  */
 void T_EFFECT_TV_OFF_2_DelayAll(taskId_t tID) { // Sequential "Domino" Shutdown
     const int totalLeds = LED_NUM - LED_HB_NUM_FAKE;                    // Total pixels to process - Setup
@@ -4725,6 +4966,9 @@ void T_EFFECT_TV_OFF_2_DelayAll(taskId_t tID) { // Sequential "Domino" Shutdown
         } else {
             TASK.Phase = taskDone;                                       // Entire sequence complete - State
             APP::updDeltaColors();                                 // Final cleanup sync - Sync
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_2_DelayAll"));
+            #endif
         }
     }
 }
@@ -4737,6 +4981,8 @@ void T_EFFECT_TV_OFF_2_DelayAll(taskId_t tID) { // Sequential "Domino" Shutdown
  * segments that expand outward as each zone shuts down.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[3]).
  */
 void T_EFFECT_TV_OFF_3_SlowTvSequential(taskId_t tID) { // Symmetrical Zone Shutdown
     const int phase = TASK.Phase;                                         // Cache current phase - Setup
@@ -4807,6 +5053,9 @@ void T_EFFECT_TV_OFF_3_SlowTvSequential(taskId_t tID) { // Symmetrical Zone Shut
                 TSK::setTaskInterval("T_EFFECT_TV_OFF_3_SlowTvSequential", tID, TASK_MS, stepDelay);    // Pause before next zone - Setup
             if (TASK.Phase > 5) {
                 TASK.Phase = taskDone;                                   // Finish sequence - State
+                #ifdef ENABLE_LOG_ANIME_INFO
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_3_SlowTvSequential"));
+                #endif
             }
         }
         LED::Show();                                                     // Render current frame - Output
@@ -4824,6 +5073,8 @@ void T_EFFECT_TV_OFF_3_SlowTvSequential(taskId_t tID) { // Symmetrical Zone Shut
  * Phase 3: all remaining zones fade globally to 0.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[4] and [5]).
  */
 void T_EFFECT_TV_OFF_4_5_Countdown(taskId_t tID) { // Countdown Flicker Off
     const int brInc = LED::getLuxAdaptInc(EE::Get(EE_TV_OFF_BR_CL_INC));                      // Cache brightness speed - Setup
@@ -4915,6 +5166,9 @@ void T_EFFECT_TV_OFF_4_5_Countdown(taskId_t tID) { // Countdown Flicker Off
         } else {
             TASK.Phase = taskDone;                                       // Effect complete - State
             APP::updDeltaColors();                                 // Final cleanup - Sync
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_4_5_Countdown"));
+            #endif
         }
         LED::Show();                                                     // Render final fade - Output
     }
@@ -4929,6 +5183,8 @@ void T_EFFECT_TV_OFF_4_5_Countdown(taskId_t tID) { // Countdown Flicker Off
  * Phase 3: remaining room zones (COM, BED, LAMP) fade globally to 0.
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[6]).
  */
 void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
     const int phase = TASK.Phase;                                         // Cache current phase - Setup
@@ -5023,6 +5279,9 @@ void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
         } else {
             APP::updDeltaColors();                                 // Final sync - Sync
             TASK.Phase = taskDone;                                       // Finish task - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_6_RandomHalf"));
+            #endif
         }
         LED::Show();                                                     // Final render - Output
     }
@@ -5043,6 +5302,8 @@ void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
  * EE_TV_OFF_TIME (hold seconds between individual LED steps in phases 2 and 3).
  *
  * @param  tID  Task handle (passed from T_EFFECT_TV_OFF).
+ *
+ * Called by: T_EFFECT_TV_OFF() (TV_OFF_HANDLERS[7]).
  */
 void T_EFFECT_TV_OFF_7_QuadPointHB(taskId_t tID) {
     const int phase    = TASK.Phase;                                      // Cache current phase - Setup
@@ -5161,6 +5422,9 @@ void T_EFFECT_TV_OFF_7_QuadPointHB(taskId_t tID) {
         } else {
             APP::updDeltaColors();                                 // Final UI sync - Sync
             TASK.Phase = taskDone;                                       // Signal completion - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "TV_OFF_7_QuadPointHB"));
+            #endif
         }
         LED::Show();                                                     // Render frame - Output
     }
@@ -5198,7 +5462,7 @@ void LogPush(bool event, int pinBefore, int pinAtTrigger) {
  */
 void Off() {
 	LogPush(false, TV::State.PrevPinValue, TV::State.PinValue);                    // Record OFF event - Action
-	PRNT::_print(PRNT::formatMSG("%~32s # with effect [%d], inc [%d], delay [%d]" NL, "TV_Off", EE::Get(EE_TV_OFF_EFF), LED::getLuxAdaptInc(EE::Get(EE_TV_OFF_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_TV_OFF_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
+	PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # with effect [%d], inc [%d], delay [%d]" NL, "TV_Off", EE::Get(EE_TV_OFF_EFF), LED::getLuxAdaptInc(EE::Get(EE_TV_OFF_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_TV_OFF_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
 	
 	LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE);
 	LED::shuffleArray(LED::State.HeartbeatOrder, LED_HB_NUM);
@@ -5230,7 +5494,7 @@ void Off() {
  */
 void On() {
     LogPush(true, TV::State.PrevPinValue, TV::State.PinValue);                     // Record ON event - Action
-    PRNT::_print(PRNT::formatMSG("%~32s # with effect [%d], inc [%d], delay [%d]" NL, "TV_On", EE::Get(EE_TV_ON_EFF), LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_TV_ON_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
+    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # with effect [%d], inc [%d], delay [%d]" NL, "TV_On", EE::Get(EE_TV_ON_EFF), LED::getLuxAdaptInc(EE::Get(EE_TV_ON_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_TV_ON_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
     
     LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE);                 // Randomize LED sequence - Action
 
@@ -5483,6 +5747,9 @@ void Status() {
 static void T_EFFECT_MOTION_ON_Default_Wrapper(taskId_t taskId) {
     if (!T_EFFECT_MOTION_ON_Default()) {
         TASK.Phase = taskDone;
+        #ifdef ENABLE_LOG_ANIME_INFO
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_Default"));
+        #endif
     }
 }
 
@@ -5499,11 +5766,13 @@ static void T_EFFECT_MOTION_ON_Default_Wrapper(taskId_t taskId) {
  * @param  taskId  Task handle supplied by the scheduler.
  *
  * @note   Do not call directly -- registered via AddTask in Status().
+ *
+ * Called by: MOTION::Status() (TSK::AddTask, registered unlocked, TASK_MS interval).
  */
 void T_EFFECT_MOTION_ON(taskId_t taskId) {
     if (TASK.Phase == 0) {                                               // STEP 0: RESET & PREP - Logic
-        #ifdef ENABLE_LOG_MOTION_TASK
-            PRNT::_print(PRNT::formatMSG("%32s : phase 0 - fading current state to black" NL, "T_EFFECT_MOTION_ON"));
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
+            PRNT::_print(PRNT::formatMSG("[ANIME] %24s : phase 0 - fading current state to black" NL, "T_EFFECT_MOTION_ON"));
         #endif
         bool fading = false;                                                // Track if fade-out is ongoing - State
         const int fadeInc = LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC));                    // Step size for reset - Setup
@@ -5534,8 +5803,8 @@ void T_EFFECT_MOTION_ON(taskId_t taskId) {
                 }
             }
             APP::updDeltaColors();                                     // Sync App UI state - Sync
-            #ifdef ENABLE_LOG_MOTION_TASK
-                PRNT::_print(PRNT::formatMSG("%32s : phase 0 complete - colors prepared [random:%d]" NL, "T_EFFECT_MOTION_ON", useRandom));
+            #ifdef ENABLE_LOG_MOTION_VERBOSE
+                PRNT::_print(PRNT::formatMSG("[ANIME] %24s : phase 0 complete - colors prepared [random:%d]" NL, "T_EFFECT_MOTION_ON", useRandom));
             #endif
         }
         
@@ -5545,9 +5814,9 @@ void T_EFFECT_MOTION_ON(taskId_t taskId) {
     } 
     else if (TASK.Phase != taskDone) {                                   // STEPS 1+: ANIMATION PHASE - Logic
         int effect = EE::Get(EE_MOTION_ON_EFF);                       // Get selected effect - Setup
-        #ifdef ENABLE_LOG_MOTION_TASK
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
             if (TASK.Phase == 1) {
-                PRNT::_print(PRNT::formatMSG("%32s : phase 1 - running effect [%d]" NL, "T_EFFECT_MOTION_ON", effect));
+                PRNT::_print(PRNT::formatMSG("[ANIME] %24s : phase 1 - running effect [%d]" NL, "T_EFFECT_MOTION_ON", effect));
             }
         #endif
 
@@ -5560,13 +5829,13 @@ void T_EFFECT_MOTION_ON(taskId_t taskId) {
     LED::Show();                                                         // Update strip - Output
 
     if (TASK.Phase == taskDone) {                                        // COMPLETION - Logic
-        #ifdef ENABLE_LOG_MOTION_TASK
-            PRNT::_print(PRNT::formatMSG("%32s : animation complete - scheduling fade off" NL, "T_EFFECT_MOTION_ON"));
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
+            PRNT::_print(PRNT::formatMSG("[ANIME] %24s : animation complete - scheduling fade off" NL, "T_EFFECT_MOTION_ON"));
         #endif
         APP::updColors_Force();                                     // Sync UI colors - Sync
         TASK.Phase = 0; TASK.ParamA = 0; TASK.ParamB = 0;                        // Reset local counters - State
         TSK::KillTasksAvoidLocked("T_EFFECT_MOTION_ON");                    // End this task - Action
-        PRNT::_print(PRNT::formatMSG("%~32s # fade off scheduled, inc [%d], delay [%d]" NL, "MOTION_Off", LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log, lux-adapted speed - Sync
+        PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # fade off scheduled, inc [%d], delay [%d]" NL, "MOTION_Off", LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log, lux-adapted speed - Sync
         TSK::AddTask("T_EFFECT_MOTION_ON", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), S_TO_MS(EE::Get(EE_MOTION_ON_TIME)), false); // Schedule OFF - Action
     }
 }
@@ -5639,16 +5908,18 @@ bool T_EFFECT_MOTION_ON_Default() {
  * zone. Supports divide-brightness (15% reduction per step from center).
  *
  * @param  tID  Task handle supplied by the scheduler.
+ *
+ * Called by: T_EFFECT_MOTION_ON() (MOTION_ON_HANDLERS[1]).
  */
 void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
     bool N = false;                                                      // Track if any LED changed - State
     bool Done = true;                                                    // Assume animation is finished - State
     const int step = TASK.ParamA;                                            // Cache current animation step - Setup
-    
-    #ifdef ENABLE_LOG_MOTION_TASK
+
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool effect1Started = false;
         if (!effect1Started) {
-            PRNT::_print(PRNT::formatMSG("%32s : FromMiddle effect started" NL, "T_EFFECT_MOTION_ON_1"));
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s : FromMiddle effect started" NL, "MOTION_ON_1"));
             effect1Started = true;
         }
     #endif
@@ -5727,6 +5998,9 @@ void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
     if (!N) {
         if (Done) {
             TASK.Phase = taskDone;                                        // Animation finished - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_1_FromMiddle"));
+            #endif
         } else {
             APP::updDeltaColors();                                  // Sync App Color - Sync
             TASK.ParamA++;                                                   // Advance step - State
@@ -5742,12 +6016,14 @@ void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
  * Step 4: final bloom to 100% with smooth transition. HB pixels track the master zone.
  *
  * @param  tID  Task handle supplied by the scheduler.
+ *
+ * Called by: T_EFFECT_MOTION_ON() (MOTION_ON_HANDLERS[2]).
  */
 void T_EFFECT_MOTION_ON_2_LineMoving(taskId_t tID) { // Line Moving
-    #ifdef ENABLE_LOG_MOTION_TASK
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool effect2Started = false;
         if (!effect2Started) {
-            PRNT::_print(PRNT::formatMSG("%32s : LineMoving effect started" NL, "T_EFFECT_MOTION_ON_2"));
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s : LineMoving effect started" NL, "MOTION_ON_2"));
             effect2Started = true;
         }
     #endif
@@ -5814,9 +6090,12 @@ void T_EFFECT_MOTION_ON_2_LineMoving(taskId_t tID) { // Line Moving
             TASK.ParamA++;                                                  // Advance - State
         } else {
             // Logic Gate: If using Divide, we are done after Step 2. Skip Step 3.
-            if (useDiv && phase == 2) { 
+            if (useDiv && phase == 2) {
                 TASK.Phase = taskDone;                                   // Finish early - State
                 TASK.ParamA = 0;                                            // Reset - Setup
+                #ifdef ENABLE_LOG_ANIME_INFO
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done (early, divide mode)" NL, "MOTION_ON_2_LineMoving"));
+                #endif
             } else {
                 TASK.Phase++;                                            // Next phase (Step 3 or 4) - State
                 TASK.ParamA = 0;                                            // Reset - Setup
@@ -5839,11 +6118,14 @@ void T_EFFECT_MOTION_ON_2_LineMoving(taskId_t tID) { // Line Moving
         if (!N) {
             TASK.Phase = taskDone;                                       // Finish - State
             APP::updDeltaColors();                                   // Update color after LED br is off - Sync
-        } else { 
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_2_LineMoving"));
+            #endif
+        } else {
             LED::Show();                                                 // Refresh strip - Output
             APP::updDeltaColors();                                   // Sync App UI - Sync
         }
-    } 
+    }
     else {
         TASK.Phase = taskDone;                                           // Safety - State
     }
@@ -5857,12 +6139,14 @@ void T_EFFECT_MOTION_ON_2_LineMoving(taskId_t tID) { // Line Moving
  * Supports divide-brightness (15% reduction based on distance from zone center).
  *
  * @param  tID  Task handle used to set the per-step interval.
+ *
+ * Called by: T_EFFECT_MOTION_ON() (MOTION_ON_HANDLERS[3]).
  */
 void T_EFFECT_MOTION_ON_3_Random(taskId_t tID) { // Random
-    #ifdef ENABLE_LOG_MOTION_TASK
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool effect3Started = false;
         if (!effect3Started) {
-            PRNT::_print(PRNT::formatMSG("%32s : Random effect started" NL, "T_EFFECT_MOTION_ON_3"));
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s : Random effect started" NL, "MOTION_ON_3"));
             effect3Started = true;
         }
     #endif
@@ -5901,9 +6185,12 @@ void T_EFFECT_MOTION_ON_3_Random(taskId_t tID) { // Random
             }
         } else {
             TASK.Phase = taskDone;                                        // All LEDs processed - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_3_Random"));
+            #endif
         }
         return;
-    } 
+    }
     else if (TASK.Phase == 2) { // --- STEP 2: CALCULATE TARGET & FADE ---
         int mainLed = LED::State.PixelOrder[TASK.ParamA];                                // Retrieve current target LED - Setup
         int activeIdx = TASK.ParamB;                                         // Retrieve logic position - Setup
@@ -5967,12 +6254,14 @@ void T_EFFECT_MOTION_ON_3_Random(taskId_t tID) { // Random
  * with optional divide-brightness gradient. Completes when all zones reach target.
  *
  * @param  tID  Task handle supplied by the scheduler.
+ *
+ * Called by: T_EFFECT_MOTION_ON() (MOTION_ON_HANDLERS[4]).
  */
 void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
-    #ifdef ENABLE_LOG_MOTION_TASK
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool effect4Started = false;
         if (!effect4Started) {
-            PRNT::_print(PRNT::formatMSG("%32s : Cascade effect started" NL, "T_EFFECT_MOTION_ON_4"));
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s : Cascade effect started" NL, "MOTION_ON_4"));
             effect4Started = true;
         }
     #endif
@@ -6052,6 +6341,9 @@ void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
 
         if (!N && ta >= floorLimit) {                                   // If floor is fully lit - State
             TASK.Phase = taskDone;                                       // Animation finished - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_4_Cascade"));
+            #endif
         } else {
             if (ta < floorLimit) TASK.ParamA++;                             // Expand bloom - State
             LED::Show();                                                 // Update strips - Output
@@ -6071,12 +6363,14 @@ void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
  * transition smoothly to their final target brightness.
  *
  * @param  tID  Task handle supplied by the scheduler.
+ *
+ * Called by: T_EFFECT_MOTION_ON() (MOTION_ON_HANDLERS[5]).
  */
 void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
-    #ifdef ENABLE_LOG_MOTION_TASK
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool effect5Started = false;
         if (!effect5Started) {
-            PRNT::_print(PRNT::formatMSG("%32s : TheCollision effect started" NL, "T_EFFECT_MOTION_ON_5"));
+            PRNT::_print(PRNT::formatMSG("[ANIME] %~24s : TheCollision effect started" NL, "MOTION_ON_5"));
             effect5Started = true;
         }
     #endif
@@ -6162,6 +6456,9 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
 
         if (!N) {
             TASK.Phase = taskDone;                                       // Collision complete - State
+            #ifdef ENABLE_LOG_ANIME_INFO
+                PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done" NL, "MOTION_ON_5_TheCollision"));
+            #endif
         } else {
             TASK.ParamB++;                                               // Bloom-tick counter - State
             if (TASK.ParamB > MOTION_COLLISION_BLOOM_MAX_TICKS) {
@@ -6195,6 +6492,9 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
                 LED::Show();
                 APP::updDeltaColors();
                 TASK.Phase = taskDone;
+                #ifdef ENABLE_LOG_ANIME_INFO
+                    PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # done (safety cap - see comment above)" NL, "MOTION_ON_5_TheCollision"));
+                #endif
             } else {
                 LED::Show();                                                 // Output changes - Output
                 APP::updDeltaColors();                                 // Update UI - Sync
@@ -6233,7 +6533,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
         if (TASK.Phase == 0) {                                            // Step 0: Heartbeat - Logic
             startIdx = 0;                                                // HB Start - Mapping
             endIdx = LED_HB_NUM;                                         // HB End - Mapping
-            #ifdef ENABLE_LOG_MOTION_TASK
+            #ifdef ENABLE_LOG_MOTION_VERBOSE
                 static bool hbStartLogged = false;
                 if (!hbStartLogged) {
                     PRNT::_print(PRNT::formatMSG("%32s : fading HB zone to black" NL, "T_EFFECT_MOTION_OFF"));
@@ -6243,7 +6543,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
         } else if (TASK.Phase == 1) {                                     // Step 1: Common - Logic
             startIdx = 0;                                                // COM Start - Mapping
             endIdx = LED_COM_NUM;                                        // COM End - Mapping
-            #ifdef ENABLE_LOG_MOTION_TASK
+            #ifdef ENABLE_LOG_MOTION_VERBOSE
                 static bool comStartLogged = false;
                 if (!comStartLogged) {
                     PRNT::_print(PRNT::formatMSG("%32s : HB complete - fading COM zone" NL, "T_EFFECT_MOTION_OFF"));
@@ -6253,7 +6553,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
         } else if (TASK.Phase == 2) {                                     // Step 2: Bed - Logic
             startIdx = 0;                                                // BED Start - Mapping
             endIdx = LED_BED_NUM;                                        // BED End - Mapping
-            #ifdef ENABLE_LOG_MOTION_TASK
+            #ifdef ENABLE_LOG_MOTION_VERBOSE
                 static bool bedStartLogged = false;
                 if (!bedStartLogged) {
                     PRNT::_print(PRNT::formatMSG("%32s : COM complete - fading BED zone" NL, "T_EFFECT_MOTION_OFF"));
@@ -6301,7 +6601,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
     LED::Show();                                                          // Update hardware - Output
 
     if (TASK.Phase == taskDone) {                                         // Final Cleanup - Logic
-        #ifdef ENABLE_LOG_MOTION_TASK
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : fade complete - all zones off" NL, "T_EFFECT_MOTION_OFF"));
         #endif
         APP::updStatus("LED::T_EFFECT_MOTION_OFF");                                             // Sync - Sync
@@ -6327,7 +6627,7 @@ void T_MOTION_CHANGE_COLOR(taskId_t taskId) {
     const int limit = LED_NUM_TOTAL;                                    // Cache loop limit - Setup
     const int brInc = LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC));                      // Cache increment setting - Setup
 
-    #ifdef ENABLE_LOG_MOTION_TASK
+    #ifdef ENABLE_LOG_MOTION_VERBOSE
         static bool colorTransitionStarted = false;
         if (!colorTransitionStarted) {
             PRNT::_print(PRNT::formatMSG("%32s : starting color transition" NL, "T_MOTION_CHANGE_COLOR"));
@@ -6356,7 +6656,7 @@ void T_MOTION_CHANGE_COLOR(taskId_t taskId) {
         LED::Show();                                                     // Push color transition to hardware - Output
     } else {
         // Cleanup when all pixels reach their target colors
-        #ifdef ENABLE_LOG_MOTION_TASK
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
             PRNT::_print(PRNT::formatMSG("%32s : color transition complete" NL, "T_MOTION_CHANGE_COLOR"));
         #endif
         TSK::KillID(taskId, "T_MOTION_CHANGE_COLOR");                     // Terminate task - State
@@ -6660,6 +6960,8 @@ void cmdConnected() {
  *
  * @param  buff  Command buffer ('@' at [0]).
  * @param  len   Length of the command (>= 2, >= 4 for '@Dvv'/'@Lvv').
+ *
+ * Called by: APP::Exec()'s dispatch switch, case '@'.
  */
 void cmdTestMode(char *buff, int len) {
     // * LOG
@@ -6965,6 +7267,8 @@ void cmdEnableDisable() {
  * If Motion active (> motON): ignores the command.
  * Otherwise: writes to LED::State.StoredBrightness[] for selected LEDs and launches
  * T_SMOOTH_CHANGE in brightness mode (TASK.ParamA=1).
+ *
+ * Called by: APP::Exec()'s dispatch switch, case 'L'->'B'.
  */
 void cmdChangeBrightness(char *buff, int len) {
 	// only brightness
@@ -7027,6 +7331,8 @@ void cmdChangeBrightness(char *buff, int len) {
  * If Motion active (> motON): applies colour to the motion colour.
  * Otherwise: writes to LED::State.TargetColor[] for selected LEDs and launches T_SMOOTH_CHANGE
  * in colour mode (TASK.ParamA=0). Also disables random colour (EE_TV_RANDOM_COLOR_START=0).
+ *
+ * Called by: APP::Exec()'s dispatch switch, case 'L'->'C'.
  */
 void cmdChangeColor(char *buff, int len) {
 	if (len == 2) {
@@ -7102,17 +7408,37 @@ void cmdChangeColor(char *buff, int len) {
 	MOTION::State.Status = motOFF;
 }
 
+/**
+ * @brief  Handle 'LD'/'Ld' command -- request dual colour or set a new dual colour.
+ *
+ * @param  buff       Command buffer. len==2: send dual-colour info back. len==14: set new colour.
+ * @param  len        2 = dual-colour request; 14 = 2x (2-digit hex R + G + B).
+ * @param  shakeMode  true = 'Ld' (shake-triggered dual colour, launches
+ *                    T_SHAKE_DUAL_COLOR); false = 'LD' (plain, launches T_DUAL_COLOR).
+ *
+ * Rejected/blocked while UDPRAW, Ambient Mode, or Motion (COM/BED) is active -
+ * dual colour only applies to the idle TV-on state. Otherwise: writes
+ * LED::State.TargetColor[0/1], enables EE_HB_DUAL_COLOR (only when it's
+ * actually flipping, to avoid a full settings resend on every call), pushes
+ * the new colour to the diffuser if a source is active, and launches the
+ * matching task.
+ *
+ * Called by: APP::Exec()'s dispatch switch, case 'L'->'D' (shakeMode=false)
+ * and case 'L'->'d' (shakeMode=true).
+ */
 void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 	if (len == 2) {
-		// * Send Dual Color 
+		// * Send Dual Color
 		termMsgSend(PRNT::formatMSG("LD%X%X%X%X%X%X",
 			LED::State.CurrentColor[LED::UCOM(0)].r, LED::State.CurrentColor[LED::UCOM(0)].g, LED::State.CurrentColor[LED::UCOM(0)].b,
 			LED::State.CurrentColor[LED::UCOM(1)].r, LED::State.CurrentColor[LED::UCOM(1)].g, LED::State.CurrentColor[LED::UCOM(1)].b));
-		
+
 		// * LOG
-		PRNT::_print(PRNT::formatMSG("%~32s # dual color info [r:%d] [g:%d] [b:%d] <> [r:%d] [g:%d] [b:%d]" NL, "ChangeDualColor",
-		LED::State.CurrentColor[LED::UCOM(0)].r, LED::State.CurrentColor[LED::UCOM(0)].g, LED::State.CurrentColor[LED::UCOM(0)].b,
-		LED::State.CurrentColor[LED::UCOM(1)].r, LED::State.CurrentColor[LED::UCOM(1)].g, LED::State.CurrentColor[LED::UCOM(1)].b));
+		#ifdef ENABLE_LOG_APP
+			PRNT::_print(PRNT::formatMSG("%~32s # dual color info [r:%d] [g:%d] [b:%d] <> [r:%d] [g:%d] [b:%d]" NL, "ChangeDualColor",
+			LED::State.CurrentColor[LED::UCOM(0)].r, LED::State.CurrentColor[LED::UCOM(0)].g, LED::State.CurrentColor[LED::UCOM(0)].b,
+			LED::State.CurrentColor[LED::UCOM(1)].r, LED::State.CurrentColor[LED::UCOM(1)].g, LED::State.CurrentColor[LED::UCOM(1)].b));
+		#endif
 		return;
 	}
 	if (len != 14) {
@@ -7125,21 +7451,27 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 	if (UDPRAW::State.Status) {
 		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
-		PRNT::_print(PRNT::formatMSG("%~32s # UDPRAW active, command ignored" NL, "ChangeDualColor"));
+		#ifdef ENABLE_LOG_APP
+			PRNT::_print(PRNT::formatMSG("%~32s # UDPRAW active, command ignored" NL, "ChangeDualColor"));
+		#endif
 		return;
 	}
 
 	if (APP::Am.Status) {
 		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
-		PRNT::_print(PRNT::formatMSG("%~32s # Ambient Mode active, command ignored" NL, "ChangeDualColor"));
+		#ifdef ENABLE_LOG_APP
+			PRNT::_print(PRNT::formatMSG("%~32s # Ambient Mode active, command ignored" NL, "ChangeDualColor"));
+		#endif
 		return;
 	}
 
 	if (MOTION::State.Status > motON) {                                   // COM or BED currently triggered
 		APP::State.LastResult = APP_ACK_BLOCKED;
 		// * LOG
-		PRNT::_print(PRNT::formatMSG("%~32s # motion active, command ignored" NL, "ChangeDualColor"));
+		#ifdef ENABLE_LOG_APP
+			PRNT::_print(PRNT::formatMSG("%~32s # motion active, command ignored" NL, "ChangeDualColor"));
+		#endif
 		return;
 	}
 
@@ -7197,10 +7529,12 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
 	}
 	
 	// * LOG
-	PRNT::_print(PRNT::formatMSG("%~32s #%s dual color set [r:%d] [g:%d] [b:%d] <> [r:%d] [g:%d] [b:%d]" NL, "ChangeDualColor",
-		shakeMode ? " shake" : "",
-		LED::State.TargetColor[0].r, LED::State.TargetColor[0].g, LED::State.TargetColor[0].b,
-		LED::State.TargetColor[1].r, LED::State.TargetColor[1].g, LED::State.TargetColor[1].b));
+	#ifdef ENABLE_LOG_APP
+		PRNT::_print(PRNT::formatMSG("%~32s #%s dual color set [r:%d] [g:%d] [b:%d] <> [r:%d] [g:%d] [b:%d]" NL, "ChangeDualColor",
+			shakeMode ? " shake" : "",
+			LED::State.TargetColor[0].r, LED::State.TargetColor[0].g, LED::State.TargetColor[0].b,
+			LED::State.TargetColor[1].r, LED::State.TargetColor[1].g, LED::State.TargetColor[1].b));
+	#endif
 }
 
 /**
@@ -7211,6 +7545,8 @@ void cmdChangeDualColor(char *buff, int len, bool shakeMode) {
  *
  * Sets or clears the selection bit for each LED based on the '0'/'1' characters.
  * Stops the loading bar after applying.
+ *
+ * Called by: APP::Exec()'s dispatch switch, case 'L'->'O'.
  */
 void cmdSetLed(char *buff, int len) {
 	if (len != LED_NUM+2) {
@@ -8340,7 +8676,9 @@ void termMsgSend(const char *msg) {
         return;
     }
 
-	#ifdef ENABLE_LOG_APP
+	// VERBOSE, not the base tier: one line per packet, including every LK
+	// color-sync flush during an active animation - too frequent for lite.
+	#ifdef ENABLE_LOG_APP_VERBOSE
 		PRNT::_print(PRNT::formatMSG("%32s : sent [%s] size [%d]" NL, "APP_Send", msg, strlen(msg)));
 	#endif
 }
@@ -8390,7 +8728,9 @@ void termMsgSendBin(const uint8_t *buf, size_t len) {
 		if (APP_UDP.endPacket() == 1) break;
 	}
 
-	#ifdef ENABLE_LOG_APP
+	// VERBOSE, not the base tier - see termMsgSend()'s note above; this is
+	// the binary path used by every LK color-sync flush.
+	#ifdef ENABLE_LOG_APP_VERBOSE
 		PRNT::_print(PRNT::formatMSG("%32s : sent [%d] bytes" NL, "APP_SendBin", (int)len));
 	#endif
 }
@@ -8984,6 +9324,9 @@ void PollStatus() {
  * No-op if nothing's active.
  *
  * @param  colorOverride  Explicit colour(s) to use, or NULL to derive from current LEDs.
+ *
+ * Called by: LED::setLux() (lux-bucket brightness change), cmdChangeColor(),
+ * cmdChangeDualColor(), cmdSettings() (when a DIF-relevant setting changed).
  */
 void PushLiveIfActive(const DIF_Colorx *colorOverride) {
     const uint8_t activeModeSetting = ActiveModeSetting();             // Which EE_DIF_MODE_* matches the active source - Logic
@@ -9064,14 +9407,49 @@ void ManualRefill() {
 }
 
 /**
- * @brief  Send a C-string as a UDP packet to the diffuser.
+ * @brief  Async diffuser-send state: staged payload + which step is in flight.
  *
- * @param  msg  Null-terminated string to transmit. NULL is safely ignored.
+ * Send() used to busy-wait up to DIF_UDP_TIMEOUT ms TWICE in a row (once for
+ * beginPacket(), once for endPacket()) with no yield - up to ~200ms where the
+ * ENTIRE board is frozen: no UDP, no MQTT, no LED refresh, nothing. Every
+ * Dual Color command calls PushLiveIfActive() -> Send() whenever the diffuser
+ * has an active source, so rapid-fire LD/Ld commands compounded this into a
+ * real, reproduced bug: 150 back-to-back Dual Color commands wedged the
+ * board's UDP responsiveness completely, with no self-recovery (confirmed
+ * live - see the Dual-Color-spam investigation).
  *
- * Sends to DIF_TARGET_IP:DIF_UDP_PORT. Retries beginPacket() and endPacket()
- * up to DIF_UDP_TIMEOUT ms each. Silently drops the packet if:
- *   - WiFi is not connected
- *   - The UDP socket times out
+ * Fix: Send() now only stages the message; TickAsyncSend() (called every
+ * loop() - see the top-level loop()) advances the handshake one non-blocking
+ * step at a time. A newer Send() call simply overwrites whatever's still
+ * staged/in-flight - only the latest diffuser state ever matters for these
+ * "push current state" messages, so no queue is needed (mirrors
+ * APP::drainColorSync's coalescing for the 'LK' colour-sync path). Spam
+ * naturally collapses to "send whatever's freshest, as fast as the link
+ * allows" instead of piling up a backlog that outruns real time.
+ */
+static char          difAsyncMsg[DIF_MSG_MAX_LEN];   // staged payload, copied in on every Send()
+static bool          difAsyncPending = false;         // a send is staged or in flight
+static uint8_t       difAsyncPhase   = 0;             // 0=idle 1=awaiting beginPacket() 2=awaiting endPacket()
+static unsigned long difAsyncPhaseAt = 0;             // millis() the current phase started, for the DIF_UDP_TIMEOUT ceiling
+
+/**
+ * @brief  Stage a C-string to be sent as a UDP packet to the diffuser.
+ *
+ * @param  msg  Null-terminated string to transmit (copied - safe to reuse/free
+ *              the caller's buffer immediately after this returns). NULL is
+ *              safely ignored. Truncated to DIF_MSG_MAX_LEN-1 chars (every
+ *              real caller's payload fits well under that, see SendCmd()).
+ *
+ * Non-blocking: returns immediately. The actual beginPacket()/write()/
+ * endPacket() handshake is driven by TickAsyncSend(), one non-blocking
+ * attempt per loop() iteration, up to DIF_UDP_TIMEOUT ms per step before
+ * giving up - same "silently drop on timeout" behavior as before, just
+ * without freezing everything else while it waits.
+ *
+ * Called by: PollStatus() ("Dc"), RequestStatus() ("Ds"), RequestHistory()
+ * ("Dh"), and SendCmd() (enveloped relay commands - itself called by
+ * SendMaybeAck(), used from ManualRefill()/Parfum()/Shutdown()/TurnOn() and
+ * the app-originated diffuser command path in APP::Exec()).
  */
 void Send(const char *msg) {
 	if (msg == NULL) {
@@ -9087,49 +9465,68 @@ void Send(const char *msg) {
 		return;
 	}
 
-	unsigned long startTime = millis();
-	bool started = false;
+	strncpy(difAsyncMsg, msg, DIF_MSG_MAX_LEN - 1);
+	difAsyncMsg[DIF_MSG_MAX_LEN - 1] = '\0';
+	if (strlen(msg) >= DIF_MSG_MAX_LEN) {
+		PRNT::_print(PRNT::formatMSG("%32s ! message truncated, was [%d] bytes, max [%d]" NL, "Send", strlen(msg), DIF_MSG_MAX_LEN - 1));
+	}
 
-	// Try to beginPacket() with timeout
-	while (millis() - startTime < DIF_UDP_TIMEOUT) {
+	// (Re)start the handshake fresh with the newest payload. If a send was
+	// already mid-flight (phase 1/2), this abandons it in favour of the
+	// fresher one - beginPacket() safely resets any half-written buffer, so
+	// there's nothing to clean up first.
+	difAsyncPending = true;
+	difAsyncPhase   = 0;
+}
+
+/**
+ * @brief  Advance the staged diffuser send by one non-blocking step.
+ *
+ * @note   Call every loop() iteration (see the top-level loop()). No-op
+ *         when nothing is staged. See Send() for the full story.
+ */
+void TickAsyncSend() {
+	if (!difAsyncPending) return;
+
+	if (difAsyncPhase == 0) {
+		difAsyncPhase   = 1;
+		difAsyncPhaseAt = millis();
+	}
+
+	if (difAsyncPhase == 1) {
 		if (DIF_UDP.beginPacket(DIF_TARGET_IP, DIF_UDP_PORT)) {
-			started = true;
-			break;
+			DIF_UDP.write(difAsyncMsg);
+			difAsyncPhase   = 2;
+			difAsyncPhaseAt = millis();
+			return;   // endPacket() gets its own tick(s) below
 		}
-		// Removed delay(1) to avoid blocking CPU
+		if (millis() - difAsyncPhaseAt >= DIF_UDP_TIMEOUT) {
+			#ifdef ENABLE_LOG_DIF
+				PRNT::_print(PRNT::formatMSG("%32s : beginPacket() timeout after %lu ms" NL, "Send", DIF_UDP_TIMEOUT));
+			#endif
+			difAsyncPending = false;
+			difAsyncPhase   = 0;
+		}
+		return;   // one non-blocking attempt per tick, never busy-waits
 	}
 
-	if (!started) {
-		#ifdef ENABLE_LOG_DIF
-			PRNT::_print(PRNT::formatMSG("%32s : beginPacket() timeout after %lu ms" NL, "Send", DIF_UDP_TIMEOUT));
-		#endif
-		return;
+	if (difAsyncPhase == 2) {
+		if (DIF_UDP.endPacket() == 1) {
+			#ifdef ENABLE_LOG_DIF
+				PRNT::_print(PRNT::formatMSG("%32s : sent [%s] size [%d]" NL, "Send", difAsyncMsg, strlen(difAsyncMsg)));
+			#endif
+			difAsyncPending = false;
+			difAsyncPhase   = 0;
+			return;
+		}
+		if (millis() - difAsyncPhaseAt >= DIF_UDP_TIMEOUT) {
+			#ifdef ENABLE_LOG_DIF
+				PRNT::_print(PRNT::formatMSG("%32s : endPacket() timeout after %lu ms" NL, "Send", DIF_UDP_TIMEOUT));
+			#endif
+			difAsyncPending = false;
+			difAsyncPhase   = 0;
+		}
 	}
-
-	DIF_UDP.write(msg);
-
-	// end packet with timeout
-    bool sent = false;
-    unsigned long endStart = millis();
-    while (millis() - endStart < DIF_UDP_TIMEOUT) {
-        int res = DIF_UDP.endPacket();
-        if (res == 1) {  // success
-            sent = true;
-            break;
-        }
-        // Removed delay(1) to avoid blocking CPU
-    }
-
-    if (!sent) {
-        #ifdef ENABLE_LOG_DIF
-            PRNT::_print(PRNT::formatMSG("%32s : endPacket() timeout after %lu ms" NL, "Send", DIF_UDP_TIMEOUT));
-        #endif
-        return;
-    }
-
-	#ifdef ENABLE_LOG_DIF
-		PRNT::_print(PRNT::formatMSG("%32s : sent [%s] size [%d]" NL, "Send", msg, strlen(msg)));
-	#endif
 }
 
 /**
@@ -9264,6 +9661,11 @@ void Shutdown() {
  * While a parfum window is active on the diffuser (DIF::State.ParfumMin > 0), it queues this
  * Dn instead of applying it now -- the *last* one received is applied once the window
  * naturally expires (see parfumStop() in the diffuser firmware), so it's still sent here.
+ *
+ * Called by: cmdTestMode_Diffuser() (test mode + random-colour path),
+ * cmdDiffuserTurnOn() (app "Dn" command), cmdAmbientMode() (ambient recolour),
+ * DIF::IdleCheck() (idle pulse), DIF::AutoOn() (source-activated auto-on),
+ * DIF::PushLiveIfActive() (live re-push on setting change).
  */
 void TurnOn(uint8_t mode, uint8_t effect, const DIF_Colorx *colorOverride) {
 	#ifdef ENABLE_LOG_DIF
@@ -9295,8 +9697,10 @@ void TurnOn(uint8_t mode, uint8_t effect, const DIF_Colorx *colorOverride) {
 	else                ColorFromCurrentLEDs(dual, c);              // Derive from what's actually lit - Action
 
 	// * LOG
-	PRNT::_print(PRNT::formatMSG("%~32s # turn on [mode:%d-%s] [effect:%d-%s] [dual:%T] [br:%d] [speed:%d]" NL,
-		"DIF_TurnOn", mode, DIF::getModeName(mode), effect, DIF::getEffectName(effect), dual, brightness, speedMs));
+	#ifdef ENABLE_LOG_DIF
+		PRNT::_print(PRNT::formatMSG("%~32s # turn on [mode:%d-%s] [effect:%d-%s] [dual:%T] [br:%d] [speed:%d]" NL,
+			"DIF_TurnOn", mode, DIF::getModeName(mode), effect, DIF::getEffectName(effect), dual, brightness, speedMs));
+	#endif
 
 	if (dual) {
 		SendMaybeAck(PRNT::formatMSG("Dn%2X%2X%2X%2X%2X%2X%2X%2X%2X%2X", mode, c.r1, c.g1, c.b1, c.r2, c.g2, c.b2, brightness, effect, speedMs));
@@ -11086,8 +11490,10 @@ void Loop() {
 /* on MQTT_TOPIC -- the welcome ('Z') resync on connect + the existing 'k'      */
 /* keep-alive already double as presence, same as the UDP side.               */
 /* Connect/reconnect/failure are always logged (see NET::Reconnect for the    */
-/* same precedent); per-packet RX/TX tracing is opt-in via ENABLE_LOG_MQTT,   */
-/* matching ENABLE_LOG_APP's "recv/sent" lines on the UDP side.               */
+/* same precedent); per-command RX tracing is opt-in via ENABLE_LOG_MQTT,     */
+/* matching ENABLE_LOG_APP's "recv" lines on the UDP side. Per-packet TX      */
+/* ("sent [...]") is deeper still -- ENABLE_LOG_MQTT_VERBOSE -- same split as */
+/* APP::termMsgSend()/termMsgSendBin() on the UDP side.                      */
 /* ------------------------------------------------------------------------ */
 
 /**
@@ -11171,7 +11577,7 @@ void Publish(const char* msg) {
     MQTT_Cli.write((uint8_t)MQTT_TAG_DEV);                              // Sender tag first - Action
     MQTT_Cli.write((const uint8_t*)msg, n);                             // Payload - Action
     MQTT_Cli.endPublish();                                              // Fire-and-forget - Action
-    #ifdef ENABLE_LOG_MQTT
+    #ifdef ENABLE_LOG_MQTT_VERBOSE
         PRNT::_print(PRNT::formatMSG("%32s : sent [%s] size [%d]" NL, "MQTT_Publish", APP::_sharedTxBuffer, strlen(APP::_sharedTxBuffer)));
     #endif
 }
