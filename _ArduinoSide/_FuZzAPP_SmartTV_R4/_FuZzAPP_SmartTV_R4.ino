@@ -9288,12 +9288,26 @@ void Parfum(uint16_t minutes, uint8_t mode) {
 	// * LOG
 	PRNT::_print(PRNT::formatMSG("%~32s # parfum [%d min] mode [%d]%s" NL, "DIF_Parfum", minutes, mode, (minutes == 0) ? " (cancel)" : ""));
 
+	// NOTE: no RequestStatus() here (unlike the old code) - Send() only has a
+	// single staged-message slot and a newer Send() call unconditionally
+	// overwrites whatever's still in flight (see TickAsyncSend()'s doc
+	// comment - correct for "only the latest state matters" pushes like
+	// Dual Color, wrong for a one-shot command). Calling RequestStatus()
+	// (Send("Ds")) immediately after SendMaybeAck() here clobbered the just-
+	// staged "#SSDpMMMME" before TickAsyncSend() ever got a chance to
+	// transmit it - the Parfum command silently never reached the diffuser
+	// at all, which is exactly why the app saw "NO ACK" (there was nothing
+	// to ack) while every other diffuser command worked fine. The diffuser's
+	// own periodic StatusCheck poll refreshes the mirror shortly anyway, and
+	// the "#SSR" ack (once the command actually arrives) drives ParseStatus()
+	// via the ack-triggered path too - the immediate extra refresh wasn't
+	// needed for correctness, only for shaving a couple seconds off the
+	// app's mirror update, at the cost of dropping the command entirely.
 	if (minutes == 0) {
 		SendMaybeAck("Dp0000");                                    // Cancel -- diffuser expects exactly 6 chars, no mode digit - Action
 	} else {
 		SendMaybeAck(PRNT::formatMSG("Dp%4X%1X", minutes, mode));        // Start -- 4-hex minutes + 1-hex mode - Action
 	}
-	RequestStatus();                                                // Refresh mirror right away - Sync
 }
 
 /**

@@ -93,6 +93,8 @@
 #include <EEPROM.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
+#include <ctype.h>
 
 /* ════════════════════════════════════════════════════════════════════════════
    GLOBALS
@@ -413,54 +415,61 @@ namespace TELNET {
    ============================================================================ */
 namespace LOG {
 
-/** @brief  Serial/Telnet "D" — full diffuser/strip/buzzer/network debug dump. */
+/** @brief  Serial/Telnet "D" — full diffuser/strip/buzzer/network debug dump.
+ *  One field per line, "%-14s: value" throughout - a few original lines
+ *  crammed 2-3 unrelated fields together with ad-hoc spacing (e.g. WiFi
+ *  status + RSSI + IP + MAC all on one line); split out for readability,
+ *  same information, nothing dropped. */
 static void cmdDebugInfo() {
     dbgPrintln("──────── DEBUG INFO ────────");
-    dbgPrintf ("Firmware   : %s   uptime %s\n", OTA_HOSTNAME, uptimeStr(millis()));
-    dbgPrintf ("WiFi       : %s   RSSI %ddBm   IP %s   MAC %s\n",
-               WiFi.status() == WL_CONNECTED ? "connected" : "DOWN",
-               (int)WiFi.RSSI(), WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str());
-    dbgPrintf ("Free heap  : %u B\n", (unsigned)ESP.getFreeHeap());
+    dbgPrintf ("%-14s: %s\n", "Firmware", OTA_HOSTNAME);
+    dbgPrintf ("%-14s: %s\n", "Uptime", uptimeStr(millis()));
+    dbgPrintln("── Network ──");
+    dbgPrintf ("%-14s: %s\n", "WiFi", WiFi.status() == WL_CONNECTED ? "connected" : "DOWN");
+    dbgPrintf ("%-14s: %d dBm\n", "Signal", (int)WiFi.RSSI());
+    dbgPrintf ("%-14s: %s\n", "IP", WiFi.localIP().toString().c_str());
+    dbgPrintf ("%-14s: %s\n", "MAC", WiFi.macAddress().c_str());
+    dbgPrintf ("%-14s: %u B\n", "Free heap", (unsigned)ESP.getFreeHeap());
     dbgPrintln("── Diffuser ──");
-    dbgPrintf ("Power      : %s   Mode: M%u (%s)%s\n",
-               g_powered ? "ON" : "OFF", g_mode, MODE::modeName(g_mode),
+    dbgPrintf ("%-14s: %s\n", "Power", g_powered ? "ON" : "OFF");
+    dbgPrintf ("%-14s: M%u (%s)%s\n", "Mode", g_mode, MODE::modeName(g_mode),
                g_outOfWater ? "  [OUT OF WATER]" : "");
-    dbgPrintf ("Auto-retry : lastDn=%s (M%u)   retried=%s\n",
+    dbgPrintf ("%-14s: lastDn=%s (M%u)   retried=%s\n", "Auto-retry",
                g_haveLastDn ? "yes" : "no", g_lastDnMode, g_shutdownRetried ? "yes" : "no");
     if (g_parfumActive) {
-        dbgPrintf("Parfum     : ACTIVE — %u/%u min remaining\n", PARFUM::parfumRemainingMin(), g_parfumSetMin);
+        dbgPrintf("%-14s: ACTIVE - %u/%u min remaining\n", "Parfum", PARFUM::parfumRemainingMin(), g_parfumSetMin);
         if (g_parfumPendingKind == PARFUM_PEND_ON)
-            dbgPrintf("Parfum queue: Dn -> M%u (%s)\n", g_parfumPendingMode, MODE::modeName(g_parfumPendingMode));
+            dbgPrintf("%-14s: Dn -> M%u (%s)\n", "Parfum queue", g_parfumPendingMode, MODE::modeName(g_parfumPendingMode));
         else if (g_parfumPendingKind == PARFUM_PEND_OFF)
-            dbgPrintln("Parfum queue: Df (off)");
+            dbgPrintf("%-14s: Df (off)\n", "Parfum queue");
         else if (g_parfumHavePrevDn)
-            dbgPrintf("Parfum queue: none — expiry reverts to M%u (%s)\n", g_parfumPrevMode, MODE::modeName(g_parfumPrevMode));
+            dbgPrintf("%-14s: none - expiry reverts to M%u (%s)\n", "Parfum queue", g_parfumPrevMode, MODE::modeName(g_parfumPrevMode));
         else
-            dbgPrintln("Parfum queue: none — expiry shuts down (no prior mode)");
+            dbgPrintf("%-14s: none - expiry shuts down (no prior mode)\n", "Parfum queue");
     } else
-        dbgPrintln("Parfum     : inactive");
+        dbgPrintf("%-14s: inactive\n", "Parfum");
     if (g_modeTargetActive)
-        dbgPrintf("Targeting  : -> M%u (%s), %s\n", g_modeTarget, MODE::modeName(g_modeTarget),
+        dbgPrintf("%-14s: -> M%u (%s), %s\n", "Targeting", g_modeTarget, MODE::modeName(g_modeTarget),
                   g_modePending ? "press sent, awaiting buzzer" : "advancing");
-    dbgPrintf ("Buzzer     : env=%.1f active=%s burst=%u quiet=%u totalBeeps=%lu\n",
+    dbgPrintf ("%-14s: env=%.1f   active=%s   burst=%u   quiet=%u   totalBeeps=%lu\n", "Buzzer",
                g_buzEnv, g_buzToneActive ? "yes" : "no", g_buzBurst, g_buzQuiet, g_buzTotalCount);
     dbgPrintln("── Strip ──");
     uint8_t code = STRIP::stripStatusCode();
-    dbgPrintf ("Status     : %u (%s)   dual=%s\n", code, STRIP::stripStatusName(code), g_effectDual ? "yes" : "no");
-    dbgPrintf ("Brightness : %u/255   Speed: %ums/frame\n", g_stripBrightness, g_effectTickMs);
-    dbgPrintf ("Base1      : #%02X%02X%02X   Base2: #%02X%02X%02X\n",
-               g_effectBase1.r, g_effectBase1.g, g_effectBase1.b,
-               g_effectBase2.r, g_effectBase2.g, g_effectBase2.b);
-    dbgPrintf ("OOW alert  : %s   WiFi seq: %s\n",
-               g_oowAlertActive ? "active" : "no", g_wifiConnecting ? "connecting" : "idle");
+    dbgPrintf ("%-14s: %u (%s)   dual=%s\n", "Status", code, STRIP::stripStatusName(code), g_effectDual ? "yes" : "no");
+    dbgPrintf ("%-14s: %u/255\n", "Brightness", g_stripBrightness);
+    dbgPrintf ("%-14s: %ums/frame\n", "Speed", g_effectTickMs);
+    dbgPrintf ("%-14s: #%02X%02X%02X\n", "Base1", g_effectBase1.r, g_effectBase1.g, g_effectBase1.b);
+    dbgPrintf ("%-14s: #%02X%02X%02X\n", "Base2", g_effectBase2.r, g_effectBase2.g, g_effectBase2.b);
+    dbgPrintf ("%-14s: %s\n", "OOW alert", g_oowAlertActive ? "active" : "no");
+    dbgPrintf ("%-14s: %s\n", "WiFi seq", g_wifiConnecting ? "connecting" : "idle");
     dbgPrintln("── Usage ──");
-    dbgPrintf ("Since refill: %s (effective, mode-weighted)\n", uptimeStr((unsigned long)g_usageAccumSec * 1000UL));
-    dbgPrintf ("History    : %u/%u cycles   avg=%s   lifetime refills=%lu\n",
+    dbgPrintf ("%-14s: %s (effective, mode-weighted)\n", "Since refill", uptimeStr((unsigned long)g_usageAccumSec * 1000UL));
+    dbgPrintf ("%-14s: %u/%u cycles   avg=%s   lifetime refills=%lu\n", "History",
                g_refillHistoryCount, REFILL_HISTORY_SIZE,
                uptimeStr((unsigned long)USAGE::averageRefillCycleSec() * 1000UL), g_totalRefillCount);
     if (g_refillHistoryCount > 0) {
         uint32_t avg = USAGE::averageRefillCycleSec();
-        dbgPrintf("Estimate   : %s remaining until next refill (at current mode's rate)\n",
+        dbgPrintf("%-14s: %s remaining until next refill (at current mode's rate)\n", "Estimate",
                   avg > g_usageAccumSec ? uptimeStr((unsigned long)(avg - g_usageAccumSec) * 1000UL) : "due now");
     }
     {
@@ -474,9 +483,9 @@ static void cmdDebugInfo() {
         // have the second call silently overwrite the first's result before
         // vsnprintf ever reads it, so both fields would print identically.
         // Two separate calls sidestep that instead of adding a second buffer.
-        dbgPrintf("EEPROM     : last save %s ago (%s)\n", uptimeStr(sinceSaveMs),
+        dbgPrintf("%-14s: last save %s ago (%s)\n", "EEPROM", uptimeStr(sinceSaveMs),
                   dirty ? "unsaved change pending" : "up to date, nothing to save");
-        dbgPrintf("             next checkpoint in %s (skipped if still unchanged; sooner if a refill finalizes)\n",
+        dbgPrintf("%-14s  next checkpoint in %s (skipped if still unchanged; sooner if a refill finalizes)\n", "",
                   uptimeStr(nextCheckMs));
     }
     dbgPrintln("─────────────────────────────");
@@ -568,11 +577,40 @@ static char* formatMSG(const char *fmt, ...) {
 }
 
 /**
- * @brief  Tagged log line: "[TAG   ] message" + newline, to Serial + telnet.
+ * @brief  True if `msg` reads like a problem report, not routine state - picks
+ *         the '!' symbol for logMsg() instead of '#', same convention verified
+ *         across the SmartTV side's own formatMSG() call sites: every "!"
+ *         line there is a rejected/invalid/out-of-range report with the tag
+ *         LEFT-aligned ("%32s ! ..."), while routine action/event lines use
+ *         "#" with the tag RIGHT-aligned ("%~32s # ..."). Keyword heuristic
+ *         rather than a severity parameter on every one of the 30+ existing
+ *         logMsg() call sites - most error-ish messages in this file already
+ *         say so ("bad payload", "invalid subcommand", "rejected", ...).
+ */
+static bool looksLikeProblem(const char *msg) {
+    static const char *const markers[] = {
+        "error", "fail", "invalid", "bad ", "reject", "unsup", "lock", "no water", "timeout"
+    };
+    char lower[224];
+    size_t n = 0;
+    for (; msg[n] && n < sizeof(lower) - 1; n++) lower[n] = (char)tolower((unsigned char)msg[n]);
+    lower[n] = '\0';
+    for (size_t i = 0; i < sizeof(markers) / sizeof(markers[0]); i++)
+        if (strstr(lower, markers[i])) return true;
+    return false;
+}
+
+/**
+ * @brief  Tagged log line, Serial + telnet - same two-column convention
+ *         verified on the SmartTV side, not an approximation of it:
+ *           routine (action/event happened): "%~32s # message"  (tag RIGHT-
+ *             aligned - leading-pad spaces, tag ends right at column 32)
+ *           problem (rejected/invalid/etc):  "%32s ! message"   (tag LEFT-
+ *             aligned - trailing-pad spaces, tag starts at column 0)
+ *         via this file's own formatMSG() (already ported, same width/'~'
+ *         specifiers as the SmartTV one).
  *
- * Tags are padded to 6 chars so every line starts at the same column and
- * the sink stays readable while scrolling. Use the short forms below rather
- * than calling this directly:
+ * Use the short forms below rather than calling this directly:
  *
  *   logMsg(tag, fmt, ...)   ALWAYS emitted — state changes, commands that
  *                           did something, errors, boot/network events.
@@ -593,7 +631,7 @@ static void logMsg(const char *tag, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    dbgPrintf("[%-6s] %s\n", tag, buf);
+    dbgWrite(formatMSG(looksLikeProblem(buf) ? "%32s ! %s\n" : "%~32s # %s\n", tag, buf));
 }
 
 /**
@@ -2213,23 +2251,37 @@ static bool parseCmd(const String &s, char prefix, uint8_t maxVal, uint8_t &out)
 }
 
 static void tickTelnet() {
+    // A fresh incoming connection always takes over immediately, even if the
+    // current client still *thinks* it's connected - WiFiClient::connected()
+    // can be slow to notice a peer that went away without a clean close (e.g.
+    // a tool that crashed or exited without closing the socket), and until it
+    // does, the old logic here kept the single client slot occupied,
+    // refusing every new connection attempt in the meantime. Only one telnet
+    // client is ever kept; a new one always bumps the previous one off.
+    if (g_telnetSrv.hasClient()) {
+        WiFiClient nc = g_telnetSrv.available();
+        if (nc) {
+            if (g_telnetCli && g_telnetCli.connected()) {
+                LOG::logMsg("TELNET", "new client connecting - dropping previous one");
+                g_telnetCli.stop();
+            }
+            g_telnetCli = nc;
+            g_telnetCli.setNoDelay(true);
+            g_telnetBuf = "";
+            LOG::dbgPrintf ("\n──────── %s TELNET ────────\n", OTA_HOSTNAME);
+            LOG::dbgPrintf ("%-10s: %s\n", "IP", WiFi.localIP().toString().c_str());
+            LOG::dbgPrintf ("%-10s: %s\n", "MAC", WiFi.macAddress().c_str());
+            LOG::dbgPrintf ("%-10s: %d dBm\n", "Signal", (int)WiFi.RSSI());
+            LOG::dbgPrintf ("%-10s: %s\n", "Uptime", LOG::uptimeStr(millis()));
+            LOG::dbgPrintf ("%-10s: M%u (%s)%s\n", "Mode", g_mode, MODE::modeName(g_mode),
+                       g_outOfWater ? "  [OUT OF WATER]" : "");
+            LOG::dbgPrintf ("%-10s: %s\n", "Strip", STRIP::stripStatusName(STRIP::stripStatusCode()));
+            LOG::cmdHelp();
+        }
+    }
+
     if (!g_telnetCli || !g_telnetCli.connected()) {
         if (g_telnetCli) g_telnetCli.stop();
-        if (g_telnetSrv.hasClient()) {
-            WiFiClient nc = g_telnetSrv.available();
-            if (nc) {
-                g_telnetCli = nc;
-                g_telnetCli.setNoDelay(true);
-                g_telnetBuf = "";
-                LOG::dbgPrintf ("\n──────── %s TELNET ────────\n", OTA_HOSTNAME);
-                LOG::dbgPrintf ("IP %s   MAC %s   uptime %s\n",
-                           WiFi.localIP().toString().c_str(), WiFi.macAddress().c_str(), LOG::uptimeStr(millis()));
-                LOG::dbgPrintf ("Mode M%u (%s)%s   strip %s\n",
-                           g_mode, MODE::modeName(g_mode), g_outOfWater ? " [OUT OF WATER]" : "",
-                           STRIP::stripStatusName(STRIP::stripStatusCode()));
-                LOG::cmdHelp();
-            }
-        }
         return;
     }
     while (g_telnetCli.available()) {
