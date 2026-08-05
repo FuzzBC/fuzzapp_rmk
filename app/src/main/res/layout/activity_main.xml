@@ -1957,6 +1957,11 @@
         app:layout_constraintBottom_toTopOf="@id/_btns_dual_color"
         app:layout_constraintStart_toStartOf="parent" />
 
+    <!-- Bottom-right footer row: DUAL COLOR (opens the swatch popup - see
+         lay_dual_color_popup.xml / LEDManager.showDualColorPopup()) on the
+         left, TERM/LEDS/SET page-navigation buttons on the right. Page nav
+         used to be a swipe gesture anywhere on screen; replaced with these
+         explicit buttons (see MainActivity._Init_PageButtons()). -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/_btns_dual_color"
         android:layout_width="0dp"
@@ -1968,28 +1973,89 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
-        <HorizontalScrollView
-            android:id="@+id/horizontalScrollView2"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
+        <Button
+            android:id="@+id/_btn_dualcolor_open"
+            style="@style/Widget.AppCompat.Button.Colored"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:background="@drawable/_stroke_line"
+            android:letterSpacing="0.3"
+            android:minWidth="50dip"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="0dp"
+            android:paddingBottom="0dp"
+            android:text="@string/btn_dual_color"
+            android:textColor="@color/text_default"
+            android:textSize="11sp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            tools:ignore="SpeakableTextPresentCheck">
+            tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
 
-            <LinearLayout
-                android:id="@+id/_dual_buttons"
+        <LinearLayout
+            android:id="@+id/_page_nav_buttons"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <Button
+                android:id="@+id/_btn_page_term"
+                style="@style/Widget.AppCompat.Button.Colored"
                 android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:orientation="horizontal"
-                android:overScrollMode="never"
-                android:scrollIndicators="none"
-                android:scrollbarDefaultDelayBeforeFade="0"
-                android:scrollbarFadeDuration="0"
-                android:scrollbarSize="0dp"
-                android:scrollbars="none"></LinearLayout>
-        </HorizontalScrollView>
+                android:layout_height="30dp"
+                android:background="@drawable/_stroke_line"
+                android:letterSpacing="0.3"
+                android:minWidth="50dip"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="0dp"
+                android:paddingBottom="0dp"
+                android:text="@string/btn_page_term"
+                android:textColor="@color/text_default"
+                android:textSize="11sp"
+                tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_page_leds"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/_stroke_line"
+                android:letterSpacing="0.3"
+                android:minWidth="50dip"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="0dp"
+                android:paddingBottom="0dp"
+                android:text="@string/btn_page_leds"
+                android:textColor="@color/text_default"
+                android:textSize="11sp"
+                tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+            <Button
+                android:id="@+id/_btn_page_set"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/_stroke_line"
+                android:letterSpacing="0.3"
+                android:minWidth="50dip"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="0dp"
+                android:paddingBottom="0dp"
+                android:text="@string/btn_page_set"
+                android:textColor="@color/text_default"
+                android:textSize="11sp"
+                tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+        </LinearLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

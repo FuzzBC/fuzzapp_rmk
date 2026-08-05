@@ -54,11 +54,14 @@ import android.text.InputType;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.style.ForegroundColorSpan;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import androidx.appcompat.app.AlertDialog;
 
 import com.flask.colorpicker.ColorPickerView;
 import com.flask.colorpicker.builder.ColorPickerDialogBuilder;
@@ -183,6 +186,14 @@ public class LEDManager {
     /** Dual-colour selection buttons (dynamic, rebuilt on change) */
     public Button[] LED_BTN_DualColor   = new Button[LED_TOTAL];
 
+    /**
+     * Root container inside the currently-open Dual Color popup
+     * (lay_dual_color_popup.xml's _dual_buttons), or null while the popup is
+     * closed. _dualColorCreate() only rebuilds the button row when this is
+     * non-null - see showDualColorPopup().
+     */
+    private LinearLayout dualColorPopupContainer = null;
+
     /** Deselects all LEDs */
     public Button LED_BTN_DeselectALL;
 
@@ -300,9 +311,14 @@ public class LEDManager {
         _setupBrightnessBar();
         applyThemeColors();
 
-        // Load & render the saved dual-colour list
+        // Load the saved dual-colour list. The button row itself now lives in
+        // the Dual Color popup (showDualColorPopup()), not always-inflated,
+        // so _dualColorCreate() here is a no-op until the popup first opens -
+        // but LED_RandDualColor must exist regardless (the shake gesture and
+        // getRandDualColorHex() read it any time, popup opened or not).
         _dualColorLoad();
         _dualColorCreate();
+        reloadRandDualColor();
         _deselectAll();
     }
 
@@ -714,9 +730,16 @@ public class LEDManager {
      * LED_DualColorList.  Button 0 is always the random button.
      * Buttons 1..N are the saved pairs, shown in reverse order
      * (newest first).
+     *
+     * No-op while the Dual Color popup is closed (dualColorPopupContainer ==
+     * null) - there's nothing to render into. showDualColorPopup() calls
+     * this again right after inflating, so the row is always fresh the
+     * moment the popup opens; add/delete calls it too, but only have a
+     * visible effect while the popup is open (harmless otherwise).
      */
     private void _dualColorCreate() {
-        LinearLayout layout = Main.findViewById(R.id._dual_buttons);
+        if (dualColorPopupContainer == null) return;
+        LinearLayout layout = dualColorPopupContainer;
         layout.setOrientation(LinearLayout.HORIZONTAL);
         layout.removeAllViews();
 
@@ -807,9 +830,37 @@ public class LEDManager {
     }
 
     /**
-     * Generate a new pair of high-contrast random colours for the
-     * random dual-colour button.  Stores the result in LED_RandDualColor
-     * and updates button[0]'s gradient.
+     * Show the Dual Color popup (lay_dual_color_popup.xml) - the random-pair
+     * button plus every saved pair, exactly what used to sit inline in the
+     * bottom bar (see MainActivity._Init_PageButtons()'s doc comment for why
+     * that row moved here: the footer is now a single compact DUAL COLOR
+     * trigger + TERM/LEDS/SET, not a horizontally-scrolling swatch strip).
+     *
+     * Called by: MainActivity, the "DUAL COLOR" button's click listener.
+     */
+    public void showDualColorPopup() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(Main);
+        LayoutInflater inflater = Main.getLayoutInflater();
+        View view = inflater.inflate(R.layout.lay_dual_color_popup, null);
+        builder.setView(view);
+
+        ThemeManager.tintFrameStroke(Main, view, R.color.stroke_line_color);
+
+        dualColorPopupContainer = view.findViewById(R.id._dual_buttons);
+        _dualColorCreate();   // populate immediately - container is non-null now
+
+        AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(d -> dualColorPopupContainer = null);
+        dialog.show();
+    }
+
+    /**
+     * Generate a new pair of high-contrast random colours for the random
+     * dual-colour button. Stores the result in LED_RandDualColor - ALWAYS,
+     * regardless of whether the popup's button[0] currently exists (the
+     * shake gesture and getRandDualColorHex() need a valid value even if the
+     * Dual Color popup has never been opened this session) - and additionally
+     * updates button[0]'s live gradient when it does exist.
      *
      * Algorithm:
      *   1. Pick a random HSV hue (0-360)
@@ -817,10 +868,6 @@ public class LEDManager {
      *   3. Both colours use high saturation (0.85) and brightness (0.90)
      */
     public void reloadRandDualColor() {
-        if (LED_BTN_DualColor[0] == null) return;
-        DualColorDrawable dr = (DualColorDrawable)
-                LED_BTN_DualColor[0].getBackground();
-
         Random rnd   = new Random();
         float  hue1  = rnd.nextFloat() * 360f;
         float  offset = 120f + (rnd.nextFloat() * 60f);
@@ -832,7 +879,11 @@ public class LEDManager {
         LED_RandDualColor = String.format("%06X%06X",
                 c1 & 0xFFFFFF, c2 & 0xFFFFFF);
 
-        dr.setColors(c1, c2);
+        if (LED_BTN_DualColor[0] != null) {
+            DualColorDrawable dr = (DualColorDrawable)
+                    LED_BTN_DualColor[0].getBackground();
+            dr.setColors(c1, c2);
+        }
     }
 
     /**

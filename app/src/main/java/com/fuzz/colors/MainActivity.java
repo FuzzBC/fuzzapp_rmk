@@ -102,7 +102,6 @@ import android.content.pm.PackageManager;
 import android.provider.Settings;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.hardware.Sensor;
@@ -117,7 +116,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
-import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.annotation.SuppressLint;
 import android.view.MotionEvent;
@@ -130,8 +128,6 @@ import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.GridView;
 import android.widget.TextView;
-
-import com.xw.repo.BubbleSeekBar;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
@@ -226,33 +222,6 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      *  Set to true to enable SmartTV-specific debug logs in UDPReceive.java for troubleshooting
      *  communication between Android app, SmartTV, and Diffuser. */
     public static boolean smartTvDebugEnabled = false;
-
-    /** Detects horizontal swipes anywhere on screen to move between TERM / LEDS / SET */
-    private GestureDetector SwipeDetector;
-
-    /** Minimum horizontal drag distance (px) before a gesture counts as a page swipe */
-    private int swipeMinDistance;
-
-    /** Minimum horizontal fling velocity (px/s) before a gesture counts as a page swipe */
-    private int swipeThresholdVelocity;
-
-    /**
-     * Widgets with their own horizontal drag/scroll (brightness slider,
-     * background-picker filmstrip, test-mode chips, dual-colour button
-     * row). A swipe starting on one of these must control IT, not flip
-     * the page underneath it.
-     */
-    private final List<View> SwipeExemptViews = new ArrayList<>();
-
-    /** True for the rest of the current touch sequence if it started inside an exempt view */
-    private boolean swipeExemptForThisGesture = false;
-
-    /** Settings list scroll container - needs manual scroll-steal, see dispatchTouchEvent(). */
-    private ViewGroup settingsScrollView;
-    private int  settingsScrollSlop;
-    private float settingsDownX, settingsDownY, settingsLastY;
-    private boolean insideSettingsScroll  = false;
-    private boolean settingsScrollStolen  = false;
 
     /** Clear the debug console */
     Button BTN_ClearConsole;
@@ -673,8 +642,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Connect MQTT if credentials are already saved; otherwise pop the
-     * dialog (unless one is already showing, or a pair is already pending a
-     * push/ACK - no point prompting again for what's already in flight).
+     * dialog (unless one is already showing, a pair is already pending a
+     * push/ACK, or the user already dismissed this prompt once -
+     * MQTT.isPromptDeclined() - since that means "leave me alone", not "ask
+     * again in 5 seconds". The 5-second-hold gesture is the only way back in
+     * after a decline; it clears the flag itself.
      *
      * Called by: _connectTransport()/_superviseTransport(), in place of a
      * bare MQTT.connect(), everywhere cloud mode is attempted.
@@ -683,6 +655,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         if (MQTT == null) return;
         if (MQTT.hasCredentials()) { MQTT.connect(); return; }
         if (pendingMqttUser != null) return;              // already awaiting push/ACK - _submitMqttCredentials() owns retrying that
+        if (MQTT.isPromptDeclined()) return;               // user already said "not now" - don't nag
         if (!mqttCredDialogShowing) _promptMqttCredentials(null, null, null);
     }
 
@@ -734,7 +707,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         final android.widget.EditText userField = new android.widget.EditText(this);
         userField.setHint("MQTT username");
-        userField.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        // VISIBLE_PASSWORD (not plain TYPE_CLASS_TEXT) - broker usernames are
+        // case-sensitive technical strings, not natural-language words, and
+        // plain text input lets the keyboard silently auto-capitalize the
+        // first letter or offer autocorrect substitutions - either one
+        // quietly turns a correct username into a wrong one.
+        userField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         if (prefillUser != null) userField.setText(prefillUser);
         layout.addView(userField);
 
@@ -751,9 +730,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 "They're verified live against the broker before being saved.");
         builder.setView(layout);
         builder.setPositiveButton("Save", (dialog, which) -> {
+            // Trim BOTH - a stray leading/trailing space from the keyboard's
+            // autocomplete/autocapitalize is a far more likely cause of "this
+            // exact pair fails" than an intentional space in a broker credential.
             String user = userField.getText().toString().trim();
-            String pass = passField.getText().toString();
+            String pass = passField.getText().toString().trim();
             mqttCredDialogShowing = false;
+            if (MQTT != null) MQTT.setPromptDeclined(false);   // actively engaging - cancel any standing "leave me alone"
             if (user.isEmpty() || pass.isEmpty()) {
                 _promptMqttCredentials(user, pass, "Username and password are both required");
                 return;
@@ -762,13 +745,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         });
         builder.setNegativeButton("Not now", (dialog, which) -> {
             mqttCredDialogShowing = false;
-            // Back off like a real (failed) push attempt would, so declining
-            // doesn't cause the very next supervisor tick to re-prompt.
-            pendingMqttPushAt = System.currentTimeMillis();
+            // Permanently stop the automatic prompt (_connectMqttOrPrompt())
+            // from popping this again - an explicit decline means "leave me
+            // alone", not "ask me again in 5 seconds". The only way back in
+            // is the deliberate 5-second-hold gesture, which clears this.
+            if (MQTT != null) MQTT.setPromptDeclined(true);
         });
         builder.setOnCancelListener(dialog -> {
             mqttCredDialogShowing = false;
-            pendingMqttPushAt = System.currentTimeMillis();
+            if (MQTT != null) MQTT.setPromptDeclined(true);
         });
         builder.show();
     }
@@ -1067,9 +1052,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         _MakeFabMovable();
         telnetFab.setVisibility(telnetEnabled ? View.VISIBLE : View.GONE);
 
-        // Swipe page order: TERM – LEDS (default) – SET
+        // Page order: TERM – LEDS (default) – SET, navigated via the bottom-right buttons
         _RebuildNavPages();
-        _Init_SwipeNavigation();
+        _Init_PageButtons();
 
         // Loading spinner
         AVLoading = findViewById(R.id.LoadingBar);
@@ -1111,6 +1096,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 _Toast("Resending MQTT credentials...");
                 _submitMqttCredentials(MQTT.getUser(), MQTT.getPass(), true);   // interactive - if the saved pair turns out stale, tell them now
             } else {
+                if (MQTT != null) MQTT.setPromptDeclined(false);   // explicit re-engagement - this gesture is the deliberate way back in after a decline
                 _promptMqttCredentials(null, null, null);
             }
         };
@@ -1450,179 +1436,37 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /* ====================================================== */
 
     /**
-     * Set up the GestureDetector used to switch pages on a horizontal
-     * swipe anywhere on screen. Must be called once NAV_PAGES is built
-     * (see _Init_Global()).
-     */
-    private void _Init_SwipeNavigation() {
-        swipeThresholdVelocity = ViewConfiguration.get(this).getScaledMinimumFlingVelocity();
-        swipeMinDistance = (int) (80 * getResources().getDisplayMetrics().density); // 80dp
-
-        // Widgets with their own horizontal drag/scroll – exempt them so a
-        // deliberate interaction with them never gets read as a page swipe.
-        // sv_setting itself is NOT here: it's mostly plain scroll area (rows,
-        // labels, dividers) where a horizontal swipe should still page-nav
-        // normally. Only its row BubbleSeekBars are ambiguous (fast-dragging
-        // one is itself a fast horizontal gesture) - those are exempted
-        // individually, per-touch, in dispatchTouchEvent() via
-        // _IsTouchOnBubbleSeekBar() instead of blanket-exempting the whole
-        // container.
-        _AddSwipeExemptView(R.id._brightness);           // LEDS – brightness BubbleSeekBar
-        _AddSwipeExemptView(R.id.horizontalScrollView2);  // dual-colour quick buttons (always visible)
-
-        settingsScrollView = findViewById(R.id.sv_setting); // ScrollView is a ViewGroup
-        settingsScrollSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-
-        SwipeDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override
-            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-                if (e1 == null) return false;
-
-                float diffX = e2.getX() - e1.getX();
-                float diffY = e2.getY() - e1.getY();
-
-                // Only react to clearly horizontal, fast-enough swipes so that
-                // vertical scrolling (settings list, console log) and taps
-                // keep working exactly as before.
-                if (Math.abs(diffX) > Math.abs(diffY)
-                        && Math.abs(diffX) > swipeMinDistance
-                        && Math.abs(velocityX) > swipeThresholdVelocity) {
-
-                    if (diffX < 0) _NavigateToPage(navPageIndex + 1); // swiped left  → TERM ▸ LEDS ▸ SET
-                    else           _NavigateToPage(navPageIndex - 1); // swiped right → SET ▸ LEDS ▸ TERM
-                    return true;
-                }
-                return false;
-            }
-        });
-    }
-
-    /** Look up a view by id and add it to SwipeExemptViews, if it exists. */
-    private void _AddSwipeExemptView(int viewId) {
-        View v = findViewById(viewId);
-        if (v != null) SwipeExemptViews.add(v);
-    }
-
-    /** True if the given screen coordinates fall inside any exempt view. */
-    private boolean _IsInsideSwipeExemptView(float rawX, float rawY) {
-        Rect rect = new Rect();
-        for (View v : SwipeExemptViews) {
-            if (v.getGlobalVisibleRect(rect) && rect.contains((int) rawX, (int) rawY)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** True if the given screen coordinates fall inside the given view. */
-    private boolean _IsInsideView(View v, float rawX, float rawY) {
-        Rect rect = new Rect();
-        return v.getGlobalVisibleRect(rect) && rect.contains((int) rawX, (int) rawY);
-    }
-
-    /**
-     * True if the given screen coordinates land on a currently-visible
-     * BubbleSeekBar anywhere under root (recursive). Used to exempt just the
-     * settings rows' sliders from page-swipe detection, instead of blanket-
-     * exempting the whole sv_setting container - so a swipe starting on a
-     * row's label/divider/blank space still page-navigates normally.
-     */
-    private boolean _IsTouchOnBubbleSeekBar(View v, float rawX, float rawY) {
-        if (v == null || v.getVisibility() != View.VISIBLE) return false;
-
-        if (v instanceof BubbleSeekBar) {
-            Rect rect = new Rect();
-            return v.getGlobalVisibleRect(rect) && rect.contains((int) rawX, (int) rawY);
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) v;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                if (_IsTouchOnBubbleSeekBar(group.getChildAt(i), rawX, rawY)) return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Forward every touch event to the swipe detector while still letting
-     * it flow normally to whatever view is underneath (buttons, ScrollViews,
-     * etc). This lets a global swipe gesture coexist with all existing taps
-     * and scroll views without changing their behaviour. Touch sequences
-     * that start inside a SwipeExemptViews widget are never forwarded, so
-     * those widgets keep full control of their own horizontal drag/scroll.
-     */
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent ev) {
-        switch (ev.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                swipeExemptForThisGesture = _IsInsideSwipeExemptView(ev.getRawX(), ev.getRawY())
-                        || (settingsScrollView != null
-                            && _IsTouchOnBubbleSeekBar(settingsScrollView, ev.getRawX(), ev.getRawY()));
-
-                settingsDownX = ev.getRawX();
-                settingsDownY = ev.getRawY();
-                settingsScrollStolen = false;
-                insideSettingsScroll = settingsScrollView != null
-                        && _IsInsideView(settingsScrollView, ev.getRawX(), ev.getRawY());
-                break;
-
-            case MotionEvent.ACTION_MOVE:
-                // Every settings row's BubbleSeekBar spans almost the full row
-                // width and unconditionally calls
-                // getParent().requestDisallowInterceptTouchEvent(true) on its
-                // own ACTION_DOWN (see BubbleSeekBar.onTouchEvent()), which
-                // permanently blocks sv_setting's own onInterceptTouchEvent
-                // from ever running again for that gesture - so just clearing
-                // the flag isn't reliable (ScrollView may never get asked to
-                // re-check its slop). Instead take over directly: cancel
-                // whichever child currently owns the gesture (forces the
-                // seekbar to release, e.g. its ACTION_CANCEL handler) and
-                // drive the scroll ourselves for the rest of this gesture.
-                if (insideSettingsScroll && !settingsScrollStolen) {
-                    float dx = Math.abs(ev.getRawX() - settingsDownX);
-                    float dy = Math.abs(ev.getRawY() - settingsDownY);
-                    if (dy > settingsScrollSlop && dy > dx) {
-                        settingsScrollStolen = true;
-                        settingsLastY = ev.getRawY();
-
-                        MotionEvent cancel = MotionEvent.obtain(ev);
-                        cancel.setAction(MotionEvent.ACTION_CANCEL);
-                        settingsScrollView.dispatchTouchEvent(cancel);
-                        cancel.recycle();
-                        settingsScrollView.requestDisallowInterceptTouchEvent(true);
-                        return true; // fully handled - skip swipe detector + normal dispatch
-                    }
-                } else if (settingsScrollStolen) {
-                    settingsScrollView.scrollBy(0, (int) (settingsLastY - ev.getRawY()));
-                    settingsLastY = ev.getRawY();
-                    return true; // fully handled - skip swipe detector + normal dispatch
-                }
-                break;
-
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL:
-                if (settingsScrollStolen) {
-                    settingsScrollStolen = false;
-                    insideSettingsScroll = false;
-                    return true;
-                }
-                break;
-        }
-
-        if (!swipeExemptForThisGesture && SwipeDetector != null) {
-            SwipeDetector.onTouchEvent(ev);
-        }
-        return super.dispatchTouchEvent(ev);
-    }
-
-
-    /**
-     * Move to the page at the given index in NAV_PAGES (refresh
-     * request included). No-ops silently if index is out of range
-     * (i.e. already at an edge page, so swiping further in that
-     * direction does nothing).
+     * Wire the bottom-right TERM/LEDS/SET buttons, and the DUAL COLOR button
+     * on the same footer row. Page navigation used to be an ambient
+     * horizontal-swipe gesture detected via a dispatchTouchEvent() override -
+     * removed entirely (along with its per-widget exemption list and the
+     * settings-ScrollView scroll-steal workaround it needed) because it kept
+     * fighting real scroll/drag gestures elsewhere in the app (console log,
+     * settings list) instead of only catching deliberate page swipes. Three
+     * explicit buttons have no such ambiguity. The dual-colour swatch row
+     * that used to sit inline here moved into its own popup for the same
+     * reason - see LEDManager.showDualColorPopup().
      *
-     * @param index  Position in NAV_PAGES ([TELNET] / TERM / LEDS / SET)
+     * Called by: onCreate(), once NAV_PAGES and LED are both ready.
+     */
+    private void _Init_PageButtons() {
+        View btnTerm = findViewById(R.id._btn_page_term);
+        View btnLeds = findViewById(R.id._btn_page_leds);
+        View btnSet  = findViewById(R.id._btn_page_set);
+        if (btnTerm != null) btnTerm.setOnClickListener(v -> _NavigateToPage(0)); // TERM - NAV_PAGES[0] (LAY_CONSOLE)
+        if (btnLeds != null) btnLeds.setOnClickListener(v -> _NavigateToPage(1)); // LEDS - NAV_PAGES[1]
+        if (btnSet  != null) btnSet.setOnClickListener(v -> _NavigateToPage(2));  // SET  - NAV_PAGES[2]
+
+        View btnDualColor = findViewById(R.id._btn_dualcolor_open);
+        if (btnDualColor != null) btnDualColor.setOnClickListener(v -> LED.showDualColorPopup());
+    }
+
+    /**
+     * Move to the page at the given index in NAV_PAGES (refresh request
+     * included). No-ops silently if index is out of range (shouldn't happen -
+     * the three page buttons only ever pass 0/1/2).
+     *
+     * @param index  Position in NAV_PAGES (TERM / LEDS / SET)
      */
     private void _NavigateToPage(int index) {
         if (index < 0 || index >= NAV_PAGES.length) return;

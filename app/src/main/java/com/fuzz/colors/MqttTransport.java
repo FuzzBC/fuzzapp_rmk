@@ -92,9 +92,11 @@ public class MqttTransport {
     // --------------------------------------------------------
     // Credential storage (SharedPreferences - see class doc above)
     // --------------------------------------------------------
-    private static final String PREFS_NAME = "FuZz_MqttCred";
-    private static final String KEY_USER   = "user";
-    private static final String KEY_PASS   = "pass";
+    private static final String PREFS_NAME  = "FuZz_MqttCred";
+    private static final String KEY_USER    = "user";
+    private static final String KEY_PASS    = "pass";
+    /** True once the user has explicitly dismissed the credentials dialog ("Not now" / back/outside-tap). */
+    private static final String KEY_DECLINED = "declined";
 
     // --------------------------------------------------------
     // Collaborators
@@ -160,6 +162,24 @@ public class MqttTransport {
      */
     public void setCredentials(String user, String pass) {
         _prefs().edit().putString(KEY_USER, user).putString(KEY_PASS, pass).apply();
+    }
+
+    /**
+     * @return true once the user has explicitly dismissed the credentials
+     * dialog without saving anything. MainActivity's automatic trigger
+     * (_connectMqttOrPrompt()) checks this before popping the dialog again -
+     * an explicit decline means "leave me alone", not "ask again in 5
+     * seconds". Persisted (survives app restart) since "don't show again"
+     * should actually mean that. The 5-second-hold gesture is the only way
+     * back in - it clears this via setPromptDeclined(false).
+     */
+    public boolean isPromptDeclined() {
+        return _prefs().getBoolean(KEY_DECLINED, false);
+    }
+
+    /** @param declined  See isPromptDeclined(). */
+    public void setPromptDeclined(boolean declined) {
+        _prefs().edit().putBoolean(KEY_DECLINED, declined).apply();
     }
 
     /** Result hook for tryConnect() - invoked on the main thread. */

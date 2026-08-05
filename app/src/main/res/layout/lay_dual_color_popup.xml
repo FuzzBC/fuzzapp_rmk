@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dual Color popup root: panel + header + horizontally-scrolling swatch
+     row. Content of _dual_buttons is built at runtime by
+     LEDManager._dualColorCreate() - button 0 is always the random-pair
+     button, buttons 1..N are the saved pairs (see that method's doc).
+     Moved here from the always-visible bottom bar so the footer stays a
+     single compact row (DUAL COLOR trigger + TERM/LEDS/SET). -->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/_stroke_line"
+    android:padding="4dp">
+
+    <!-- Header row: traffic-light dots + "DUAL COLOR" label, same pattern as lay_debug_list.xml -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
+
+        <View
+            android:layout_width="9dp"
+            android:layout_height="9dp"
+            android:background="@drawable/_dot_red" />
+
+        <View
+            android:layout_width="9dp"
+            android:layout_height="9dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/_dot_yellow" />
+
+        <View
+            android:layout_width="9dp"
+            android:layout_height="9dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/_dot_green" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:text="DUAL COLOR"
+            android:textColor="@color/text_muted_grey"
+            android:textSize="11sp"
+            android:letterSpacing="0.12"
+            android:textStyle="bold"
+            tools:ignore="HardcodedText" />
+
+    </LinearLayout>
+
+    <!-- Tap a swatch to apply it - long-press to delete (saved pairs) or
+         hand-dial (the random button, index 0). Same behaviour as before,
+         just relocated - see LEDManager._dualColorCreate(). -->
+    <HorizontalScrollView
+        android:id="@+id/horizontalScrollView2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="8dp"
+        tools:ignore="SpeakableTextPresentCheck">
+
+        <LinearLayout
+            android:id="@+id/_dual_buttons"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:overScrollMode="never"
+            android:scrollIndicators="none"
+            android:scrollbarDefaultDelayBeforeFade="0"
+            android:scrollbarFadeDuration="0"
+            android:scrollbarSize="0dp"
+            android:scrollbars="none"></LinearLayout>
+    </HorizontalScrollView>
+
+</LinearLayout>

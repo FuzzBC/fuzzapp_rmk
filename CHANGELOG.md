@@ -5,14 +5,27 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
-## 1.011
+## 1.016
 - Cloud Mode no longer uses one login shared by every install. The first
   time the app needs Cloud Mode and you haven't set one up yet, it now asks
   for your own broker username/password, checks them live with the
   controller, and only saves them once they're confirmed to work. A wrong
   password is rejected right away instead of failing silently later.
-- Added a way to force-resend your saved Cloud Mode login to the controller:
+- Cloud Mode login is now checked directly against the broker from your
+  phone first, so a typo or wrong password is caught in a couple of seconds
+  instead of waiting on a slow round trip to the controller.
+- Setting up Cloud Mode while away from your home WiFi now works immediately
+  instead of silently waiting until you're back home.
+- Added a way to force-resend (or set up in advance) your Cloud Mode login:
   press and hold the connection status label for 5 seconds.
+- Declining the Cloud Mode login popup now actually stops it from popping up
+  again - it no longer keeps re-asking every few seconds.
+- Removed swipe-to-change-page - TERM / LEDS / SET now have their own
+  buttons, bottom-right, so a scroll or drag never accidentally flips the
+  page or gets blocked by the old swipe detection.
+- Dual Color's swatches moved out of the always-visible bottom row into
+  their own popup (tap the new DUAL COLOR button) - same random-pair and
+  saved-pair behaviour as before, just out of the way until you need it.
 - Fixed the diffuser's Parfum mode not actually starting when tapped from
   the app.
 - Diffuser Telnet console now prints in the same clean two-column style as

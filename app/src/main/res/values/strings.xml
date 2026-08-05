@@ -23,4 +23,8 @@
     <string name="btn_clear">CLR</string>
     <string name="btn_minus">−</string>
     <string name="btn_plus">+</string>
+    <string name="btn_dual_color">DUAL COLOR</string>
+    <string name="btn_page_term">TERM</string>
+    <string name="btn_page_leds">LEDS</string>
+    <string name="btn_page_set">SET</string>
  </resources>
