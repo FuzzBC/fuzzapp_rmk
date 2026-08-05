@@ -13,7 +13,33 @@ versionProps.load(new FileInputStream(versionPropsFile))
 def appVersionCode = project.hasProperty('testVersionCode')
         ? project.property('testVersionCode').toInteger()
         : versionProps['versionCode'].toInteger()
-def appVersionName = "1." + String.format("%03d", appVersionCode)
+// versionMajor is its own property (not a literal "1." baked into the
+// formula below) so bumping to a new major version is a one-line edit in
+// version.properties, not a hunt through build.gradle + MainActivity for
+// every place that used to assume it. Defaults to 1 if the property is
+// ever missing (older version.properties from before this existed).
+def appVersionMajor = versionProps['versionMajor'] ? versionProps['versionMajor'].toInteger() : 1
+def appVersionName = "${appVersionMajor}." + String.format("%03d", appVersionCode)
+
+// Release signing: keystore path + passwords live in local.properties
+// (already gitignored, see that file's own header comment) - never in this
+// file, never committed. See RELEASE_SIGNING.md for how to generate the
+// keystore and fill these in. Falls back to the debug key + prints a
+// warning when they're absent, so a machine without the keystore set up
+// (a fresh checkout, CI, etc.) can still build a (debug-signed) release
+// variant instead of the build just failing.
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localProps.load(new FileInputStream(localPropsFile))
+}
+def releaseStoreFile = localProps.getProperty('RELEASE_STORE_FILE')
+def hasReleaseSigning = releaseStoreFile != null && file(releaseStoreFile).exists()
+if (!hasReleaseSigning) {
+    println "WARNING: no release keystore configured (RELEASE_STORE_FILE missing from local.properties, " +
+            "or the file it points to doesn't exist) - release build will fall back to debug signing. " +
+            "See RELEASE_SIGNING.md."
+}
 
 android {
     compileSdk 34
@@ -25,14 +51,30 @@ android {
         targetSdk 34        // instead of targetSdkVersion
         versionCode appVersionCode
         versionName appVersionName
+        // So MainActivity's "update available" preview (which only has a bare
+        // versionCode from the GitHub API, not a full versionName) can build
+        // the same "<major>.<versionCode>" string without hardcoding the
+        // major version itself a second time - see _CheckForUpdate().
+        buildConfigField "int", "VERSION_MAJOR", "${appVersionMajor}"
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         signingConfig signingConfigs.debug
+    }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword localProps.getProperty('RELEASE_STORE_PASSWORD')
+                keyAlias localProps.getProperty('RELEASE_KEY_ALIAS')
+                keyPassword localProps.getProperty('RELEASE_KEY_PASSWORD')
+            }
+        }
     }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            debuggable true
+            debuggable false
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
     buildFeatures {
@@ -150,8 +192,12 @@ tasks.register('publishReleaseToGitHub', Exec) {
 tasks.register('bumpVersionForNextBuild') {
     doLast {
         def next = appVersionCode + 1
-        versionPropsFile.text = "versionCode=${next}\n"
-        println "Bumped versionCode ${appVersionCode} -> ${next} (next build will be 1.${String.format('%03d', next)})"
+        // versionMajor is carried forward as-is - this task only ever
+        // advances the build counter, never the major version. Bump
+        // versionMajor by hand in version.properties when that's actually
+        // wanted; rewriting the whole file here must not silently drop it.
+        versionPropsFile.text = "versionMajor=${appVersionMajor}\nversionCode=${next}\n"
+        println "Bumped versionCode ${appVersionCode} -> ${next} (next build will be ${appVersionMajor}.${String.format('%03d', next)})"
     }
 }
 

@@ -7,11 +7,13 @@ next release build (`assembleRelease` / the "FuZz (release)" run
 configuration), **add an entry to [CHANGELOG.md](CHANGELOG.md)** describing
 what changed, *before* the release is built and published.
 
-- Add it at the **top** of the file, under a new `## 1.XXX` heading matching
-  the versionName the *next* build will get - that's whatever
-  `version.properties`'s `versionCode` currently is, formatted as
-  `1.<versionCode zero-padded to 3 digits>` (e.g. `versionCode=4` → `## 1.004`).
-  Check `version.properties` if unsure; don't guess.
+- Add it at the **top** of the file, under a new `## <versionMajor>.XXX`
+  heading matching the versionName the *next* build will get - that's
+  `version.properties`'s `versionMajor` and `versionCode`, formatted as
+  `<versionMajor>.<versionCode zero-padded to 3 digits>` (e.g.
+  `versionMajor=1, versionCode=4` → `## 1.004`). versionMajor is its own
+  property, not always "1" - check `version.properties` if unsure, don't
+  guess either number.
 - Write it for the person using the app, not for another engineer: plain
   language, what changed and why it matters to them - not file names,
   function names, or implementation details.
@@ -28,9 +30,9 @@ be a generic placeholder instead of a real changelog.
 
 ## Project-specific conventions
 
-- `version.properties` is the source of truth for the app's `versionCode`;
-  never hand-edit `versionCode`/`versionName` in `app/build.gradle` directly
-  (see the comment there).
+- `version.properties` is the source of truth for the app's `versionMajor`
+  and `versionCode`; never hand-edit `versionCode`/`versionName`/the major
+  version number in `app/build.gradle` directly (see the comment there).
 - `github_release.properties` (the publish token) and any file matching it
   is gitignored and must never be committed - see
   `github_release.properties.example` for the template.

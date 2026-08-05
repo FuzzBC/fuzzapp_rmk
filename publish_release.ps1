@@ -34,7 +34,11 @@ $versionPropsPath = Join-Path $root 'version.properties'
 $versionPropsText = Get-Content $versionPropsPath -Raw
 if ($versionPropsText -notmatch 'versionCode\s*=\s*(\d+)') { Write-Error "versionCode not found in $versionPropsPath"; exit 1 }
 $versionCode = [int]$matches[1]
-$versionName = "1." + $versionCode.ToString('000')
+# versionMajor is its own property in version.properties (not hardcoded here)
+# so this always matches whatever app/build.gradle actually built - defaults
+# to 1 if the property is missing, same fallback build.gradle uses.
+$versionMajor = if ($versionPropsText -match 'versionMajor\s*=\s*(\d+)') { [int]$matches[1] } else { 1 }
+$versionName = "$versionMajor." + $versionCode.ToString('000')
 $tag = "V$versionName"
 
 $apkPath = "D:\AndroidBuilds\_~FuZz_APPv7.5\app\outputs\apk\release\app-release.apk"

@@ -483,11 +483,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         UpdateChecker.check(this, new UpdateChecker.Callback() {
             @Override
             public void onUpdateAvailable(String tagName, int versionCode, String apkUrl, String releaseNotes) {
-                // Matches app/build.gradle's own versionName formula ("1." + versionCode,
-                // zero-padded to 3 digits) so what's shown here is the same number the
-                // user would see in the system app-info screen after installing it -
-                // not the raw GitHub tag, which is just an internal build counter.
-                String displayVersion = "1." + String.format(java.util.Locale.US, "%03d", versionCode);
+                // Matches app/build.gradle's own versionName formula
+                // (versionMajor + "." + versionCode, zero-padded to 3 digits,
+                // versionMajor from BuildConfig - see build.gradle's
+                // buildConfigField) so what's shown here is the same number
+                // the user would see in the system app-info screen after
+                // installing it - not the raw GitHub tag, which is just an
+                // internal build counter.
+                String displayVersion = BuildConfig.VERSION_MAJOR + "." + String.format(java.util.Locale.US, "%03d", versionCode);
                 _ShowUpdateDialog(displayVersion, apkUrl, tagName, releaseNotes);
             }
 
