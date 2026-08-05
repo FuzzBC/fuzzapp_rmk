@@ -87,7 +87,22 @@ class WidgetStatusFetcher {
     // Local UDP
     // --------------------------------------------------------
     private static Result _fetchLocalUdp() {
-        try (DatagramSocket socket = new DatagramSocket()) {
+        // Bound to ARDUINO_PORT, not an ephemeral port - the firmware doesn't
+        // do symmetric UDP (reply to whatever port asked). It replies to a
+        // FIXED port (APP_UDP_PORT, same constant as ARDUINO_PORT) because it
+        // also uses that same channel for unsolicited pushes with no request
+        // to reply to. DataReceive.init() already binds the live app's own
+        // socket there for exactly this reason; this fetcher needs to match
+        // it or the board's reply lands on a port nothing is listening on -
+        // which is why this always silently timed out and fell through to
+        // MQTT cloud instead, even with the board on the same LAN.
+        // setReuseAddress so this short-lived socket can coexist with the
+        // live app's own long-lived one if both happen to be active at once
+        // (harmless - Linux delivers to whichever bound most recently, and
+        // this socket closes again within UDP_TIMEOUT_MS).
+        try (DatagramSocket socket = new DatagramSocket(null)) {
+            socket.setReuseAddress(true);
+            socket.bind(new java.net.InetSocketAddress(DataSend.ARDUINO_PORT));
             socket.setSoTimeout(UDP_TIMEOUT_MS);
             byte[] hello = "Z".getBytes();
             socket.send(new DatagramPacket(hello, hello.length,

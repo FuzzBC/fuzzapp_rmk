@@ -5,6 +5,21 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.004
+- Fixed: the home-screen widgets' background refresh never actually
+  succeeded over local WiFi, even with the board on the same network -
+  it silently timed out and fell back to MQTT cloud every single time.
+  The board replies to a fixed port (it also uses that same channel for
+  unsolicited pushes with nothing to reply to), but the widget's fetch
+  was listening on a random port, so the reply always landed where
+  nothing was listening. Now binds to the same fixed port the live app
+  already uses for this reason.
+- Release builds are signed with the debug key again (no separate
+  release keystore) - simpler for now than maintaining a real signing
+  key; a sideloaded APK from either build gets flagged by Play Protect
+  regardless of signing, since that's tied to Play Store distribution,
+  not the certificate itself.
+
 ## 8.003
 - Fixed: long-press "RANDOM" on the Dual Color popup to hand-dial a pair on
   the colour wheel could crash or silently fail to open. Root cause was

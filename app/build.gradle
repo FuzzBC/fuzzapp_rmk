@@ -21,26 +21,6 @@ def appVersionCode = project.hasProperty('testVersionCode')
 def appVersionMajor = versionProps['versionMajor'] ? versionProps['versionMajor'].toInteger() : 1
 def appVersionName = "${appVersionMajor}." + String.format("%03d", appVersionCode)
 
-// Release signing: keystore path + passwords live in local.properties
-// (already gitignored, see that file's own header comment) - never in this
-// file, never committed. See RELEASE_SIGNING.md for how to generate the
-// keystore and fill these in. Falls back to the debug key + prints a
-// warning when they're absent, so a machine without the keystore set up
-// (a fresh checkout, CI, etc.) can still build a (debug-signed) release
-// variant instead of the build just failing.
-def localProps = new Properties()
-def localPropsFile = rootProject.file('local.properties')
-if (localPropsFile.exists()) {
-    localProps.load(new FileInputStream(localPropsFile))
-}
-def releaseStoreFile = localProps.getProperty('RELEASE_STORE_FILE')
-def hasReleaseSigning = releaseStoreFile != null && file(releaseStoreFile).exists()
-if (!hasReleaseSigning) {
-    println "WARNING: no release keystore configured (RELEASE_STORE_FILE missing from local.properties, " +
-            "or the file it points to doesn't exist) - release build will fall back to debug signing. " +
-            "See RELEASE_SIGNING.md."
-}
-
 android {
     compileSdk 34
     //buildToolsVersion "27"
@@ -59,22 +39,16 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         signingConfig signingConfigs.debug
     }
-    signingConfigs {
-        release {
-            if (hasReleaseSigning) {
-                storeFile file(releaseStoreFile)
-                storePassword localProps.getProperty('RELEASE_STORE_PASSWORD')
-                keyAlias localProps.getProperty('RELEASE_KEY_ALIAS')
-                keyPassword localProps.getProperty('RELEASE_KEY_PASSWORD')
-            }
-        }
-    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             debuggable false
-            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            // Always the debug key - no separate release signingConfig at
+            // all, by request. Google Play Protect will flag installs of
+            // this APK as unverified since it's not a "real" release
+            // signature; that's an accepted tradeoff, not a bug.
+            signingConfig signingConfigs.debug
         }
     }
     buildFeatures {
