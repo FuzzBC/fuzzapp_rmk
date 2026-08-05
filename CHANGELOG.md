@@ -5,6 +5,27 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 1.017
+- Added two home-screen widgets: a compact one-line strip and a taller
+  stacked version, both showing temperature, humidity, diffuser refill
+  percent, and whether the app last reached the controller over WiFi or
+  Cloud Mode. Both refresh in the background roughly every 30 minutes,
+  have a manual refresh button and a "last updated" time, and tap through
+  to open the app.
+- The diffuser icon on both widgets now turns blue if it's out of water,
+  and shows "REF" instead of a percentage once it's time for a refill.
+- Replaced the scrolling rainbow connection-status text with two clearer
+  effects: a gentle flicker while connected, and a red scanning line while
+  not connected.
+- Added an INFO button next to RESET in Settings that explains what every
+  button in the app does on tap versus press-and-hold.
+- The Parfum panel (diffuser usage popup) now always opens collapsed,
+  even while a session is already running - a small "active" indicator
+  shows next to the header instead so you can still tell at a glance.
+  The +/- buttons and minutes box are also a bit smaller.
+- Release builds are now signed with a proper release key instead of the
+  debug key (see RELEASE_SIGNING.md for one-time setup).
+
 ## 1.016
 - Cloud Mode no longer uses one login shared by every install. The first
   time the app needs Cloud Mode and you haven't set one up yet, it now asks
