@@ -734,16 +734,6 @@ public class DataReceive {
     /** Latest fault bitmask from 'f'. */
     public int faults = 0;
 
-    /**
-     * @return true when the given FAULT_* bit is currently set.
-     * Called by: nobody currently - no call sites found elsewhere in the
-     * app. Public accessor for the `faults` bitmask set by _recvFaults();
-     * kept for future fault-bit UI, not dead by design.
-     */
-    public boolean hasFault(int bit) {
-        return (faults & bit) != 0;
-    }
-
     /** '@mm' – the test mode currently forced, 0 = none. Called by: _parsePacket() only. */
     private void _recvTestMode(String message, int size) {
         Log.v("DATA_R", "Processing test mode: " + message);
@@ -1285,27 +1275,6 @@ public class DataReceive {
             STS.applyDiffuserHistory(count, minutes);
         } catch (NumberFormatException e) {
             Log.i("DATA_R", "DIFFUSER HISTORY PARSE ERROR [" + message + "]");
-        }
-    }
-
-    /**
-     * Convert 8 hex chars (4 bytes, high octet first) into a dotted-decimal
-     * IPv4 string.
-     *
-     * @param hex  Exactly 8 hex digits, case-insensitive.
-     * @return Dotted-decimal address, or null if the input isn't valid hex.
-     *
-     * Called by: nobody currently - no call sites found (dead code as of
-     * this pass, not wired into any _recv* handler).
-     */
-    private String _hexToIp(String hex) {
-        try {
-            return Integer.parseInt(hex.substring(0, 2), 16) + "."
-                 + Integer.parseInt(hex.substring(2, 4), 16) + "."
-                 + Integer.parseInt(hex.substring(4, 6), 16) + "."
-                 + Integer.parseInt(hex.substring(6, 8), 16);
-        } catch (NumberFormatException e) {
-            return null;
         }
     }
 

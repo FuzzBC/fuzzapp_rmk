@@ -43,13 +43,6 @@
     <!-- Tab pill / chip "selected" tint - 10% of the accent color -->
     <color name="tab_active_tint">#1AD9883C</color>
 
-    <!-- ColorLayout section surfaces (TV / BED / LAMP groups) - a faint
-         warm fill + hairline that visually groups each LED cluster
-         without competing with the cells. Low alpha on purpose. -->
-    <color name="led_group_fill">#14D48A3F</color>   <!-- ~8% warm amber fill -->
-    <color name="led_group_stroke">#332A2018</color> <!-- ~20% outline, matches chrome -->
-
-
     <!-- Debug TERM tab -->
     <color name="debug_cell_bg">#211A14</color>          <!-- Debug grid cell background -->
 
@@ -83,7 +76,6 @@
 
     <!-- ── Neutral on-colors - true white/black, not theme-tinted ── -->
     <color name="colorOnPrimary">#FFFFFF</color>   <!-- White text on Primary -->
-    <color name="colorOnSecondary">#000000</color> <!-- Black text on Secondary -->
 
     <!-- ── Status / connection semantics ───────────────────────────
          Hue = meaning (green=on, red=off/error, yellow=ready/standby);

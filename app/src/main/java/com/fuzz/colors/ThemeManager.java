@@ -171,20 +171,6 @@ public class ThemeManager {
             return ThemeManager.rotate(ctx, R.color.skbar_settings_title, hueA);
         }
 
-        /**
-         * 3 principal colors that represent this theme's overall look, for
-         * the theme-picker popup's swatch dots: bright accent + value text
-         * (both hueA), then a muted track (hueB) - for single-hue themes
-         * hueA==hueB so all 3 dots match; for palettes the 3rd dot shows
-         * the secondary colour, previewing the actual combination.
-         */
-        public int[] swatch(Context ctx) {
-            return new int[]{
-                    ThemeManager.rotate(ctx, R.color.skbar_settings_title, hueA),
-                    ThemeManager.rotate(ctx, R.color.text_default,         hueA),
-                    ThemeManager.rotate(ctx, R.color.skbar_track_color,    hueB)
-            };
-        }
     }
 
     /** In-memory cache of the active theme, lazily loaded from prefs once per process. */

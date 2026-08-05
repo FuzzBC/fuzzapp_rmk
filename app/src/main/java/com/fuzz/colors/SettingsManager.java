@@ -1421,40 +1421,6 @@ public class SettingsManager {
                 ViewGroup.LayoutParams.MATCH_PARENT, _optPx(1)));
     }
 
-    /**
-     * Fades (with a small vertical slide) between GONE and VISIBLE instead
-     * of an instant cut. Used for every open/close toggle inside the
-     * Settings panel — the BG filmstrip, the TestMode chip row, etc.
-     *
-     * @param v     view to show/hide
-     * @param show  true = fade+slide in, false = fade+slide out then GONE
-     */
-    private void _fadeToggleVisibility(View v, boolean show) {
-        if (v == null) return;
-        v.animate().cancel();
-
-        float dp    = Main.getResources().getDisplayMetrics().density;
-        float slide = 8 * dp;
-
-        if (show) {
-            v.setAlpha(0f);
-            v.setTranslationY(-slide);
-            v.setVisibility(View.VISIBLE);
-            v.animate().alpha(1f).translationY(0f).setDuration(180).start();
-        } else {
-            v.animate()
-                    .alpha(0f)
-                    .translationY(-slide)
-                    .setDuration(150)
-                    .withEndAction(() -> {
-                        v.setVisibility(View.GONE);
-                        v.setAlpha(1f);
-                        v.setTranslationY(0f);
-                    })
-                    .start();
-        }
-    }
-
     /** Applies a newly tapped option and sends the change. */
     private void _selectOption(int id, int optionIndex) {
         SettingInfo s = _byId(id);

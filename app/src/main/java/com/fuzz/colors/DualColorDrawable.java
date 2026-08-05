@@ -80,13 +80,6 @@ public class DualColorDrawable extends Drawable {
         invalidateSelf();
     }
 
-    /** Changes the split angle at runtime, if ever needed. */
-    public void setAngle(float angleDeg) {
-        this.angleDeg = angleDeg;
-        _rebuildShader();
-        invalidateSelf();
-    }
-
     /** Switches between split-circle (false) and venn-pair (true) rendering. */
     public void setVennMode(boolean vennMode) {
         this.vennMode = vennMode;
