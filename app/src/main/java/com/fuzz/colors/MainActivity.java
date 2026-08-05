@@ -117,6 +117,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.annotation.SuppressLint;
@@ -133,6 +134,8 @@ import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -195,6 +198,57 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      * lux, and their animated indicators.
      */
     public StatusManager STS;
+
+    /**
+     * Launches the SAF folder-tree picker for the background GIF folder.
+     * Replaces the old startActivityForResult(intent, 100) + onActivityResult
+     * pair (deprecated) - registered as a field initializer since
+     * ActivityResultLauncher must be registered before the activity reaches
+     * STARTED, and field initializers run at construction time, well before
+     * onCreate(). Call _openBackgroundFolderPicker() to use it - see
+     * BackgroundPopup's "CHOOSE FOLDER" button and SettingsManager's
+     * background-label long-press, the two entry points that used to build
+     * this same intent independently.
+     */
+    private final ActivityResultLauncher<Intent> bgFolderPickerLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
+                    this::_onBackgroundFolderPicked);
+
+    /**
+     * Callback for bgFolderPickerLauncher. Pulled out of the field
+     * initializer above (rather than inlined as a lambda body) because it
+     * touches bgImageList, which is declared later in the class - Java
+     * disallows a field initializer referencing an instance field that
+     * hasn't been declared yet ("illegal forward reference"), even though
+     * this only actually runs long after construction.
+     */
+    private void _onBackgroundFolderPicked(androidx.activity.result.ActivityResult result) {
+        if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+        Uri treeUri = result.getData().getData();
+        if (treeUri == null) return;
+
+        // Keep permission across reboots
+        getContentResolver().takePersistableUriPermission(treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        // Persist the chosen directory URI
+        getSharedPreferences("FuZz_Background", MODE_PRIVATE).edit()
+                .putString("BG_DIR", treeUri.toString())
+                .apply();
+
+        // Load GIFs from the new directory
+        _LoadBackgroundImages();
+
+        _Toast("FOUND " + bgImageList.size() + " GIF'S");
+    }
+
+    /** Opens the SAF folder-tree picker for choosing the background GIF folder. */
+    public void _openBackgroundFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        bgFolderPickerLauncher.launch(intent);
+    }
 
     /* ====================================================== */
     /*  Layout views  (owned by Main)                         */
@@ -285,7 +339,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      * Handler that auto-hides the loading spinner after 10 s
      * if no response has been received.
      */
-    Handler AVLoading_Handler = new Handler();
+    Handler AVLoading_Handler = new Handler(Looper.getMainLooper());
 
     /** Animated toast overlay layout */
     ConstraintLayout LAY_TOAST;
@@ -297,7 +351,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     boolean ToastVisible = false;
 
     /** Handler that auto-hides the toast after 2.5 s */
-    Handler ToastHandler = new Handler();
+    Handler ToastHandler = new Handler(Looper.getMainLooper());
 
     /** Animator driving the neon-flicker alpha/glow effect on TEXT_ConnectInfo while connected */
     ObjectAnimator ConnectNeonAnimator;
@@ -381,7 +435,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private static final long SUPERVISE_MS    = 5000;   // supervisor re-evaluation cadence
 
     /** Marshals the always-on transport supervisor (automatic local <-> cloud switching). */
-    private final Handler transportHandler = new Handler();
+    private final Handler transportHandler = new Handler(Looper.getMainLooper());
 
     /** Last transport we resynced on: 0 = none, 1 = local UDP, 2 = cloud MQTT. */
     private int lastActiveTransport = 0;
@@ -995,13 +1049,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 LED.reloadRandDualColor();
                 LED._deselectAll();
 
+                // Bracketed "r,g,b" triplet - see LEDManager's SAVE DUAL COLOR
+                // handler for why (ConsoleAdapter._chipColors() auto-swatches
+                // this exact shape; three separately-tinted numbers don't).
                 _Console(false, "►►",
-                        "SHAKE RANDOM DUAL COLOR [R:{#R}" + rgbL[LED._R]
-                        + "{##} G:{#G}" + rgbL[LED._G]
-                        + "{##} B:{#B}" + rgbL[LED._B]
-                        + "{##}] - [R:{#R}" + rgbR[LED._R]
-                        + "{##} G:{#G}" + rgbR[LED._G]
-                        + "{##} B:{#B}" + rgbR[LED._B] + "{##}]");
+                        "SHAKE RANDOM DUAL COLOR ["
+                        + rgbL[LED._R] + "," + rgbL[LED._G] + "," + rgbL[LED._B]
+                        + "] -- ["
+                        + rgbR[LED._R] + "," + rgbR[LED._G] + "," + rgbR[LED._B] + "]");
             }
         }
     }
@@ -1009,42 +1064,6 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
         // No action needed
-    }
-
-    /* ====================================================== */
-    /*  Activity result  (folder picker for background GIF)   */
-    /* ====================================================== */
-
-    /**
-     * Receives the URI from the system folder picker launched by SET
-     * when the user long-presses the background label.
-     *
-     * @param requestCode  100 = background folder picker
-     * @param resultCode   RESULT_OK if user confirmed selection
-     * @param data         Intent containing the selected tree URI
-     */
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode,
-                                    @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == 100 && resultCode == RESULT_OK && data != null) {
-            Uri treeUri = data.getData();
-
-            // Keep permission across reboots
-            getContentResolver().takePersistableUriPermission(treeUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-            // Persist the chosen directory URI
-            getSharedPreferences("FuZz_Background", MODE_PRIVATE).edit()
-                    .putString("BG_DIR", treeUri.toString())
-                    .apply();
-
-            // Load GIFs from the new directory
-            _LoadBackgroundImages();
-
-            _Toast("FOUND " + bgImageList.size() + " GIF'S");
-        }
     }
 
     /* ====================================================== */
@@ -2317,6 +2336,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      *
      * @return true if WiFi is connected.
      */
+    @SuppressWarnings("deprecation") // NetworkInfo path is the only API available below minSdk 21's ceiling of API 23 (M) - no replacement exists pre-M
     public boolean _IsWifiConn() {
         ConnectivityManager cm = (ConnectivityManager)
                 getSystemService(Context.CONNECTIVITY_SERVICE);

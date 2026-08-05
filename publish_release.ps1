@@ -41,7 +41,7 @@ $versionMajor = if ($versionPropsText -match 'versionMajor\s*=\s*(\d+)') { [int]
 $versionName = "$versionMajor." + $versionCode.ToString('000')
 $tag = "V$versionName"
 
-$apkPath = "D:\AndroidBuilds\_~FuZz_APPv7.5\app\outputs\apk\release\app-release.apk"
+$apkPath = "D:\AndroidBuilds\$(Split-Path $root -Leaf)\app\outputs\apk\release\app-release.apk"
 if (-not (Test-Path $apkPath)) { Write-Error "APK not found at $apkPath - build the release variant first."; exit 1 }
 $apkName = "FuZzLED_$tag.apk"
 

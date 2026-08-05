@@ -167,7 +167,12 @@ dependencies {
 // Custom task registration to run the batch script before compiling
 tasks.register('executeDeleteBuild', Exec) {                                    // Creates a new Exec type task named executeDeleteBuild
     workingDir "${rootDir}"                                                    // Instructs Gradle to look for the script in the root project folder
-    commandLine 'cmd', '/c', 'DeleteBuild.bat'                                  // Calls Windows CMD to execute the requested batch routine
+    // Full path, not a bare filename - cmd's relative-filename resolution
+    // breaks for project folders starting with "_~" (confirmed on
+    // _~FuZz_APPv8.0: "cmd /c DeleteBuild.bat" fails to resolve while the
+    // identical command with a full path works), so always pass the
+    // absolute path to the script instead of relying on workingDir + PATH.
+    commandLine 'cmd', '/c', "${rootDir}/DeleteBuild.bat"                      // Calls Windows CMD to execute the requested batch routine
 }                                                                              // Ends task block
 
 // Bundles the root CHANGELOG.md into the app's assets on every build, so the

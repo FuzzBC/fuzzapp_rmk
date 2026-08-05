@@ -75,7 +75,6 @@ package com.fuzz.colors;
  * ============================================================
  */
 
-import android.content.Intent;
 import android.graphics.Typeface;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -1377,6 +1376,11 @@ public class SettingsManager {
      * @param widthPx  card width
      */
     private void _optShowOverlay(View card, int widthPx) {
+        // Guards against WindowManager.BadTokenException if the activity
+        // finished before this ran - see ColorWheelPopup.show() for the
+        // full explanation.
+        if (Main.isFinishing() || Main.isDestroyed()) return;
+
         android.widget.FrameLayout root = new android.widget.FrameLayout(Main);
         root.setBackgroundColor(ThemeManager.getColor(Main, R.color.overlay_black_67));
 
@@ -1391,8 +1395,13 @@ public class SettingsManager {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, true);
         _optionsPopup.setOutsideTouchable(true);
         _optionsPopup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
-        _optionsPopup.showAtLocation(Main.getWindow().getDecorView(),
-                android.view.Gravity.NO_GRAVITY, 0, 0);
+        try {
+            _optionsPopup.showAtLocation(Main.getWindow().getDecorView(),
+                    android.view.Gravity.NO_GRAVITY, 0, 0);
+        } catch (android.view.WindowManager.BadTokenException e) {
+            _optionsPopup = null;
+            return; // activity finished in the gap between the check above and here
+        }
 
         root.setAlpha(0f);
         root.animate().alpha(1f).setDuration(160).start();
@@ -1496,10 +1505,7 @@ public class SettingsManager {
         SET_BG_Text.setTextColor(ThemeManager.getColor(Main, R.color.skbar_settings_title));
 
         SET_BG_Text.setOnLongClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-            Main.startActivityForResult(intent, 100);
+            Main._openBackgroundFolderPicker();
             return true;
         });
 

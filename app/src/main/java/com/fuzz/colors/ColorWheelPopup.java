@@ -1,6 +1,7 @@
 package com.fuzz.colors;
 
 import android.animation.ValueAnimator;
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -13,6 +14,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.PopupWindow;
 
@@ -50,6 +52,21 @@ public class ColorWheelPopup {
      * @param closed Fired only when SET is tapped; outside tap closes silently.
      */
     public void show(View anchor, int color1, int color2, OnLiveChange live, OnClosed closed) {
+        // Long-press posts this ~500ms out; if the anchor's activity finished
+        // (or the view detached) while the finger was still down, its window
+        // token is dead and showAtLocation() throws BadTokenException.
+        if (anchor.getWindowToken() == null) {
+            android.util.Log.w("ColorWheelPopup", "show() bailed: anchor.getWindowToken() == null");
+            return;
+        }
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) {
+                android.util.Log.w("ColorWheelPopup", "show() bailed: activity isFinishing=" + act.isFinishing() + " isDestroyed=" + act.isDestroyed());
+                return;
+            }
+        }
+
         float dp      = ctx.getResources().getDisplayMetrics().density;
         int   sizePx  = (int) (WHEEL_SIZE_DP * dp);
         int   overlap = (int) (OVERLAP_DP    * dp);
@@ -74,7 +91,32 @@ public class ColorWheelPopup {
         int x = loc[0] + anchor.getWidth() - overlap;
         int y = loc[1] - sizePx + overlap - raise;
 
-        popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+        // showAtLocation() only ever uses its View argument for one thing:
+        // parent.getWindowToken(), to know which window to attach the new
+        // popup to. anchor (the RANDOM button) lives inside the already-open
+        // "Dual Color" PopupWindow, not the Activity's own window - and
+        // Android's WindowManager rejects TYPE_APPLICATION_PANEL windows
+        // token-parented to another PopupWindow's window with
+        // BadTokenException, every single time, not just on the rare
+        // "activity finished mid long-press" race the two guards above
+        // actually cover. That's the real bug: this was never about timing.
+        // Fix: supply the Activity's own decor view as the token source
+        // instead (always a valid top-level window), while still using
+        // anchor's on-screen position for x/y so the wheel still appears
+        // right at the button.
+        View tokenSource = anchor;
+        if (ctx instanceof Activity) {
+            View decor = ((Activity) ctx).getWindow().getDecorView();
+            if (decor.getWindowToken() != null) tokenSource = decor;
+        }
+
+        try {
+            popup.showAtLocation(tokenSource, Gravity.NO_GRAVITY, x, y);
+        } catch (WindowManager.BadTokenException e) {
+            // Activity finished in the gap between the checks above and this
+            // call - nothing to attach to anymore, safe to just drop it.
+            android.util.Log.w("ColorWheelPopup", "show() bailed: BadTokenException from showAtLocation", e);
+        }
     }
 
     public void dismiss() {

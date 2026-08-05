@@ -1,5 +1,6 @@
 package com.fuzz.colors;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -107,6 +108,15 @@ public class ButtonGuidePopup {
 
     /** @param anchor Any attached view - used only as the window token; the card always opens dead-center. */
     public void show(View anchor) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         float dp = ctx.getResources().getDisplayMetrics().density;
         int titleCol  = ThemeManager.getColor(ctx, R.color.skbar_settings_title);
         int cardBgCol = ThemeManager.getColor(ctx, R.color.skbar_whole_settings);
@@ -200,7 +210,11 @@ public class ButtonGuidePopup {
         popup.setFocusable(true);
         popup.setBackgroundDrawable(new ColorDrawable(0));
         popup.setElevation(16 * dp);
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         _dimBehind(popup);
         _animateIn(card);

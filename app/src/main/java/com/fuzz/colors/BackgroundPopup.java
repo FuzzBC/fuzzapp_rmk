@@ -20,7 +20,6 @@ package com.fuzz.colors;
  */
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
@@ -34,6 +33,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -98,6 +98,12 @@ public class BackgroundPopup {
      * @param currentName File name of the active background, or null.
      */
     public void show(View anchor, String currentName) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx.isFinishing() || ctx.isDestroyed()) return;
+
         final float dp   = ctx.getResources().getDisplayMetrics().density;
         // Two different accents on purpose: bandFill is the SOLID theme accent
         // for the header (tab_active_tint is a ~10% wash and renders nearly
@@ -170,10 +176,7 @@ public class BackgroundPopup {
         // ── Folder picker, always reachable at the foot of the card ──
         card.addView(_buildDivider(dp));
         card.addView(_buildAction("CHOOSE FOLDER", dp, accent, titleCol, () -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-            ctx.startActivityForResult(intent, 100);
+            ctx._openBackgroundFolderPicker();
             if (popup != null) popup.dismiss();
         }));
 
@@ -198,7 +201,11 @@ public class BackgroundPopup {
         popup.setFocusable(true);
         popup.setBackgroundDrawable(new ColorDrawable(0));
         popup.setElevation(16 * dp);
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         card.post(() -> {
             if (scroll.getHeight() > maxH) {

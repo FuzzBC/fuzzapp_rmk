@@ -1,5 +1,6 @@
 package com.fuzz.colors;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -10,6 +11,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
@@ -73,6 +75,15 @@ public class ThemePopup {
      * @param callback Fired with the tapped theme; popup stays open until outside tap.
      */
     public void show(View anchor, OnThemePicked callback) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         dp        = ctx.getResources().getDisplayMetrics().density;
         active[0] = ThemeManager.getCurrentTheme(ctx);
 
@@ -160,7 +171,11 @@ public class ThemePopup {
         popup.setFocusable(true);
         popup.setBackgroundDrawable(new ColorDrawable(0));
         popup.setElevation(16 * dp);
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
         _dimBehind(popup);
     }
 

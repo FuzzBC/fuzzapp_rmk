@@ -1,7 +1,9 @@
 package com.fuzz.colors;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -92,10 +94,15 @@ public class UpdateChecker {
         });
     }
 
+    @SuppressWarnings("deprecation") // PackageInfo.versionCode is the only API available below minSdk 21's ceiling of API 28 (P), where getLongVersionCode() was introduced
     private static int getLocalVersionCode(Context appCtx) {
         try {
-            return appCtx.getPackageManager()
-                    .getPackageInfo(appCtx.getPackageName(), 0).versionCode;
+            PackageInfo info = appCtx.getPackageManager().getPackageInfo(appCtx.getPackageName(), 0);
+            // versionCode here is always a small counter (see version.properties) - safe to
+            // narrow the 28+ long form back to int rather than plumb a long through the caller.
+            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? (int) info.getLongVersionCode()
+                    : info.versionCode;
         } catch (PackageManager.NameNotFoundException e) {
             return Integer.MAX_VALUE; // unknown -> never offer an update
         }

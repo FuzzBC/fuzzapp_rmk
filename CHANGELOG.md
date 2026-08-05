@@ -5,6 +5,35 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.003
+- Fixed: long-press "RANDOM" on the Dual Color popup to hand-dial a pair on
+  the colour wheel could crash or silently fail to open. Root cause was
+  structural, not a timing fluke - the wheel was anchored to a button that
+  lives inside the already-open Dual Color popup, and Android rejects a new
+  popup window parented to another popup's window. Fixed by anchoring to the
+  activity's own window instead; applied the same defensive guard against
+  the underlying crash class to every other popup in the app.
+- Fixed: home-screen widgets (strip and stack) could show a real "Updated"
+  time with permanently blank temp/hum/diffuser values. The cloud (MQTT)
+  refresh path returned as soon as any one board packet arrived instead of
+  waiting for the readings themselves, so a fast status packet could
+  short-circuit the fetch before climate/diffuser data showed up.
+- Fixed: the Dual Color console log (SAVE DUAL COLOR / shake-triggered)
+  showed three separately-tinted numbers instead of a proper colour swatch,
+  unlike the matching incoming-echo line. Both now render as real L/R colour
+  chips.
+- Widget "Updated HH:MM" label shortened to "U:HH:MM".
+- Cleared every Java deprecation warning across the app, library, and
+  avloadingindicator modules (Handler, NetworkInfo, PackageInfo.versionCode,
+  startActivityForResult migrated to the modern Activity Result API, etc.) -
+  no functional changes.
+
+## 8.000
+- Version scheme rebrand: `versionMajor` bumped 1 → 8 and `versionCode`
+  reset to 0 to mark the start of the 8.0 generation. No functional app
+  changes in this entry - see 1.017 below for the last feature set carried
+  forward.
+
 ## 1.017
 - Added two home-screen widgets: a compact one-line strip and a taller
   stacked version, both showing temperature, humidity, diffuser refill

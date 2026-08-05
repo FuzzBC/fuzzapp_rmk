@@ -103,6 +103,7 @@ public class RunningStrokeDrawable extends Drawable {
     }
 
     @Override
+    @SuppressWarnings("deprecation") // still abstract on Drawable - every subclass must implement it, no replacement exists
     public int getOpacity() {
         return PixelFormat.TRANSLUCENT;
     }

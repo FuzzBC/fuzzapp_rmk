@@ -3,6 +3,7 @@ package com.fuzz.colors;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -129,6 +130,15 @@ public class DiffuserUsagePopup {
      */
     public void show(View anchor, int percent, int accumMin, int avgMin, int refillCount, int totalRefills,
                       boolean parfumActive, int parfumRemainingMin) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         float dp = ctx.getResources().getDisplayMetrics().density;
         int titleCol  = ThemeManager.getColor(ctx, R.color.skbar_settings_title);
         int cardBgCol = ThemeManager.getColor(ctx, R.color.skbar_whole_settings);
@@ -652,7 +662,11 @@ public class DiffuserUsagePopup {
         popup.setFocusable(true);
         popup.setBackgroundDrawable(new ColorDrawable(0));
         popup.setElevation(16 * dp);
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         _dimBehind(popup);
         _animateIn(card);

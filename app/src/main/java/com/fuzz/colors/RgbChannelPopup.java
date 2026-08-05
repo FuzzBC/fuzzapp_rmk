@@ -25,6 +25,7 @@ package com.fuzz.colors;
 
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -37,6 +38,7 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.OvershootInterpolator;
 import android.widget.PopupWindow;
 
@@ -68,6 +70,15 @@ public class RgbChannelPopup {
      * @param live       Fired continuously while dragging - value only, never sends.
      */
     public void show(View anchor, int channel, int[] currentRgb, OnLiveChange live) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         float dp      = ctx.getResources().getDisplayMetrics().density;
         int   wPx     = (int) ((CARD_WIDTH_DP  + 2 * MARGIN_DP) * dp);
         int   hPx     = (int) ((CARD_HEIGHT_DP + 2 * MARGIN_DP + SHADOW_DROP_DP) * dp);
@@ -90,7 +101,11 @@ public class RgbChannelPopup {
         x = Math.max(screenMargin, Math.min(x, screenW - wPx - screenMargin));
         int y = loc[1] - (hPx - marginPx) - rise;
 
-        popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+        try {
+            popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         // Pop-in: scale up from the anchor edge + fade, with a light overshoot bounce.
         sliderView.setAlpha(0f);

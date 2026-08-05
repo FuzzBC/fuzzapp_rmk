@@ -1,5 +1,6 @@
 package com.fuzz.colors;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -69,6 +70,15 @@ public class TestModePopup {
      * @param callback Fired with the tapped option; popup closes after.
      */
     public void show(View anchor, String title, String[] labels, int[] values, int selectedValue, OnOptionPicked callback) {
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         float dp = ctx.getResources().getDisplayMetrics().density;
         int accent   = ThemeManager.getColor(ctx, R.color.tab_active_tint);       // Raw 10% tint - by design - Setup
         int titleCol = ThemeManager.getColor(ctx, R.color.skbar_settings_title);   // App-wide text/title color - Setup
@@ -153,7 +163,11 @@ public class TestModePopup {
         popup.setElevation(16 * dp);
 
         // Fixed position for ALL chips: dead-center on screen
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         _dimBehind(popup);
         _animateIn(card);
@@ -205,6 +219,15 @@ public class TestModePopup {
      */
     public void showTabs(View anchor, Tab[] tabs, int activeTab, OnTabOptionPicked callback) {
         if (tabs == null || tabs.length == 0) return;
+        // Guards against WindowManager.BadTokenException if the anchor's
+        // activity finished (or the view detached) before this ran - see
+        // ColorWheelPopup.show() for the full explanation.
+        if (anchor.getWindowToken() == null) return;
+        if (ctx instanceof Activity) {
+            Activity act = (Activity) ctx;
+            if (act.isFinishing() || act.isDestroyed()) return;
+        }
+
         final float dp = ctx.getResources().getDisplayMetrics().density;
         // accent is the SOLID theme accent - skbar_settings_title. The old code
         // read tab_active_tint here, which is a ~10% alpha wash; used as a fill
@@ -373,7 +396,11 @@ public class TestModePopup {
         popup.setFocusable(true);
         popup.setBackgroundDrawable(new ColorDrawable(0));
         popup.setElevation(16 * dp);
-        popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        try {
+            popup.showAtLocation(anchor, Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            return; // activity finished in the gap between the checks above and here
+        }
 
         _dimBehind(popup);
         _animateIn(card);

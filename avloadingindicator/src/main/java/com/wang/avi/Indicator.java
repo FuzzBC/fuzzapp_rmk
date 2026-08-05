@@ -55,6 +55,7 @@ public abstract class Indicator extends Drawable implements Animatable {
     }
 
     @Override
+    @SuppressWarnings("deprecation") // still abstract on Drawable - every subclass must implement it, no replacement exists
     public int getOpacity() {
         return PixelFormat.OPAQUE;
     }

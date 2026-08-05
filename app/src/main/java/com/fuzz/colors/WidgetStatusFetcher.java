@@ -137,7 +137,16 @@ class WidgetStatusFetcher {
             final Integer[] humHolder  = {null};
             final Integer[] pctHolder  = {null};
             final Boolean[] noWaterHolder = {null};
-            final CountDownLatch gotSomething = new CountDownLatch(1);
+            // Counts down only once BOTH temp and diffuserPct are in hand -
+            // matches _fetchLocalUdp()'s own loop condition. The board
+            // answers "Z" with separate H/u/s packets that don't all land
+            // at once; counting down on the FIRST packet of ANY kind (the
+            // old behaviour) meant a status ('s') packet arriving first
+            // returned immediately, permanently missing climate/diffuser
+            // data that was still in flight - this is what caused the
+            // widget to show a real "Updated" timestamp with blank
+            // temp/hum/diffuser values every time.
+            final CountDownLatch gotEnough = new CountDownLatch(1);
 
             client.setCallback(new MqttCallback() {
                 @Override public void connectionLost(Throwable cause) { }
@@ -147,11 +156,12 @@ class WidgetStatusFetcher {
                     if (payload.length < 2 || payload[0] != MqttTransport.TAG_DEV) return;   // drop our own echo / malformed
                     String msg = new String(payload, 1, payload.length - 1);
                     int[] climate = _parseClimate(msg);
-                    if (climate != null) { tempHolder[0] = climate[0]; humHolder[0] = climate[1]; gotSomething.countDown(); }
+                    if (climate != null) { tempHolder[0] = climate[0]; humHolder[0] = climate[1]; }
                     Integer pct = _parseDiffuserPercent(msg);
-                    if (pct != null) { pctHolder[0] = pct; gotSomething.countDown(); }
+                    if (pct != null) pctHolder[0] = pct;
                     Boolean nw = _parseDiffuserNoWater(msg);
-                    if (nw != null) { noWaterHolder[0] = nw; gotSomething.countDown(); }
+                    if (nw != null) noWaterHolder[0] = nw;
+                    if (tempHolder[0] != null && pctHolder[0] != null) gotEnough.countDown();
                 }
 
                 @Override public void deliveryComplete(IMqttDeliveryToken token) { }
@@ -168,7 +178,11 @@ class WidgetStatusFetcher {
             byte[] payload = new byte[]{MqttTransport.TAG_APP, 'Z'};
             client.publish(MqttTransport.MQTT_TOPIC, payload, 0, false);
 
-            gotSomething.await(MQTT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            // Waits out the full timeout unless both arrive sooner - same
+            // trade-off _fetchLocalUdp() makes, so a diffuser that's still
+            // "learning" (see _parseDiffuserPercent's guard) doesn't cut
+            // this short either; whatever DID arrive by then is still used.
+            gotEnough.await(MQTT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             if (tempHolder[0] == null && pctHolder[0] == null && noWaterHolder[0] == null) return null;
             return new Result(tempHolder[0], humHolder[0], pctHolder[0], noWaterHolder[0], "CLOUD");

@@ -14,6 +14,12 @@ import android.widget.ImageView;
 import com.flask.colorpicker.builder.ColorPickerClickListener;
 import com.flask.colorpicker.builder.ColorPickerDialogBuilder;
 
+// Unused elsewhere in the app (grepped: no references in app/src, no XML
+// preference screens declare it) - the AndroidX Preference migration this
+// would need isn't worth doing for dead code. Left in place rather than
+// deleted only because this session lacks delete permission on this file;
+// safe to remove entirely if you don't need it.
+@SuppressWarnings("deprecation")
 public class ColorPickerPreference extends Preference {
 
 	protected boolean alphaSlider;

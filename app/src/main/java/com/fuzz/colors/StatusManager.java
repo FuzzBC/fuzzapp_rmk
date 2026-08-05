@@ -876,8 +876,9 @@ public class StatusManager {
      * water. Called once per transition into NO_WATER (the identical-
      * packet bail-out above prevents repeat buzzing on every ping).
      */
+    @SuppressWarnings("deprecation") // vibrate(long[],int) is the only API available below minSdk 21's ceiling of API 26 (O), where VibrationEffect was introduced
     private void _vibrateNoWater() {
-        Vibrator vib = (Vibrator) Main.getSystemService(android.content.Context.VIBRATOR_SERVICE);
+        Vibrator vib = ContextCompat.getSystemService(Main, Vibrator.class);
         if (vib == null || !vib.hasVibrator()) return;
 
         long[] pattern = {0, 80, 120, 80, 120, 80}; // wait, buzz, gap, buzz, gap, buzz

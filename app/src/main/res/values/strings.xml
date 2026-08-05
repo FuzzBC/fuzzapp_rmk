@@ -11,7 +11,7 @@
     <string name="toast_placeholder">_ TOAST _</string>
     <string name="btn_info">INFO</string>
     <string name="widget_refreshing">Refreshing…</string>
-    <string name="widget_updated_fmt">Updated %1$s</string>
+    <string name="widget_updated_fmt">U:%1$s</string>
     <string name="btn_reset">RESET</string>
     <string name="btn_disable">DISABLE</string>
     <string name="btn_theme">THEME</string>

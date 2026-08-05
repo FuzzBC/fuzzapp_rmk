@@ -511,15 +511,20 @@ public class LEDManager {
                 // Request current dual colour from Arduino (all -1 = GET)
                 DATAs.sendDualColor(-1, -1, -1, -1, -1, -1);
                 _deselectAll();
+                // Bracketed "r,g,b" triplet, not the old "LEFT R:.. G:.. B:.."
+                // wording - ConsoleAdapter._chipColors() auto-detects this
+                // exact shape and paints the chip with the real colour
+                // (same as DataReceive's incoming DUAL COLOR echo), instead
+                // of three separately-tinted numbers that never read as one
+                // swatch.
                 Main._Console(false, "►►",
-                        "DUAL COLOR [LEFT R:{#R}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_R] + "{##} G:{#G}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_G] + "{##} B:{#B}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_B] + "{##}]"
-                        + " - [RIGHT R:{#R}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_R] + "{##} G:{#G}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_G] + "{##} B:{#B}"
-                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_B] + "{##}]");
+                        "DUAL COLOR ["
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_R] + ","
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_G] + ","
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[0]][_B] + "] -- ["
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_R] + ","
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_G] + ","
+                        + LED_Color[LED_DUALCOLOR_CONTEXT[1]][_B] + "]");
             }
         });
 
@@ -932,6 +937,11 @@ public class LEDManager {
      * Called by: MainActivity, the "DUAL COLOR" button's click listener.
      */
     public void showDualColorPopup() {
+        // Guards against WindowManager.BadTokenException if the activity
+        // finished before this ran - see ColorWheelPopup.show() for the
+        // full explanation.
+        if (Main.isFinishing() || Main.isDestroyed()) return;
+
         float dp = Main.getResources().getDisplayMetrics().density;
         int accentBg  = ThemeManager.getColor(Main, R.color.tab_active_tint);
         int titleCol  = ThemeManager.getColor(Main, R.color.skbar_settings_title);
@@ -1066,7 +1076,12 @@ public class LEDManager {
         dualColorPopup.setFocusable(true);
         dualColorPopup.setBackgroundDrawable(new ColorDrawable(0));
         dualColorPopup.setElevation(16 * dp);
-        dualColorPopup.showAtLocation(Main.findViewById(android.R.id.content), Gravity.CENTER, 0, 0);
+        try {
+            dualColorPopup.showAtLocation(Main.findViewById(android.R.id.content), Gravity.CENTER, 0, 0);
+        } catch (WindowManager.BadTokenException e) {
+            dualColorPopup = null;
+            return; // activity finished in the gap between the check above and here
+        }
         dualColorPopup.setOnDismissListener(() -> {
             dualColorPopupContainer = null;
             dualColorRandomSlot = null;
