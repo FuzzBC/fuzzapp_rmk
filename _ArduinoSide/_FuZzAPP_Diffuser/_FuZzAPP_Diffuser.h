@@ -36,7 +36,13 @@
 #define ACK_CLAMPED         1             // applied, but a value was coerced
 #define ACK_REJECTED        2             // malformed / unparseable command
 #define ACK_LOCKED          4             // ignored/queued: a parfum window is active
-#define ACK_NOWATER         5             // out of water (reported via Ds mode=5)
+// 5 (SmartTV APP_ACK_NOWATER) intentionally has no local equivalent here — the
+// diffuser never emits it itself: out-of-water is asynchronous (detected mid-
+// operation from buzzer timing, not while handling a command) and is reported
+// continuously via the Ds/Dc status reply's mode field instead (see
+// STATUS_MODE_OUT_OF_WATER below). SmartTV synthesizes APP_ACK_NOWATER=5 on
+// its own relay layer when the diffuser doesn't respond at all. Left as a gap
+// (not renumbered) so this table stays numerically mirrored to SmartTV's set.
 #define ACK_UNSUPPORTED     6             // unknown command
 
 // ── Diffuser button timing ────────────────────────────────

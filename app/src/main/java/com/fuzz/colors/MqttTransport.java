@@ -42,11 +42,21 @@ package com.fuzz.colors;
  *  "MQTT S [...]" / "MQTT R [...]" in the in-app console when ON.
  *  OFF (default) keeps the console to summary lines only (CLOUD ON/LOST/...).
  *
- *  NOTE: credentials live here in clear for now - move MQTT_HOST/
- *      USER/PASS to an untracked secrets file before publishing.
+ *  Credentials: MQTT_USER/MQTT_PASS are NOT hardcoded (they used to be,
+ *  shared by every install of this app+firmware pair - removed). Instead
+ *  they're provisioned per-device: MainActivity pops a username/password
+ *  dialog the first time cloud mode is needed and none are saved, caches
+ *  them in SharedPreferences (FuZz_MqttCred, plain MODE_PRIVATE like the
+ *  rest of the app's local prefs - no at-rest encryption here, only the
+ *  wire hop to the controller is base64-framed), and pushes them to the
+ *  controller over local UDP (DataSend.sendMqttCredentials()) so both ends
+ *  agree - see MQTTCRED::cmdSetCredentials() in the firmware. connect()
+ *  below is simply a no-op until hasCredentials() is true.
  * ============================================================
  */
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -66,10 +76,6 @@ public class MqttTransport {
     public static final String MQTT_HOST = "cb6c04d1ec6d4bf7b31ec5533ff91102.s1.eu.hivemq.cloud";
     /** TLS port. */
     public static final int    MQTT_PORT = 8883;
-    /** HiveMQ access credential (username). */
-    public static final String MQTT_USER = "fuzzleds";
-    /** HiveMQ access credential (password). */
-    public static final String MQTT_PASS = "smarttvleds";
     /** Topic root - one per device; must match firmware MQTT_BASE. */
     public static final String MQTT_BASE = "LEDs";
     /** Single duplex topic - both ends publish AND subscribe here; must match firmware MQTT_TOPIC. */
@@ -82,6 +88,13 @@ public class MqttTransport {
     /** Keep-alive / connection-timeout seconds. */
     private static final int KEEPALIVE_S = 30;
     private static final int CONNECT_TO_S = 15;
+
+    // --------------------------------------------------------
+    // Credential storage (SharedPreferences - see class doc above)
+    // --------------------------------------------------------
+    private static final String PREFS_NAME = "FuZz_MqttCred";
+    private static final String KEY_USER   = "user";
+    private static final String KEY_PASS   = "pass";
 
     // --------------------------------------------------------
     // Collaborators
@@ -111,29 +124,111 @@ public class MqttTransport {
     }
 
     // --------------------------------------------------------
+    // Credential accessors
+    // --------------------------------------------------------
+    private SharedPreferences _prefs() {
+        return Main.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    /** @return true once a username AND password are cached locally. */
+    public boolean hasCredentials() {
+        SharedPreferences p = _prefs();
+        String u = p.getString(KEY_USER, null);
+        String pw = p.getString(KEY_PASS, null);
+        return u != null && !u.isEmpty() && pw != null && !pw.isEmpty();
+    }
+
+    /** @return the cached username, or "" if never saved. */
+    public String getUser() {
+        return _prefs().getString(KEY_USER, "");
+    }
+
+    /** @return the cached password, or "" if never saved. */
+    public String getPass() {
+        return _prefs().getString(KEY_PASS, "");
+    }
+
+    /**
+     * Cache a verified username/password pair locally. Does NOT push to the
+     * controller or touch the live connection - that's MainActivity's job
+     * (via DataSend.sendMqttCredentials(), called once the controller has
+     * verified the same pair). Called only after that verify succeeds, so
+     * what's cached here always matches what the controller has stored.
+     *
+     * @param user  Username to cache.
+     * @param pass  Password to cache.
+     */
+    public void setCredentials(String user, String pass) {
+        _prefs().edit().putString(KEY_USER, user).putString(KEY_PASS, pass).apply();
+    }
+
+    /** Result hook for tryConnect() - invoked on the main thread. */
+    public interface ConnectCallback {
+        void onResult(boolean ok);
+    }
+
+    // --------------------------------------------------------
     // Public API
     // --------------------------------------------------------
     /**
      * Connect + subscribe on a background thread. Idempotent: a no-op while a
      * connect is in flight or the session is already live. Paho's automatic
      * reconnect keeps the session up afterwards; connectComplete re-subscribes.
+     * No-op (see hasCredentials() guard below) until the app has provisioned
+     * a verified username/password pair. Thin wrapper over tryConnect() using
+     * whatever's currently cached.
      */
     public void connect() {
         if (connecting) return;                                  // already trying
         if (client != null && client.isConnected()) return;      // already up
+        if (!hasCredentials()) {
+            // Nothing to connect with - MainActivity is responsible for
+            // popping the credentials dialog (and provisioning the
+            // controller) before cloud mode can ever come up. Not logged to
+            // the in-app console here to avoid spamming it every time the
+            // transport supervisor retries while off-WiFi and unprovisioned.
+            Log.v("MQTT", "connect skipped - no credentials saved yet");
+            return;
+        }
+        tryConnect(getUser(), getPass(), null);
+    }
+
+    /**
+     * Attempt a fresh session with a SPECIFIC candidate user/pass - not
+     * necessarily what's cached in prefs. Drops any existing session first
+     * (a single MqttClient can only hold one live connection, and this is
+     * also what makes a credential CHANGE actually take effect immediately
+     * instead of silently keeping a stale prior session). On success the new
+     * session becomes the live client from then on (isConnected()/publish()
+     * etc. all reflect it) - the caller decides whether/when to persist the
+     * pair via setCredentials(); this method only tests+connects, it never
+     * touches SharedPreferences itself.
+     *
+     * Used two ways: (1) MainActivity pre-verifies a freshly-typed pair
+     * directly against the broker, before ever bothering the controller with
+     * it (see _submitMqttCredentials()); (2) that same call, off-WiFi, is
+     * also what brings Cloud Mode up immediately with the new pair rather
+     * than waiting for WiFi to return.
+     *
+     * @param user      Username to try.
+     * @param pass      Password to try.
+     * @param callback  Invoked on the main thread with true/false once the
+     *                  attempt resolves. May be null.
+     */
+    public void tryConnect(final String user, final String pass, final ConnectCallback callback) {
+        if (client != null) disconnect();   // drop any session opened under a previous/different pair
         connecting = true;
 
         new Thread(() -> {
+            boolean ok;
             try {
-                if (client == null) {
-                    client = new MqttClient(
-                            "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
-                            _clientId(), new MemoryPersistence());
-                    client.setCallback(callback);
-                }
+                client = new MqttClient(
+                        "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
+                        _clientId(), new MemoryPersistence());
+                client.setCallback(pahoCallback);
                 MqttConnectOptions opts = new MqttConnectOptions();
-                opts.setUserName(MQTT_USER);
-                opts.setPassword(MQTT_PASS.toCharArray());
+                opts.setUserName(user);
+                opts.setPassword(pass.toCharArray());
                 opts.setCleanSession(true);
                 opts.setAutomaticReconnect(true);                // survive drops
                 opts.setConnectionTimeout(CONNECT_TO_S);
@@ -143,23 +238,31 @@ public class MqttTransport {
                 client.connect(opts);
                 client.subscribe(MQTT_TOPIC, 0);                 // single duplex topic
                 Log.i("MQTT", "connected, subscribed " + MQTT_TOPIC);
-                Main.runOnUiThread(() -> {
+                ok = true;
+            } catch (Exception e) {
+                Log.e("MQTT", "connect failed: " + e.getMessage());
+                ok = false;
+            } finally {
+                connecting = false;
+            }
+
+            final boolean finalOk = ok;
+            Main.runOnUiThread(() -> {
+                if (finalOk) {
                     Main._Console(false, "☁", "{#G}CLOUD ON{##}");
                     if (DATAr != null) DATAr._confirmLive();   // flip top label to CLOUD MODE
                     // Local UDP already got the boot welcome (Main.onCreate step 8).
                     // If it didn't - starting off-WiFi / pinned CLOUD ONLY - announce
                     // over the cloud link now so the board pushes a fresh full state.
                     if (!Main._UDP_Available()) Main.DATAs.sendWelcome("mqtt connect");
-                });
-            } catch (Exception e) {
-                Log.e("MQTT", "connect failed: " + e.getMessage());
-                Main.runOnUiThread(() ->
-                        Main._Console(false, "☁", "{#R}CLOUD FAIL{##}"));
-            } finally {
-                connecting = false;
-            }
+                } else {
+                    Main._Console(false, "☁", "{#R}CLOUD FAIL{##}");
+                }
+                if (callback != null) callback.onResult(finalOk);
+            });
         }).start();
     }
+
 
     /**
      * Publish one command packet to LEDs/cmd on a background thread. Bytes are
@@ -208,9 +311,10 @@ public class MqttTransport {
     }
 
     // --------------------------------------------------------
-    // Paho callback
+    // Paho callback (renamed from `callback` to avoid shadowing the
+    // ConnectCallback parameter of the same name in tryConnect())
     // --------------------------------------------------------
-    private final MqttCallbackExtended callback = new MqttCallbackExtended() {
+    private final MqttCallbackExtended pahoCallback = new MqttCallbackExtended() {
         @Override
         public void connectComplete(boolean reconnect, String serverURI) {
             // Re-subscribe after an automatic reconnect (a fresh session drops subs).

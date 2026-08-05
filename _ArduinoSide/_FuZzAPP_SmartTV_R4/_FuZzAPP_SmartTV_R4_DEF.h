@@ -341,8 +341,13 @@ extern const uint8_t LED_FPS_TABLE[LED_FPS_OPTIONS_TOTAL] PROGMEM; /* refresh pe
 
 #define MQTT_HOST       "cb6c04d1ec6d4bf7b31ec5533ff91102.s1.eu.hivemq.cloud" /* cluster URL, no scheme         */
 #define MQTT_PORT       8883                     /* TLS                             */
-#define MQTT_USER       "fuzzleds"                /* HiveMQ credential               */
-#define MQTT_PASS       "smarttvleds"           /* HiveMQ credential               */
+/* MQTT_USER/MQTT_PASS used to be hardcoded here (shared by every install of
+   this firmware+app pair). Removed - credentials are now supplied by the
+   app over the local UDP link (see MQTTCRED::cmdSetCredentials(), the '$'
+   command in Exec()) and cached in EEPROM at the far end of the region
+   (EEPROM.length() - MQTTCRED_BLOCK_SIZE), deliberately not contiguous with
+   the settings block at EE_START_READ_INDEX so neither can grow into the
+   other. See MQTTCRED namespace in the .ino for load/save/verify. */
 #define MQTT_BASE       "LEDs"           /* topic root -- one per device     */
 #define MQTT_TOPIC      MQTT_BASE "/cmd"         /* single duplex topic -- both ends pub+sub */
 #define MQTT_TAG_DEV    'D'                      /* prefix WE publish with -- echo filter    */
@@ -381,6 +386,35 @@ static void Dispatch();                           /* fwd decl - defined in .ino,
 //#define EE_SAVE_TIME             30000    /* ms -- 30 sec before write */
 #define EE_SAVE_TIME             3000    /* ms -- 30 sec before write */
 #define EE_SAVE_DELAY_BETWEEN_CHUNKS 1   /* ms between byte writes */
+
+/* --- MQTT CREDENTIAL STORAGE --------------------------------------------------
+   Anchored at the far END of the EEPROM region (EEPROM.length() - MQTTCRED_
+   BLOCK_SIZE, computed at runtime - EEPROM.length() isn't a compile-time
+   constant) rather than appended after the settings block above, so the
+   settings array growing (EE_MEM_X) and this block growing never collide -
+   they grow from opposite ends toward each other. 8192 bytes total on the
+   UNO R4 (FLASH_TOTAL_SIZE in pins_arduino.h) vs ~55 used by settings today,
+   so there's ample room either way; this is just defensive layout. */
+#define MQTTCRED_USER_MAX      32   /* chars, +1 for null terminator when stored */
+#define MQTTCRED_PASS_MAX      32   /* chars, +1 for null terminator when stored */
+#define MQTTCRED_MAGIC       0xA5   /* marks the block as "configured"; anything else = never set */
+#define MQTTCRED_BLOCK_SIZE  (1 + (MQTTCRED_USER_MAX + 1) + (MQTTCRED_PASS_MAX + 1))  /* magic + user + pass */
+
+/* RAM cache of the credential block above -- loaded once at boot by
+   MQTTCRED::Load(), and updated only after a candidate pair is verified
+   live against the broker (see MQTTCRED::cmdSetCredentials()). valid==false
+   means "never configured" -- Reconnect() then skips MQTT entirely instead
+   of trying MQTT_USER/MQTT_PASS defines, which no longer exist. */
+typedef struct MQTTCREDx {
+    char user[MQTTCRED_USER_MAX + 1];   /* '\0' if never configured */
+    char pass[MQTTCRED_PASS_MAX + 1];
+    bool valid;
+} MQTTCREDx;
+
+namespace MQTTCRED {
+void Load();                                  /* @brief read cached creds from EEPROM at boot; leaves valid=false if magic byte absent */
+void cmdSetCredentials(char *buff, int len);  /* @brief '$' command handler -- decode b64 user/pass, verify live against broker, persist on success */
+} // namespace MQTTCRED
 
 /* --- BME280 MODULE ----------------------------------------------------------- */
 #define CheckTIME  10  /* seconds between sensor reads */
@@ -442,7 +476,8 @@ enum APP_AckResult {
     APP_ACK_BLOCKED     = 3,  /* refused by a source guard (no active source)   */
     APP_ACK_LOCKED      = 4,  /* refused/queued: diffuser busy in a parfum window*/
     APP_ACK_NOWATER     = 5,  /* diffuser out of water / no response            */
-    APP_ACK_UNSUPPORTED = 6   /* unknown / unsupported command                  */
+    APP_ACK_UNSUPPORTED = 6,  /* unknown / unsupported command                  */
+    APP_ACK_UNAUTHORIZED = 7  /* MQTTCRED '$': broker rejected candidate user/pass */
 };
 
 /* Term log severity - first hex digit of the '*' envelope.
@@ -878,7 +913,7 @@ uint16_t getLuxAdaptFactor();
 uint16_t getLuxAdaptDelay(uint16_t del);   uint16_t getLuxAdaptInc(uint16_t inc);
 void     shuffleArray(uint8_t *array, int size);
 void     LED_MarkChanged(int ledIdx);   void MarkChangedRange(int start, int end);
-void     ClearChanges();   uint8_t getChangedCount();
+uint8_t  getChangedCount();
 bool     IsChanged(int ledIdx);
 int      HB_GetBaseBr();
 void     LED_HB_SetAll(uint8_t r, uint8_t g, uint8_t b, uint8_t br, bool show = false);
@@ -1013,7 +1048,6 @@ void drainColorSync(uint32_t now);                                  /* loop hook
 void updStatus(const char *by);
 bool updLux();
 void RefreshSelectedCache();
-int  getSelectedCount();
 void DiffuserParfum(char *buff, int len);   /* app 'Dp'+4-hex-minutes+1-hex-mode relay handler */
 void TxCacheReset();
 int  getFreeRam();

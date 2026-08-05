@@ -5,6 +5,19 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 1.011
+- Cloud Mode no longer uses one login shared by every install. The first
+  time the app needs Cloud Mode and you haven't set one up yet, it now asks
+  for your own broker username/password, checks them live with the
+  controller, and only saves them once they're confirmed to work. A wrong
+  password is rejected right away instead of failing silently later.
+- Added a way to force-resend your saved Cloud Mode login to the controller:
+  press and hold the connection status label for 5 seconds.
+- Fixed the diffuser's Parfum mode not actually starting when tapped from
+  the app.
+- Diffuser Telnet console now prints in the same clean two-column style as
+  the SmartTV console.
+
 ## 1.010
 - Added themed "Update available" and "Downloading update" popups (percent,
   size, speed, Cancel), replacing the plain system dialog and silent Toast.

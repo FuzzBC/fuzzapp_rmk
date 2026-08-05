@@ -48,6 +48,9 @@ package com.fuzz.colors;
  *                        - same values as the MODE TV/MOTION/UDPRAW/AMBIENT/IDLE
  *                        settings enum, see PARFUM_MODE_VALUES)
  *      @Lvv            – TestMode forced lux level (01-04)
+ *      $<b64u>,<b64p>  – Provision/verify MQTT broker credentials (both
+ *                        fields base64, standard alphabet, NO_WRAP; see
+ *                        sendMqttCredentials())
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
@@ -61,11 +64,13 @@ package com.fuzz.colors;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.Log;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 
 public class DataSend {
@@ -106,7 +111,8 @@ public class DataSend {
     // commands are retransmitted, then reported as NO ACK.
     // Set ACK_ENABLED = false to restore legacy fire-and-forget.
     // Result codes: 0 applied · 1 clamped · 2 rejected · 3 blocked ·
-    //               4 locked (parfum) · 5 no water/no resp · 6 unsupported.
+    //               4 locked (parfum) · 5 no water/no resp · 6 unsupported ·
+    //               7 mqtt auth failed ($ credential verify only).
     // Commands whose Arduino-side handler can't ACK immediately
     // ("@D", "Dp"/"Dn"/"Df", "@L") get a wider per-try window -
     // see EXT_ACK_TIMEOUT_MS below.
@@ -138,6 +144,17 @@ public class DataSend {
     private static final int    EXT_ACK_TIMEOUT_MS = 3000;
 
     /**
+     * Per-try ACK wait for "$" (MQTT credential provisioning) alone - wider
+     * than EXT_ACK_TIMEOUT_MS because the firmware handler doesn't just relay
+     * to another device, it performs a REAL blocking MQTT connect() against
+     * the broker to verify the candidate pair before ACKing at all (see
+     * MQTTCRED::cmdSetCredentials()): up to MQTT_Net.setConnectionTimeout(4000)
+     * for the TLS handshake plus MQTT_Cli.setSocketTimeout(4) (4s) for the
+     * CONNACK wait, worst case ~8s, plus normal round-trip margin.
+     */
+    private static final int    MQTTCRED_ACK_TIMEOUT_MS = 9000;
+
+    /**
      * True for wire messages needing the wider EXT_ACK_TIMEOUT_MS budget
      * instead of the generic one - diffuser-relayed commands (mirrors the
      * firmware's 'D' subcommand dispatch: s=status is synchronous, f/n/p
@@ -156,13 +173,25 @@ public class DataSend {
     }
 
     /**
-     * Per-try ACK timeout for a wire message - the extended budget for
-     * slow-to-answer commands, the generic one otherwise.
+     * Per-try ACK timeout for a wire message - the widest applicable budget:
+     * MQTTCRED_ACK_TIMEOUT_MS for "$" credential provisioning, the extended
+     * budget for other slow-to-answer commands, the generic one otherwise.
      *
      * @param message  Unenveloped protocol string about to be sent.
      */
     private static int _ackTimeoutFor(String message) {
+        if (message.startsWith("$")) return MQTTCRED_ACK_TIMEOUT_MS;
         return _needsExtendedAckWindow(message) ? EXT_ACK_TIMEOUT_MS : ACK_TIMEOUT_MS;
+    }
+
+    /**
+     * Callback for a command whose ACK result needs to drive follow-up UI
+     * logic beyond the generic console log (e.g. reopening the credentials
+     * popup on APP_ACK_UNAUTHORIZED). Optional - most sendX() methods don't
+     * pass one, and _reportResult()'s generic console line always still runs.
+     */
+    public interface AckCallback {
+        void onResult(int result);
     }
 
     // --------------------------------------------------------
@@ -202,15 +231,17 @@ public class DataSend {
         final String packet;    // full wire packet (#SS + command) for retransmit
         final String label;     // human label for console/log (the command string)
         final int timeoutMs;    // per-try wait before retransmit/give-up, see _ackTimeoutFor()
+        final AckCallback callback; // optional result hook beyond the generic console log, or null
         int triesLeft;          // remaining retransmits
         Runnable timeout;       // scheduled timeout runnable
 
-        Pending(int seq, String packet, String label, int timeoutMs, int triesLeft) {
+        Pending(int seq, String packet, String label, int timeoutMs, int triesLeft, AckCallback callback) {
             this.seq = seq;
             this.packet = packet;
             this.label = label;
             this.timeoutMs = timeoutMs;
             this.triesLeft = triesLeft;
+            this.callback = callback;
         }
     }
 
@@ -259,6 +290,22 @@ public class DataSend {
      * sendParfum/sendParfumOff, sendTestLux).
      */
     private void _send(final String message) {
+        _send(message, null);
+    }
+
+    /**
+     * Same as _send(String), but with an optional callback invoked with the
+     * ACK result code once resolved - for commands whose caller needs to
+     * react to a specific result beyond the generic console log (e.g.
+     * reopening the credentials popup on APP_ACK_UNAUTHORIZED).
+     *
+     * @param message   Protocol string to send.
+     * @param callback  Result hook, or null for the common fire-and-log case.
+     *
+     * Called by: internal only - _send(String) (callback=null) and
+     * sendMqttCredentials() (callback set).
+     */
+    private void _send(final String message, final AckCallback callback) {
         Log.v("DATA_S", "Sending: " + message);
 
         // Guard – do nothing if socket/wifi not available
@@ -286,7 +333,7 @@ public class DataSend {
 
             Log.v("DATA_S", "Sequenced send - seq: " + s + " packet: " + packet + " timeout: " + timeoutMs);
 
-            final Pending p = new Pending(s, packet, message, timeoutMs, ACK_MAX_RETRIES);
+            final Pending p = new Pending(s, packet, message, timeoutMs, ACK_MAX_RETRIES, callback);
             p.timeout = () -> _onTimeout(s);
             pending.put(s, p);
 
@@ -395,7 +442,8 @@ public class DataSend {
      *
      * @param s       Sequence id echoed by the controller.
      * @param result  Result code (0 applied · 1 clamped · 2 rejected ·
-     *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported).
+     *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported ·
+     *                7 mqtt auth failed).
      *
      * Called by: DataReceive._recvAck() - fed from a "#SSR" packet, whether
      * it arrived over local UDP or (via DataReceive.onCloudMessage()) MQTT.
@@ -409,6 +457,7 @@ public class DataSend {
             ack.removeCallbacks(p.timeout);
             Main._LoadingBarResult(_colorForResult(result));
             _reportResult(p.label, result);
+            if (p.callback != null) p.callback.onResult(result);
         });
     }
 
@@ -431,6 +480,7 @@ public class DataSend {
             case 3:  tag = "{#R}BLOCKED{##}";            break;
             case 4:  tag = "{#Y}LOCKED{##}";             break;
             case 5:  tag = "{#R}NO WATER / NO RESP{##}"; break;
+            case 7:  tag = "{#R}MQTT AUTH FAILED{##}";   break;
             default: tag = "{#R}UNSUPPORTED{##}";        break;
         }
         Log.i("DATA_R", "ACK [" + result + "] [" + label + "]");
@@ -443,7 +493,8 @@ public class DataSend {
      * thing here as it does everywhere else in the UI.
      *
      * @param result  Result code (0 applied · 1 clamped · 2 rejected ·
-     *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported).
+     *                3 blocked · 4 locked · 5 no water/no resp · 6 unsupported ·
+     *                7 mqtt auth failed).
      *
      * Called by: internal only - ackResolve().
      */
@@ -455,7 +506,7 @@ public class DataSend {
             case 3:  colorRes = R.color.status_autooff_grey;  break; // blocked - no active source
             case 4:  colorRes = R.color.status_parfum_violet; break; // locked - parfum busy
             case 5:  colorRes = R.color.status_no_water_blue; break; // no water / no response
-            default: colorRes = R.color.status_off_red;       break; // 2 rejected · 6 unsupported
+            default: colorRes = R.color.status_off_red;       break; // 2 rejected · 6 unsupported · 7 mqtt auth failed
         }
         return ThemeManager.getColor(Main, colorRes);
     }
@@ -921,5 +972,44 @@ public class DataSend {
         Log.i("DATA_S", "[X] # LED "
                 + (stsEnableDisable == StatusManager.STS_EnableDisable.ON
                    ? "DISABLE" : "ENABLE"));
+    }
+
+    // --------------------------------------------------------
+    // MQTT credential provisioning
+    // --------------------------------------------------------
+    /**
+     * Provision (or force re-verify) the MQTT broker credentials cached on
+     * the controller. Protocol: "$<b64user>,<b64pass>" - both fields
+     * standard-alphabet base64 (Base64.NO_WRAP - no embedded newlines, no
+     * URL-safe substitution). The controller does NOT trust this pair
+     * blindly: it live-verifies it with a real connect() against the broker
+     * before ACKing, and only persists it to EEPROM if that succeeds AND it
+     * differs from what's already cached (see MQTTCRED::cmdSetCredentials()
+     * in the firmware). A rejected pair (result 7 / APP_ACK_UNAUTHORIZED)
+     * leaves any previously-good credentials untouched on the controller
+     * side - the callback is the caller's cue to reprompt.
+     *
+     * Uses a wider-than-normal ACK window (MQTTCRED_ACK_TIMEOUT_MS) since the
+     * firmware-side verify is itself a blocking network round trip, not just
+     * a local apply.
+     *
+     * @param user      Plain-text MQTT username (never sent in the clear -
+     *                  base64-encoded here; NOT encryption, just wire-safe
+     *                  framing for the ',' delimiter).
+     * @param pass      Plain-text MQTT password (same caveat as user).
+     * @param callback  Invoked with the ACK result code once resolved (0 =
+     *                  verified + adopted, 2 = malformed, 7 = broker
+     *                  rejected the pair). May be null.
+     *
+     * Called by: MainActivity - the credential popup's "save" action, and
+     * the 5-second long-press force-resend gesture on the Connect text
+     * (resending the already-saved pair, no popup).
+     */
+    public void sendMqttCredentials(String user, String pass, AckCallback callback) {
+        Log.v("DATA_S", "Sending MQTT credentials for user: " + user);
+        String b64User = Base64.encodeToString(user.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+        String b64Pass = Base64.encodeToString(pass.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+        _send("$" + b64User + "," + b64Pass, callback);
+        Log.i("DATA_S", "[$...] # MQTT CREDENTIALS [user=" + user + "]"); // never log the password
     }
 }

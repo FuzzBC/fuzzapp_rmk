@@ -354,6 +354,32 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** Cloud transport (HiveMQ MQTT over TLS). Only connected while it's actually needed - see _connectTransport(). */
     public MqttTransport MQTT;
 
+    /* ------------------------------------------------------ */
+    /*  MQTT credential provisioning (see _promptMqttCredentials()) */
+    /* ------------------------------------------------------ */
+    /** True while the credentials dialog is on screen - guards against a second popup stacking from a rapid supervisor retick. */
+    private boolean mqttCredDialogShowing = false;
+    /**
+     * Username/password entered (or cached, for a force-resend) but not yet
+     * confirmed-verified by the controller. Set by _submitMqttCredentials(),
+     * cleared once its ACK callback resolves OK. Held here so a pair typed in
+     * while off-WiFi survives until local UDP comes back (see
+     * _pushPendingMqttCredentialsIfDue()).
+     */
+    private String pendingMqttUser = null;
+    private String pendingMqttPass = null;
+    /** Timestamp of the last push attempt (successful or not) - throttles retries. */
+    private long   pendingMqttPushAt = 0;
+    /** Minimum gap between automatic pending-credential push attempts. */
+    private static final long MQTTCRED_PUSH_RETRY_MS = 20000;
+    /**
+     * How long to wait, once the phone's own MQTT connect succeeds off-WiFi,
+     * for the controller to answer over the cloud link before reporting "no
+     * reply yet" - see _submitMqttCredentials()'s off-WiFi branch. Needs to
+     * cover a full cmdConnected() resync burst, not just one packet.
+     */
+    private static final long MQTTCRED_CLOUD_PROBE_MS = 6000;
+
     /**
      * How long local UDP gets to answer the welcome before falling back to
      * MQTT. Only one transport is ever active at a time - see _connectTransport().
@@ -583,8 +609,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             DATAr.startReceiving();
             DATAs.sendWelcomeUdpDirect();                         // probe local first (never routed to cloud)
             DATAr.markUdpProbe();                                 // arm the first-contact grace
+            _pushPendingMqttCredentialsIfDue();                   // WiFi's back - flush any credentials typed in while off it
         } else {
-            if (MQTT != null) MQTT.connect();                   // off WiFi -> straight to cloud
+            _connectMqttOrPrompt();                              // off WiFi -> straight to cloud (or prompt if unprovisioned)
         }
 
         _refreshTransportStatus();
@@ -608,12 +635,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         final int active;
 
         if (!_IsWifiConn()) {
-            if (MQTT != null) MQTT.connect();
+            _connectMqttOrPrompt();
             active = _MqttConnected() ? 2 : 0;
         } else if (DATAr.isUdpAvailable()) {
             active = 1;                                          // local proven live
+            _pushPendingMqttCredentialsIfDue();                   // WiFi+UDP live - flush any pending credentials
         } else {
-            if (MQTT != null) MQTT.connect();                   // fall over to cloud
+            _connectMqttOrPrompt();                             // fall over to cloud (or prompt if unprovisioned)
             // Probe the LAN, but do NOT arm the grace here: while on cloud,
             // availability must flip back to local ONLY on a real UDP reply
             // (lastUdpRxTime), never merely because we just sent a probe -
@@ -631,6 +659,225 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }
 
         _refreshTransportStatus();
+    }
+
+    /* ====================================================== */
+    /*  MQTT credential provisioning (Cloud Mode)              */
+    /*  No username/password is ever hardcoded (see             */
+    /*  MqttTransport class doc). This section owns: popping    */
+    /*  the dialog when cloud mode is needed and nothing is      */
+    /*  saved, pushing a candidate pair to the controller for    */
+    /*  live verification (DataSend.sendMqttCredentials()),      */
+    /*  and the 5-second-hold force-resend gesture.               */
+    /* ====================================================== */
+
+    /**
+     * Connect MQTT if credentials are already saved; otherwise pop the
+     * dialog (unless one is already showing, or a pair is already pending a
+     * push/ACK - no point prompting again for what's already in flight).
+     *
+     * Called by: _connectTransport()/_superviseTransport(), in place of a
+     * bare MQTT.connect(), everywhere cloud mode is attempted.
+     */
+    private void _connectMqttOrPrompt() {
+        if (MQTT == null) return;
+        if (MQTT.hasCredentials()) { MQTT.connect(); return; }
+        if (pendingMqttUser != null) return;              // already awaiting push/ACK - _submitMqttCredentials() owns retrying that
+        if (!mqttCredDialogShowing) _promptMqttCredentials(null, null, null);
+    }
+
+    /**
+     * If a credential pair is waiting (typed in - or queued for a force
+     * resend - while local UDP wasn't reachable), push it now that it is.
+     * Throttled by MQTTCRED_PUSH_RETRY_MS so a flaky link never hammers the
+     * controller with repeat verify attempts (each one is a real blocking
+     * MQTT connect() on the firmware side, not a cheap no-op).
+     *
+     * Called by: _connectTransport()/_superviseTransport(), everywhere WiFi
+     * + local UDP is confirmed live.
+     */
+    private void _pushPendingMqttCredentialsIfDue() {
+        if (pendingMqttUser == null) return;
+        if (System.currentTimeMillis() - pendingMqttPushAt < MQTTCRED_PUSH_RETRY_MS) return;
+        _submitMqttCredentials(pendingMqttUser, pendingMqttPass, false);  // silent - background retry, never nag with a popup
+    }
+
+    /**
+     * Pop the MQTT username/password dialog. Shown when cloud mode is needed
+     * and nothing is saved yet, or again if the controller rejects a pushed
+     * pair (APP_ACK_UNAUTHORIZED) - in which case the rejected values are
+     * pre-filled with an error hint rather than making the user retype them.
+     *
+     * @param prefillUser  Username to pre-fill, or null for blank.
+     * @param prefillPass  Password to pre-fill, or null for blank.
+     * @param errorHint    Extra red line above the fields, or null for none.
+     *
+     * Called by: _connectMqttOrPrompt() (first-time prompt) and
+     * _submitMqttCredentials()'s ACK callback (re-prompt on rejection).
+     */
+    private void _promptMqttCredentials(final String prefillUser, final String prefillPass, final String errorHint) {
+        if (mqttCredDialogShowing) return;
+        mqttCredDialogShowing = true;
+
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        layout.setPadding(pad, pad, pad, pad);
+
+        if (errorHint != null) {
+            TextView err = new TextView(this);
+            err.setText(errorHint);
+            err.setTextColor(ThemeManager.getColor(this, R.color.status_off_red));
+            err.setPadding(0, 0, 0, pad / 2);
+            layout.addView(err);
+        }
+
+        final android.widget.EditText userField = new android.widget.EditText(this);
+        userField.setHint("MQTT username");
+        userField.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        if (prefillUser != null) userField.setText(prefillUser);
+        layout.addView(userField);
+
+        final android.widget.EditText passField = new android.widget.EditText(this);
+        passField.setHint("MQTT password");
+        passField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        if (prefillPass != null) passField.setText(prefillPass);
+        layout.addView(passField);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Cloud Mode Login");
+        builder.setMessage("Enter the MQTT broker credentials for this device. " +
+                "They're verified live against the broker before being saved.");
+        builder.setView(layout);
+        builder.setPositiveButton("Save", (dialog, which) -> {
+            String user = userField.getText().toString().trim();
+            String pass = passField.getText().toString();
+            mqttCredDialogShowing = false;
+            if (user.isEmpty() || pass.isEmpty()) {
+                _promptMqttCredentials(user, pass, "Username and password are both required");
+                return;
+            }
+            _submitMqttCredentials(user, pass, true);   // interactive - reopen with an error hint if the broker rejects it
+        });
+        builder.setNegativeButton("Not now", (dialog, which) -> {
+            mqttCredDialogShowing = false;
+            // Back off like a real (failed) push attempt would, so declining
+            // doesn't cause the very next supervisor tick to re-prompt.
+            pendingMqttPushAt = System.currentTimeMillis();
+        });
+        builder.setOnCancelListener(dialog -> {
+            mqttCredDialogShowing = false;
+            pendingMqttPushAt = System.currentTimeMillis();
+        });
+        builder.show();
+    }
+
+    /**
+     * Verify + apply a username/password pair - from either the credentials
+     * dialog's Save button, an automatic pending push
+     * (_pushPendingMqttCredentialsIfDue()), or the 5-second force-resend
+     * gesture.
+     *
+     * Two-stage, in order:
+     *   1. The APP verifies the pair itself first, connecting straight to
+     *      the broker with it (MqttTransport.tryConnect()) - faster
+     *      feedback than waiting on the controller's own round trip, and
+     *      the controller is never bothered with an obviously-bad pair.
+     *   2. Only once that succeeds:
+     *        - on WiFi (local UDP live)  -> hand it to the controller too,
+     *          so its own EEPROM copy gets verified + saved independently.
+     *        - off WiFi                  -> nothing to hand it to locally,
+     *          so Cloud Mode is brought up with it immediately instead of
+     *          waiting for WiFi to return, then this checks whether the
+     *          controller itself answers over that link within
+     *          MQTTCRED_CLOUD_PROBE_MS - confirming these credentials
+     *          actually reach THIS controller, not just some broker
+     *          session. If it stays silent, pendingMqttUser/Pass are left
+     *          set so the pair still gets pushed over local UDP the next
+     *          time WiFi comes back (covers first-time setup while away
+     *          from home - the controller can only ever LEARN a new pair
+     *          over that local link).
+     *
+     * @param user             Username to verify + (on success) cache.
+     * @param pass             Password to verify + (on success) cache.
+     * @param reopenOnFailure  True for a call the user just triggered directly
+     *                         (dialog Save, force-resend gesture) - failure
+     *                         re-prompts them right away since they're already
+     *                         looking at the app. False for the silent
+     *                         background retry (_pushPendingMqttCredentialsIfDue(),
+     *                         every ~20s) - MUST stay false there, or a still-bad
+     *                         saved pair pops the dialog back up every cycle
+     *                         forever, even after the user dismissed it.
+     */
+    private void _submitMqttCredentials(final String user, final String pass, final boolean reopenOnFailure) {
+        pendingMqttUser = user;
+        pendingMqttPass = pass;
+
+        if (MQTT == null) return;
+
+        _Console(false, "☁", "MQTT CRED -> checking with broker...");
+        MQTT.tryConnect(user, pass, brokerOk -> {
+            if (!brokerOk) {
+                _Toast("MQTT login rejected by broker");
+                if (reopenOnFailure) {
+                    _promptMqttCredentials(user, pass, "Rejected by broker - check username/password");
+                } else {
+                    _Console(false, "☁", "{#R}MQTT CRED REJECTED{##} (will retry later)");
+                }
+                return;
+            }
+
+            // Broker accepted these from the phone's side.
+            if (_UDP_Available()) {
+                // On WiFi - hand off to the controller so its own EEPROM
+                // copy gets verified + saved too, independent of the phone's.
+                pendingMqttPushAt = System.currentTimeMillis();
+                _Console(false, "►►", "MQTT CRED -> verifying with controller...");
+                DATAs.sendMqttCredentials(user, pass, result -> {
+                    if (result == 0) {
+                        pendingMqttUser = null;
+                        pendingMqttPass = null;
+                        MQTT.setCredentials(user, pass);
+                        _Toast("MQTT credentials verified");
+                        _Console(false, "☁", "{#G}MQTT CRED OK{##}");
+                    } else if (result == 7) {
+                        // The broker just accepted this pair for the phone, so
+                        // this isn't a bad-password case - most likely the
+                        // controller itself can't reach the broker right now.
+                        _Toast("Controller couldn't verify with the broker");
+                        if (reopenOnFailure) {
+                            _promptMqttCredentials(user, pass,
+                                    "Broker accepted this pair, but the controller couldn't - check its network");
+                        } else {
+                            _Console(false, "☁", "{#R}CONTROLLER REJECTED MQTT CRED{##} (will retry later)");
+                        }
+                    } else if (reopenOnFailure) {
+                        _promptMqttCredentials(user, pass, "Send failed - try again");
+                    }
+                });
+            } else {
+                // Off WiFi - nothing to push to locally, so use Cloud Mode
+                // with this pair right now (tryConnect() above already made
+                // it the live session) instead of waiting for WiFi to return.
+                MQTT.setCredentials(user, pass);
+                _Console(false, "☁", "{#G}CLOUD ON{##} - waiting for controller...");
+                transportHandler.postDelayed(() -> {
+                    if (DATAr.isMqttArduinoAlive()) {
+                        pendingMqttUser = null;
+                        pendingMqttPass = null;
+                        _Toast("Cloud Mode connected");
+                        _Console(false, "☁", "{#G}CONTROLLER ANSWERED{##} over cloud");
+                    } else {
+                        _Toast("Connected to broker, but the controller hasn't answered yet");
+                        _Console(false, "☁", "{#Y}NO REPLY FROM CONTROLLER{##} yet - will keep trying");
+                        // pendingMqttUser/Pass stay set: _pushPendingMqttCredentialsIfDue()
+                        // pushes this pair over local UDP the next time WiFi is
+                        // back, in case the controller never had it cached at all.
+                    }
+                }, MQTTCRED_CLOUD_PROBE_MS);
+            }
+        });
     }
 
     @Override
@@ -842,6 +1089,42 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             _Toast("Retrying connection...");
             _connectTransport("manual retry");
             return true;
+        });
+
+        // Hold the same label for 5 full seconds -> MQTT credential action,
+        // independent of the ~500ms long-click above (both can fire off one
+        // long hold - that's fine, they do unrelated things). A plain
+        // OnLongClickListener can't be reused for this: it only fires once at
+        // the OS's short default timeout, so the longer hold needs its own
+        // down/up timer via setOnTouchListener. Returning false lets the
+        // touch event keep flowing to the view's normal handling, so the
+        // existing long-click still fires normally.
+        //   - credentials already saved -> force re-send/re-verify them
+        //     (re-syncs EEPROM if the controller was ever reflashed/reset).
+        //   - nothing saved yet -> pop the entry dialog on demand, same as
+        //     the automatic prompt but without waiting for cloud mode to
+        //     actually be needed (e.g. to set it up in advance, while still
+        //     on WiFi with local UDP working fine).
+        final Runnable forceMqttResend = () -> {
+            TEXT_ConnectInfo.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            if (MQTT != null && MQTT.hasCredentials()) {
+                _Toast("Resending MQTT credentials...");
+                _submitMqttCredentials(MQTT.getUser(), MQTT.getPass(), true);   // interactive - if the saved pair turns out stale, tell them now
+            } else {
+                _promptMqttCredentials(null, null, null);
+            }
+        };
+        TEXT_ConnectInfo.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    transportHandler.postDelayed(forceMqttResend, 5000);
+                    break;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    transportHandler.removeCallbacks(forceMqttResend);
+                    break;
+            }
+            return false;
         });
 
         // Installed-version label, bottom-left above the dual-colour swatch row -

@@ -1994,10 +1994,11 @@ static void udpAck(uint8_t seq, uint8_t result) {
  *   Df                          — shutdown      (drives MODE down to off, same as M0; strip forced off;
  *                                  QUEUED while parfum is active — applied at natural expiry, see
  *                                  PARFUM note above; Ds still replied immediately)
- *   DpMMMME                     — parfum mode   (MMMM hex minutes 0001-0168 + mode digit E: timed run
- *                                  in mode E that ignores Df/Dn until expiry, violet PULSE strip cue;
- *                                  E = 1 or 2 only — M0 "off"/M3-M4 "after sleep" don't apply to a
- *                                  manual Parfum run; E is mandatory whenever MMMM != 0000)
+ *   DpMMMME                     — parfum mode   (MMMM hex minutes, well-formed hex > 0168 is CLAMPED to
+ *                                  0168 (360 min max) rather than rejected, ACK_CLAMPED if so + mode
+ *                                  digit E: timed run in mode E that ignores Df/Dn until expiry, violet
+ *                                  PULSE strip cue; E = 1 or 2 only — M0 "off"/M3-M4 "after sleep" don't
+ *                                  apply to a manual Parfum run; E is mandatory whenever MMMM != 0000)
  *   Dp0000                      — parfum cancel + shutdown (no mode digit — "off" needs no mode)
  *   DnXXrrggbbBREESP           — turn on (XX = target MODE hex 01-04) + solid colour rrggbb
  *                                  + brightness BR + effect EE + speed SP
@@ -2061,10 +2062,16 @@ static void udpDispatch(char *buf) {
         }
         if ((c1 == 'p' || c1 == 'P') && (len == 6 || len == 7)) {   // Dp0000 cancel, or DpMMMME start
             unsigned int mins = 0;
-            if (sscanf(buf + 2, "%4x", &mins) != 1 || mins > PARFUM_MAX_MIN) {
+            if (sscanf(buf + 2, "%4x", &mins) != 1) {
                 LOG::logMsg("UDP_R", "Dp bad payload [%s] (0000-%04X)", buf, PARFUM_MAX_MIN);
                 g_ackResult = ACK_REJECTED;
                 return;
+            }
+            bool minsClamped = false;
+            if (mins > PARFUM_MAX_MIN) {                            // Out of range but well-formed — coerce
+                LOG::logMsg("UDP_R", "Dp minutes %04X clamped to %04X (max)", mins, PARFUM_MAX_MIN);
+                mins = PARFUM_MAX_MIN;
+                minsClamped = true;
             }
             if (mins == 0) {
                 if (len != 6) { LOG::logMsg("UDP_R", "dp0000 cancel takes no mode digit [%s]", buf); g_ackResult = ACK_REJECTED; return; }
@@ -2084,6 +2091,7 @@ static void udpDispatch(char *buf) {
                 return;
             }
             if (!PARFUM::parfumStart((uint16_t)mins, (uint8_t)e)) g_ackResult = ACK_LOCKED;
+            else if (minsClamped) g_ackResult = ACK_CLAMPED;
             return;
         }
         if ((c1 == 'n' || c1 == 'N') && len >= 16) {

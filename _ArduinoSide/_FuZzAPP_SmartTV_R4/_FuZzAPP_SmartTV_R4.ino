@@ -150,6 +150,7 @@ uint8_t   RTC_Status = rtcOK;
 namespace MQTT { MQTTx State = {};                 /* value-init: Up=false, no pending */ }
 WiFiSSLClient MQTT_Net;                  /* TLS socket (ESP32-S3 handles CA) */
 PubSubClient  MQTT_Cli(MQTT_Net);        /* MQTT over the TLS socket         */
+namespace MQTTCRED { MQTTCREDx State = {};         /* value-init: empty strings, valid=false until Load()/verify */ }
 
 
 /* ------------------------------------------------------------------------ */
@@ -169,6 +170,7 @@ void setup() {
     UDPRAW::Setup();         // ambilight UDP socket port 5568
     APP::Setup();            // phone UDP socket port 8472
     DIF::Setup();            // diffuser UDP socket port 8439
+    MQTTCRED::Load();        // cached MQTT user/pass, own EEPROM anchor (see MQTTCRED_BLOCK_SIZE)
     MQTT::Setup();           // HiveMQ Cloud TLS link (parallel to UDP)
     BME::Setup();         // I^2C temperature/humidity
     LISENS::Setup();         // analog ambient light sensor
@@ -1135,8 +1137,10 @@ void _Debug(uint8_t d) {
 			APP::termMsgLogSection(APP_SRC_NET, "PRNT", "_Debug", "MQTT  config");
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Host [%s]",        MQTT_HOST);
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Port [%d]",        MQTT_PORT);
-			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "User [%s]",        MQTT_USER);
-			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Pass [%s]",        MQTT_PASS);
+			APP::termMsgLog(MQTTCRED::State.valid ? APP_LOG_DBG : APP_LOG_WRN, APP_SRC_NET, "PRNT", "_Debug",
+				"User [%s]", MQTTCRED::State.valid ? MQTTCRED::State.user : "(not set)");
+			APP::termMsgLog(MQTTCRED::State.valid ? APP_LOG_DBG : APP_LOG_WRN, APP_SRC_NET, "PRNT", "_Debug",
+				"Pass [%s]", MQTTCRED::State.valid ? "********" : "(not set)");  // never print the real password, even here
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Topic [%s]",       MQTT_TOPIC);
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Keepalive [%d] s", MQTT_KEEPALIVE);
 			APP::termMsgLog(APP_LOG_DBG, APP_SRC_NET, "PRNT", "_Debug", "Retry every [%d] ms", MQTT_RETRY_MS);
@@ -1922,13 +1926,6 @@ uint16_t BED(uint8_t i) {
         return LED_START_I_BED + (LED_BED_NUM - 1);
     }
     return LED_START_I_BED + i;
-}
-
-/**
- * @brief  Clear all change tracking flags (call after sync to app).
- */
-void ClearChanges() {
-    memset(LED::State.Changed, 0, sizeof(LED::State.Changed));
 }
 
 uint16_t COM(uint8_t i) {
@@ -6835,6 +6832,7 @@ void Exec(char *buff, int len) {
 		case 'A': cmdAmbientMode(buff, len); break; // Ambient Mode
 		case 'K': cmdDebug(buff, len);       break; // Debug
         case '@': cmdTestMode(buff, len);      break; // Test Mode
+        case '$': MQTTCRED::cmdSetCredentials(buff, len); break; // MQTT credential provisioning (b64 user,pass)
 
 		case 'D': // Diffuser sub-commands -- forwarded to the DIF UDP link
 			switch (buff[1]) {
@@ -8351,19 +8349,6 @@ int getFreeRam() {
 	return freeRam;
 }
 
-
-/**
- * @brief  Return the number of currently selected LEDs.
- *
- * Rebuilds the selected cache if it is marked dirty, then returns
- * the cached count.
- */
-int getSelectedCount() {
-    if (APP::State.SelectedCacheDirty) {
-        RefreshSelectedCache();
-    }
-    return APP::State.SelectedCount;
-}
 
 /**
  * @brief  Fit a sensor reading into one 2-hex-char status field.
@@ -11640,6 +11625,11 @@ void Reconnect() {
     // blocked MQTT reconnects for the entire viewing session, not just the
     // brief transition. TV::State.Transitioning is explicit and correctly scoped.
     if (UDPRAW::State.Status || TV::State.Transitioning) return;
+    // No credentials cached yet (never provisioned by the app) -- nothing to
+    // try. Avoids burning the retry throttle on a connect() that's certain to
+    // fail, and would otherwise need MQTT_USER/MQTT_PASS defines that no
+    // longer exist (see MQTTCRED::cmdSetCredentials()).
+    if (!MQTTCRED::State.valid) return;
     if (TimeNow - MQTT::State.LastTry < MQTT_RETRY_MS) return;         // Throttle - Logic
     MQTT::State.LastTry = TimeNow;
 
@@ -11648,7 +11638,7 @@ void Reconnect() {
 
     PRNT::_print(PRNT::formatMSG("%~32s # connecting to [%s:%d]" NL, "Reconnect", MQTT_HOST, MQTT_PORT));
 
-    bool ok = MQTT_Cli.connect(cid, MQTT_USER, MQTT_PASS);      // No LWT - Action
+    bool ok = MQTT_Cli.connect(cid, MQTTCRED::State.user, MQTTCRED::State.pass); // No LWT - Action
     if (ok) {
         MQTT::State.Up = true;                                          // Link live - State
         MQTT_Cli.subscribe(MQTT_TOPIC);                          // Single duplex topic - Action
@@ -11664,6 +11654,212 @@ void Reconnect() {
 }
 } // namespace MQTT
 
+
+/* ------------------------------------------------------------------------ */
+/* MQTT CREDENTIALS -- EEPROM-backed, app-provisioned                        */
+/* User/pass are never hardcoded. The app pushes them over the local UDP    */
+/* link (protocol letter '$', b64-encoded, see DataSend.sendMqttCredentials */
+/* on the Android side); Exec() routes here before ACKing. A candidate pair */
+/* is verified with a REAL blocking connect() against the broker before it */
+/* is trusted or persisted -- so a typo/garbage pair can never silently     */
+/* "stick", and the app finds out (APP_ACK_UNAUTHORIZED) in the same ACK    */
+/* round-trip it already waits on for every other command.                 */
+/* ------------------------------------------------------------------------ */
+
+namespace MQTTCRED {
+
+/**
+ * @brief  First EEPROM address of the credential block (opposite end of the
+ *         region from the settings array at EE_START_READ_INDEX -- see the
+ *         layout comment on MQTTCRED_BLOCK_SIZE in DEF.h).
+ */
+static int EEBase() {
+    return EEPROM.length() - MQTTCRED_BLOCK_SIZE;
+}
+
+/**
+ * @brief  Reverse base64-alphabet lookup for one character.
+ * @return 0-63 for a valid alphabet character, -1 for '=' or anything else.
+ */
+static int8_t b64Val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+/**
+ * @brief  Minimal standard-alphabet base64 decoder (no library on core).
+ *
+ * @param  in      Input characters (NOT null-terminated by caller's contract --
+ *                  @p inLen is authoritative; trailing '=' padding is tolerated).
+ * @param  inLen   Number of input characters to consume.
+ * @param  out     Output buffer.
+ * @param  outMax  Output buffer capacity in bytes.
+ *
+ * @return Decoded byte count, or -1 on an invalid character / output overflow.
+ */
+static int b64Decode(const char* in, int inLen, uint8_t* out, int outMax) {
+    int outLen = 0;
+    int val = 0, bits = -8;
+    for (int i = 0; i < inLen; i++) {
+        char c = in[i];
+        if (c == '=') break;                       // Padding -- end of data - Logic
+        int8_t d = b64Val(c);
+        if (d < 0) return -1;                       // Invalid character - Guard
+        val = (val << 6) + d;
+        bits += 6;
+        if (bits >= 0) {
+            if (outLen >= outMax) return -1;        // Overflow - Guard
+            out[outLen++] = (uint8_t)((val >> bits) & 0xFF);
+            bits -= 8;
+        }
+    }
+    return outLen;
+}
+
+/**
+ * @brief  Persist State.user/State.pass to their EEPROM anchor, byte-verified.
+ *
+ * Only called after a live broker verify has already succeeded (see
+ * cmdSetCredentials()) and only when the pair actually differs from what's
+ * cached, so an unchanged force-resend (the app's 5s-hold gesture) never
+ * wears EEPROM for nothing.
+ */
+static void Save() {
+    int base = EEBase();
+    EE::w(base, MQTTCRED_MAGIC);
+    int p = base + 1;
+    for (int i = 0; i < MQTTCRED_USER_MAX + 1; i++) EE::w(p + i, (uint8_t)State.user[i]);
+    p += MQTTCRED_USER_MAX + 1;
+    for (int i = 0; i < MQTTCRED_PASS_MAX + 1; i++) EE::w(p + i, (uint8_t)State.pass[i]);
+    PRNT::_print(PRNT::formatMSG("%~32s # saved, user [%s]" NL, "MQTTCRED_Save", State.user));
+}
+
+/**
+ * @brief  Load cached credentials from EEPROM. Call once from setup().
+ *
+ * Leaves State.valid=false (and both strings empty) if the magic byte at
+ * EEBase() doesn't match MQTTCRED_MAGIC -- i.e. never configured, a fresh
+ * board, or a still-blank/erased region. Reconnect() checks State.valid
+ * before ever touching MQTT_Cli.connect().
+ */
+void Load() {
+    int base = EEBase();
+    uint8_t magic = EEPROM.read(base);
+    if (magic != MQTTCRED_MAGIC) {
+        State.valid   = false;
+        State.user[0] = '\0';
+        State.pass[0] = '\0';
+        PRNT::_print(PRNT::formatMSG("%~32s # no stored credentials (magic [%d])" NL, "MQTTCRED_Load", magic));
+        return;
+    }
+
+    int p = base + 1;
+    for (int i = 0; i < MQTTCRED_USER_MAX + 1; i++) State.user[i] = (char)EEPROM.read(p + i);
+    State.user[MQTTCRED_USER_MAX] = '\0';                     // Enforce termination - Guard
+    p += MQTTCRED_USER_MAX + 1;
+    for (int i = 0; i < MQTTCRED_PASS_MAX + 1; i++) State.pass[i] = (char)EEPROM.read(p + i);
+    State.pass[MQTTCRED_PASS_MAX] = '\0';                     // Enforce termination - Guard
+
+    State.valid = true;
+    PRNT::_print(PRNT::formatMSG("%~32s # loaded, user [%s]" NL, "MQTTCRED_Load", State.user));
+}
+
+/**
+ * @brief  '$' command handler -- "$<b64user>,<b64pass>".
+ *
+ * Decodes both fields, then VERIFIES them with a real (blocking) connect()
+ * against the broker before trusting or persisting anything -- same
+ * blocking-TLS-handshake precedent as MQTT::Reconnect(). On success the new
+ * pair is adopted immediately (MQTT::State.Up=true, subscribed) and saved to
+ * EEPROM only if it differs from what was already cached. On failure nothing
+ * is touched -- any previously-good cached pair is left alone, and the next
+ * throttled MQTT::Reconnect() cycle quietly restores that old session.
+ *
+ * @param  buff  "$<b64user>,<b64pass>", ACK envelope already stripped by Exec().
+ * @param  len   Length of buff (excluding null terminator).
+ *
+ * Sets APP::State.LastResult so Exec()'s existing ACK machinery replies:
+ *   APP_ACK_OK           - verified, adopted (and saved if it changed)
+ *   APP_ACK_REJECTED     - malformed payload (no comma, empty field, bad b64)
+ *   APP_ACK_UNAUTHORIZED - decoded fine, but the broker refused this pair
+ */
+void cmdSetCredentials(char *buff, int len) {
+    char* payload    = buff + 1;               // Skip '$' - Mapping
+    int   payloadLen = len - 1;
+
+    char* comma = strchr(payload, ',');
+    if (payloadLen < 3 || comma == NULL) {
+        APP::State.LastResult = APP_ACK_REJECTED;
+        PRNT::_print(PRNT::formatMSG("%32s ! malformed payload (no comma)" NL, "MQTTCRED_Set"));
+        return;
+    }
+
+    int userB64Len = (int)(comma - payload);
+    int passB64Len = payloadLen - userB64Len - 1;
+    if (userB64Len <= 0 || passB64Len <= 0) {
+        APP::State.LastResult = APP_ACK_REJECTED;
+        PRNT::_print(PRNT::formatMSG("%32s ! malformed payload (empty user/pass)" NL, "MQTTCRED_Set"));
+        return;
+    }
+
+    uint8_t userBuf[MQTTCRED_USER_MAX + 1];
+    uint8_t passBuf[MQTTCRED_PASS_MAX + 1];
+    int uLen = b64Decode(payload,    userB64Len, userBuf, MQTTCRED_USER_MAX);
+    int pLen = b64Decode(comma + 1,  passB64Len, passBuf, MQTTCRED_PASS_MAX);
+    if (uLen <= 0 || pLen <= 0) {
+        APP::State.LastResult = APP_ACK_REJECTED;
+        PRNT::_print(PRNT::formatMSG("%32s ! base64 decode failed (user [%d] pass [%d])" NL, "MQTTCRED_Set", uLen, pLen));
+        return;
+    }
+    userBuf[uLen] = '\0';
+    passBuf[pLen] = '\0';
+
+    PRNT::_print(PRNT::formatMSG("%~32s # verifying candidate credentials, user [%s]" NL, "MQTTCRED_Set", (const char*)userBuf));
+
+    // Force a clean connect attempt -- if a session with the OLD (still-good)
+    // credentials happens to be up, drop it first so the result below is
+    // unambiguous (PubSubClient::connect() otherwise treats an already-open
+    // socket inconsistently across states).
+    if (MQTT_Cli.connected()) MQTT_Cli.disconnect();
+
+    char cid[32];
+    snprintf(cid, sizeof(cid), "SmartTV-R4-%04X", APP::State.SessionId);
+    bool ok = MQTT_Cli.connect(cid, (const char*)userBuf, (const char*)passBuf); // Blocking TLS handshake - Action
+
+    if (!ok) {
+        APP::State.LastResult = APP_ACK_UNAUTHORIZED;
+        MQTT::State.Up = false;
+        PRNT::_print(PRNT::formatMSG("%32s ! verify failed, broker state [%d]" NL, "MQTTCRED_Set", MQTT_Cli.state()));
+        // Deliberately not touching State.user/State.pass/EEPROM -- a bad
+        // candidate never overwrites a previously-good cached pair, and
+        // MQTT::Reconnect() will quietly re-establish it on its own next tick.
+        return;
+    }
+
+    MQTT_Cli.subscribe(MQTT_TOPIC);
+    MQTT::State.Up      = true;
+    MQTT::State.LastTry = TimeNow;
+
+    bool changed = !State.valid
+        || strcmp(State.user, (const char*)userBuf) != 0
+        || strcmp(State.pass, (const char*)passBuf) != 0;
+
+    strncpy(State.user, (const char*)userBuf, MQTTCRED_USER_MAX); State.user[MQTTCRED_USER_MAX] = '\0';
+    strncpy(State.pass, (const char*)passBuf, MQTTCRED_PASS_MAX); State.pass[MQTTCRED_PASS_MAX] = '\0';
+    State.valid = true;
+
+    if (changed) Save();
+
+    APP::State.LastResult = APP_ACK_OK;
+    PRNT::_print(PRNT::formatMSG("%~32s # verified + connected, user [%s]%s" NL,
+        "MQTTCRED_Set", State.user, changed ? " (saved)" : " (unchanged)"));
+}
+
+} // namespace MQTTCRED
 
 
 
