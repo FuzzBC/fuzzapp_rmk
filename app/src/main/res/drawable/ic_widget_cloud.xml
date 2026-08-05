@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple cloud glyph for the home-screen widget's connection icon -
+     shown instead of ic_arduino whenever the last successful fetch
+     answered over MQTT cloud rather than local UDP. White fill so the
+     ImageView tint recolours it like every other status icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,17 a4,4 0 0 1 -0.3,-7.98 a5,5 0 0 1 9.7,-0.9 a3.5,3.5 0 0 1 -0.4,6.88 z" />
+</vector>

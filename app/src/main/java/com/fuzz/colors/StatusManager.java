@@ -122,8 +122,9 @@ public class StatusManager {
 
     /**
      * Parfum-mode remaining minutes, mirrored from the Arduino's 'pTTTT'
-     * packet (0 = parfum inactive). Read by the long-press ParfumPopup so
-     * it opens showing the live countdown.
+     * packet (0 = parfum inactive). Read by DiffuserUsagePopup's inline
+     * PARFUM MODE accordion so it opens pre-filled/expanded showing the
+     * live countdown when parfum is already running.
      */
     public int parfumRemainingMin = 0;
 
@@ -347,34 +348,21 @@ public class StatusManager {
         // OFF has no valid action (enable needs READY) - disable the view
         STS_Cell_AmbientMode.setEnabled(currentAmbientMode != STS_AmbientMode.OFF);
 
-        // Long-click on the diffuser icon: open the Parfum mode popup
-        // (minutes box + slider + OFF/OK) - see ParfumPopup.
-        STS_IMG_Diffuser.setOnLongClickListener(v -> {
-            // Ask the board for the live parfum minutes so the popup opens with
-            // the current value (board replies 'p' only while a window is active).
-            if (DATAs != null) DATAs.sendDiffuserStatus();
-            new ParfumPopup(Main).show(v,
-                    currentDiffuser == STS_Diffuser.PARFUM,
-                    parfumRemainingMin,
-                    (minutes, mode) -> {
-                        DATAs.sendParfum(minutes, mode);
-                        String modeLbl = DataSend.PARFUM_MODES[mode];
-                        Main._Toast("{ PARFUM " + minutes + " MIN · " + modeLbl + " }");
-                        Main._Console(false, "►►", "PARFUM {#G}ON{##} [{#C}" + minutes + " MIN{##}] {#C}" + modeLbl + "{##}");
-                    },
-                    () -> {
-                        DATAs.sendParfumOff();
-                        Main._Toast("{ PARFUM OFF }");
-                        Main._Console(false, "►►", "PARFUM {#R}OFF{##}");
-                    });
-            return true;
-        });
-
-        // Long-press on the diffuser refill badge: show a remaining-time estimate.
+        // Long-press on the diffuser refill badge: show a remaining-time estimate,
+        // with an inline PARFUM MODE accordion of its own now (see
+        // DiffuserUsagePopup's class doc) - the diffuser icon itself no
+        // longer opens Parfum directly on long-press, that entry point
+        // moved into this popup to keep one obvious place for every
+        // diffuser action instead of two different long-press targets.
+        // Live parfum minutes requested up front (board replies 'p' only
+        // while a window is active) so the accordion opens pre-filled if
+        // one's already running.
         STS_Box_DiffuserRefill.setOnLongClickListener(v -> {
+            if (DATAs != null) DATAs.sendDiffuserStatus();
             new DiffuserUsagePopup(Main).show(v, diffuserRefillPercent,
                     diffuserUsageAccumMin, diffuserUsageAvgMin,
-                    diffuserUsageRefillCount, diffuserUsageTotalRefills);
+                    diffuserUsageRefillCount, diffuserUsageTotalRefills,
+                    currentDiffuser == STS_Diffuser.PARFUM, parfumRemainingMin);
             return true;
         });
     }

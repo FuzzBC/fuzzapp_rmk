@@ -17,20 +17,22 @@ import android.view.animation.LinearInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 /**
  * ============================================================
  *  DiffuserUsagePopup.java
  * ============================================================
- *  Long-press dialog for the top-left diffuser refill badge -
- *  purely informational (no inputs, unlike ParfumPopup): shows
- *  an estimated remaining time until the next refill, using the
- *  same rolling-average data already driving the badge's percent
- *  and fill bar (see StatusManager.applyDiffuserUsage()).
+ *  Long-press dialog for the top-left diffuser refill badge: an
+ *  estimated remaining time until the next refill (same rolling-
+ *  average data already driving the badge's percent and fill bar,
+ *  see StatusManager.applyDiffuserUsage()), plus every other
+ *  diffuser action - manual refill and Parfum mode - in one place.
  *
- *  Layout (same card language as ParfumPopup - accent header bar
- *  on a rounded card, dimmed backdrop, centered, scale/fade entrance):
+ *  Layout (same card language as ParfumPopup/TestModePopup - accent
+ *  header bar on a rounded card, dimmed backdrop, centered,
+ *  scale/fade entrance):
  *      [ DIFFUSER REFILL ]            <- accent header
  *      ~2h 15m REMAINING              <- big estimate line
  *      64% of average cycle left      <- secondary line
@@ -39,11 +41,32 @@ import android.widget.TextView;
  *      Average cycle   4h 05m
  *      History         3/10 cycles
  *      Lifetime        7 refills
+ *      [ HOLD TO FORCE REFILL ]
+ *      [ PARFUM MODE          ▾]      <- tap to expand inline (see below)
+ *          [ − ][   30   ][ + ]
+ *          MINUTES · 1-360
+ *          ─────────●─────────
+ *          [ CONTINUOUS ][ 10 SEC ]
+ *          [    OFF    ][  START  ]
  *      [        CLOSE      ]
+ *
+ *  The Parfum section is a true inline accordion, not a separate
+ *  popup - tapping the header toggles a local expanded flag, fades the
+ *  panel in/out, and swaps the header's corner radii so it reads as
+ *  one continuous card whether collapsed or open. It opens pre-filled
+ *  with live remaining minutes while a run is active, or the last
+ *  minutes/mode actually sent via START otherwise - persisted in
+ *  SharedPreferences (see _loadLastParfumSettings()/_saveLastParfumSettings()),
+ *  so it survives an app restart, not just this session. Controls mirror
+ *  ParfumPopup's (minutes stepper + slider + mode chips + OFF/START)
+ *  but drive the exact same DataSend calls directly, so ParfumPopup
+ *  itself is no longer reachable from anywhere in the app - see its
+ *  own class doc.
  *
  *  Usage (see StatusManager.init()):
  *      new DiffuserUsagePopup(Main).show(anchor, diffuserRefillPercent,
- *              accumMin, avgMin, refillCount, totalRefills);
+ *              accumMin, avgMin, refillCount, totalRefills,
+ *              parfumActive, parfumRemainingMin);
  * ============================================================
  */
 public class DiffuserUsagePopup {
@@ -60,6 +83,26 @@ public class DiffuserUsagePopup {
     /** Fixed height prevents the progress overlay from expanding the popup. */
     private static final int REFILL_BUTTON_HEIGHT_DP = 36;
 
+    /** Allowed Parfum duration range in minutes - mirrors firmware PARFUM_MAX_MIN. */
+    private static final int PARFUM_MIN_MINUTES = 1;
+    private static final int PARFUM_MAX_MINUTES = 360;
+
+    /** Fallback minutes/mode the very first time this has ever been opened (no saved settings yet). */
+    private static final int PARFUM_DEFAULT_MINUTES = 30;
+    private static final int PARFUM_DEFAULT_MODE    = 0; // CONTINUOUS
+
+    /**
+     * Last minutes/mode actually sent via START - persisted to SharedPreferences
+     * (not just in-memory) so it survives an app restart, not just this
+     * session. Written by _saveLastParfumSettings(), read by
+     * _loadLastParfumSettings() to pre-fill the accordion whenever Parfum
+     * isn't currently running (see show()'s doc for the "remaining minutes
+     * if ON, last-sent settings if OFF" rule).
+     */
+    private static final String PARFUM_PREFS_NAME = "FuZz_Parfum";
+    private static final String PARFUM_PREF_MINUTES = "minutes";
+    private static final String PARFUM_PREF_MODE    = "mode";
+
     private final Context ctx;
     private PopupWindow popup;
 
@@ -73,15 +116,19 @@ public class DiffuserUsagePopup {
     /**
      * Build and show the remaining-time dialog dead-center on screen.
      *
-     * @param anchor       Any attached view - used only as the window token.
-     * @param percent      Current badge percent (0-100), or -1 while still
-     *                     learning (no refill history yet).
-     * @param accumMin     Effective minutes run since the last refill.
-     * @param avgMin       Rolling average of completed refill cycles, minutes.
-     * @param refillCount  Valid entries in the rolling history, 0-10.
-     * @param totalRefills Lifetime refill count.
+     * @param anchor            Any attached view - used only as the window token.
+     * @param percent           Current badge percent (0-100), or -1 while still
+     *                          learning (no refill history yet).
+     * @param accumMin          Effective minutes run since the last refill.
+     * @param avgMin            Rolling average of completed refill cycles, minutes.
+     * @param refillCount       Valid entries in the rolling history, 0-10.
+     * @param totalRefills      Lifetime refill count.
+     * @param parfumActive      True while Parfum mode is currently running.
+     * @param parfumRemainingMin Live remaining minutes (shown, and used as the
+     *                          accordion's initial value while active); ignored when 0.
      */
-    public void show(View anchor, int percent, int accumMin, int avgMin, int refillCount, int totalRefills) {
+    public void show(View anchor, int percent, int accumMin, int avgMin, int refillCount, int totalRefills,
+                      boolean parfumActive, int parfumRemainingMin) {
         float dp = ctx.getResources().getDisplayMetrics().density;
         int titleCol  = ThemeManager.getColor(ctx, R.color.skbar_settings_title);
         int cardBgCol = ThemeManager.getColor(ctx, R.color.skbar_whole_settings);
@@ -255,6 +302,316 @@ public class DiffuserUsagePopup {
         });
         body.addView(refillContainer);
 
+        // ── PARFUM MODE (true inline accordion) ───────────────
+        // Moved here from the diffuser status icon's own long-press (see
+        // StatusManager.init()'s note) so every diffuser action lives
+        // behind one obvious entry point instead of two different
+        // long-press targets. Tapping the header expands/collapses the
+        // panel below it in place - see the class doc for the full layout.
+        int parfumViolet = ContextCompat_getColor(R.color.status_parfum_violet);
+        int parfumFill   = _blend(parfumViolet, cardBgCol, 0.82f);
+
+        // Remaining minutes from the board while a run is active (live,
+        // authoritative); otherwise fall back to whatever was last actually
+        // sent via START, persisted across app restarts - see
+        // _loadLastParfumSettings(). The board never relays which mode is
+        // currently running, so the last-sent mode is the best guess either way.
+        int[] lastSettings = _loadLastParfumSettings();
+        final int[]     minutesHolder  = { (parfumActive && parfumRemainingMin > 0)
+                ? Math.min(parfumRemainingMin, PARFUM_MAX_MINUTES) : lastSettings[0] };
+        final int[]     modeHolder     = { lastSettings[1] };
+        // Always opens collapsed, even mid-run - see parfumHeaderActive
+        // below for the always-visible "ACTIVE" indicator that keeps a
+        // running session from going invisible while collapsed.
+        final boolean[] expandedHolder = { false };
+
+        LinearLayout parfumGroup = new LinearLayout(ctx);
+        parfumGroup.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams parfumGroupLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        parfumGroupLp.setMargins(0, (int) (8 * dp), 0, 0);
+        parfumGroup.setLayoutParams(parfumGroupLp);
+
+        // Header - the only always-visible part; toggles the panel below it.
+        LinearLayout parfumHeader = new LinearLayout(ctx);
+        parfumHeader.setOrientation(LinearLayout.HORIZONTAL);
+        parfumHeader.setGravity(Gravity.CENTER);
+        parfumHeader.setClickable(true);
+        parfumHeader.setFocusable(true);
+        parfumHeader.setPadding(0, (int) (10 * dp), 0, (int) (10 * dp));
+
+        TextView parfumLabel = new TextView(ctx);
+        parfumLabel.setText("PARFUM MODE");
+        parfumLabel.setAllCaps(true);
+        parfumLabel.setLetterSpacing(0.06f);
+        parfumLabel.setTypeface(null, Typeface.BOLD);
+        parfumLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        parfumLabel.setTextColor(parfumViolet);
+        parfumHeader.addView(parfumLabel);
+
+        // Small always-visible "running" indicator - the panel itself now
+        // always starts collapsed (see expandedHolder above), so without
+        // this a Parfum session already in progress would look identical
+        // to one that's off until the user thinks to tap the header.
+        if (parfumActive) {
+            TextView parfumHeaderActive = new TextView(ctx);
+            parfumHeaderActive.setText("  •  " + Math.max(parfumRemainingMin, 1) + "m LEFT");
+            parfumHeaderActive.setTypeface(null, Typeface.BOLD);
+            parfumHeaderActive.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            parfumHeaderActive.setTextColor(parfumViolet);
+            parfumHeaderActive.setAlpha(0.85f);
+            parfumHeader.addView(parfumHeaderActive);
+        }
+
+        TextView parfumChevron = new TextView(ctx);
+        parfumChevron.setText("▾"); // ▾ - rotated 180° when expanded (see toggle handler)
+        parfumChevron.setTextColor(parfumViolet);
+        parfumChevron.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        LinearLayout.LayoutParams chevronLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        chevronLp.setMargins((int) (5 * dp), 0, 0, 0);
+        parfumChevron.setLayoutParams(chevronLp);
+        parfumChevron.setRotation(expandedHolder[0] ? 180f : 0f);
+        parfumHeader.addView(parfumChevron);
+
+        parfumGroup.addView(parfumHeader);
+
+        // Panel - minutes stepper + slider + mode chips + OFF/START, same
+        // controls ParfumPopup had, driving the exact same DataSend calls.
+        LinearLayout parfumPanel = new LinearLayout(ctx);
+        parfumPanel.setOrientation(LinearLayout.VERTICAL);
+        parfumPanel.setPadding((int) (10 * dp), (int) (10 * dp), (int) (10 * dp), (int) (10 * dp));
+        parfumPanel.setVisibility(expandedHolder[0] ? View.VISIBLE : View.GONE);
+        GradientDrawable parfumPanelBg = new GradientDrawable();
+        parfumPanelBg.setColor(_blend(parfumFill, 0xFF000000, 0.12f));
+        parfumPanelBg.setCornerRadii(new float[]{0, 0, 0, 0, 10 * dp, 10 * dp, 10 * dp, 10 * dp});
+        parfumPanelBg.setStroke((int) dp, parfumViolet);
+        parfumPanel.setBackground(parfumPanelBg);
+        parfumGroup.addView(parfumPanel);
+
+        if (parfumActive) {
+            TextView activeState = new TextView(ctx);
+            activeState.setText("ACTIVE — " + Math.max(parfumRemainingMin, 1) + " MIN LEFT");
+            activeState.setAllCaps(true);
+            activeState.setLetterSpacing(0.06f);
+            activeState.setTypeface(null, Typeface.BOLD);
+            activeState.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            activeState.setTextColor(parfumViolet);
+            activeState.setGravity(Gravity.CENTER);
+            activeState.setPadding(0, 0, 0, (int) (8 * dp));
+            parfumPanel.addView(activeState);
+        }
+
+        // Minus / minutes value / plus row - centred as a compact trio
+        // rather than stretched across the full row width.
+        LinearLayout parfumStepRow = new LinearLayout(ctx);
+        parfumStepRow.setOrientation(LinearLayout.HORIZONTAL);
+        parfumStepRow.setGravity(Gravity.CENTER);
+
+        final TextView minutesValue = new TextView(ctx);
+        minutesValue.setText(String.valueOf(minutesHolder[0]));
+        minutesValue.setTypeface(null, Typeface.BOLD);
+        minutesValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        minutesValue.setTextColor(ThemeManager.getColor(ctx, R.color.text_default));
+        minutesValue.setGravity(Gravity.CENTER);
+        minutesValue.setPadding(0, (int) (4 * dp), 0, (int) (4 * dp));
+        GradientDrawable minutesBg = new GradientDrawable();
+        minutesBg.setColor(rowFill);
+        minutesBg.setCornerRadius(7 * dp);
+        minutesValue.setBackground(minutesBg);
+
+        final SeekBar parfumSlider = new SeekBar(ctx);
+
+        TextView parfumMinus = _buildStepButton("−", rowFill, strokeCol, titleCol, dp,
+                () -> _setParfumMinutes(minutesHolder[0] - 1, minutesHolder, minutesValue, parfumSlider));
+        TextView parfumPlus  = _buildStepButton("+", rowFill, strokeCol, titleCol, dp,
+                () -> _setParfumMinutes(minutesHolder[0] + 1, minutesHolder, minutesValue, parfumSlider));
+
+        LinearLayout.LayoutParams minutesValueLp = new LinearLayout.LayoutParams(
+                (int) (38 * dp), LinearLayout.LayoutParams.WRAP_CONTENT);
+        minutesValueLp.setMargins((int) (6 * dp), 0, (int) (6 * dp), 0);
+        minutesValue.setLayoutParams(minutesValueLp);
+
+        parfumStepRow.addView(parfumMinus);
+        parfumStepRow.addView(minutesValue);
+        parfumStepRow.addView(parfumPlus);
+        parfumPanel.addView(parfumStepRow);
+
+        TextView minutesCaption = new TextView(ctx);
+        minutesCaption.setText("MINUTES · " + PARFUM_MIN_MINUTES + "-" + PARFUM_MAX_MINUTES);
+        minutesCaption.setAllCaps(true);
+        minutesCaption.setLetterSpacing(0.08f);
+        minutesCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        minutesCaption.setTextColor(titleCol);
+        minutesCaption.setAlpha(0.65f);
+        minutesCaption.setGravity(Gravity.CENTER);
+        minutesCaption.setPadding(0, (int) (5 * dp), 0, (int) (3 * dp));
+        parfumPanel.addView(minutesCaption);
+
+        parfumSlider.setMax(PARFUM_MAX_MINUTES - PARFUM_MIN_MINUTES);
+        parfumSlider.setProgress(minutesHolder[0] - PARFUM_MIN_MINUTES);
+        parfumSlider.getProgressDrawable().setTint(parfumViolet);
+        parfumSlider.getThumb().setTint(parfumViolet);
+        LinearLayout.LayoutParams parfumSliderLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        parfumSliderLp.setMargins(0, (int) (2 * dp), 0, (int) (10 * dp));
+        parfumSlider.setLayoutParams(parfumSliderLp);
+        parfumPanel.addView(parfumSlider);
+
+        final boolean[] selfEditHolder = { false };
+        parfumSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (!fromUser || selfEditHolder[0]) return;
+                minutesHolder[0] = progress + PARFUM_MIN_MINUTES;
+                minutesValue.setText(String.valueOf(minutesHolder[0]));
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
+        });
+
+        // Dispense mode chips - CONTINUOUS / 10 SEC (DataSend.PARFUM_MODES)
+        LinearLayout modeRow = new LinearLayout(ctx);
+        modeRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams modeRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        modeRowLp.setMargins(0, 0, 0, (int) (8 * dp));
+        modeRow.setLayoutParams(modeRowLp);
+
+        TextView[] modeBtns = new TextView[DataSend.PARFUM_MODES.length];
+        for (int m = 0; m < DataSend.PARFUM_MODES.length; m++) {
+            final int idx = m;
+            TextView chip = new TextView(ctx);
+            chip.setText(DataSend.PARFUM_MODES[m]);
+            chip.setAllCaps(true);
+            chip.setLetterSpacing(0.04f);
+            chip.setTypeface(null, Typeface.BOLD);
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(0, (int) (7 * dp), 0, (int) (7 * dp));
+            chip.setClickable(true);
+            chip.setFocusable(true);
+            LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            if (m > 0) chipLp.setMargins((int) (6 * dp), 0, 0, 0);
+            chip.setLayoutParams(chipLp);
+            modeBtns[m] = chip;
+            chip.setOnClickListener(v -> {
+                modeHolder[0] = idx;
+                _refreshParfumModeChips(modeBtns, modeHolder[0], parfumViolet, rowFill, strokeCol, titleCol, dp);
+            });
+            modeRow.addView(chip);
+        }
+        _refreshParfumModeChips(modeBtns, modeHolder[0], parfumViolet, rowFill, strokeCol, titleCol, dp);
+        parfumPanel.addView(modeRow);
+
+        // OFF / START row
+        LinearLayout parfumActionRow = new LinearLayout(ctx);
+        parfumActionRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        TextView parfumOff = new TextView(ctx);
+        parfumOff.setText("OFF");
+        parfumOff.setAllCaps(true);
+        parfumOff.setLetterSpacing(0.06f);
+        parfumOff.setTypeface(null, Typeface.BOLD);
+        parfumOff.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        parfumOff.setGravity(Gravity.CENTER);
+        parfumOff.setPadding(0, (int) (8 * dp), 0, (int) (8 * dp));
+        parfumOff.setClickable(true);
+        parfumOff.setFocusable(true);
+        parfumOff.setEnabled(parfumActive);
+        parfumOff.setAlpha(parfumActive ? 1f : 0.4f);
+        GradientDrawable offBg = new GradientDrawable();
+        offBg.setColor(android.graphics.Color.TRANSPARENT);
+        offBg.setCornerRadius(8 * dp);
+        offBg.setStroke((int) dp, ContextCompat_getColor(R.color.status_off_red));
+        parfumOff.setBackground(offBg);
+        parfumOff.setTextColor(ContextCompat_getColor(R.color.status_off_red));
+        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        offLp.setMargins(0, 0, (int) (6 * dp), 0);
+        parfumOff.setLayoutParams(offLp);
+        parfumOff.setOnClickListener(v -> {
+            if (ctx instanceof MainActivity) {
+                MainActivity main = (MainActivity) ctx;
+                main.DATAs.sendParfumOff();
+                main._Toast("{ PARFUM OFF }");
+                main._Console(false, "►►", "PARFUM {#R}OFF{##}");
+            }
+            if (popup != null) popup.dismiss();
+        });
+        parfumActionRow.addView(parfumOff);
+
+        TextView parfumStart = new TextView(ctx);
+        parfumStart.setText("START");
+        parfumStart.setAllCaps(true);
+        parfumStart.setLetterSpacing(0.06f);
+        parfumStart.setTypeface(null, Typeface.BOLD);
+        parfumStart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        parfumStart.setTextColor(ThemeManager.getColor(ctx, R.color.wheel_label_text));
+        parfumStart.setGravity(Gravity.CENTER);
+        parfumStart.setPadding(0, (int) (8 * dp), 0, (int) (8 * dp));
+        parfumStart.setClickable(true);
+        parfumStart.setFocusable(true);
+        GradientDrawable startBg = new GradientDrawable();
+        startBg.setColor(parfumViolet);
+        startBg.setCornerRadius(8 * dp);
+        parfumStart.setBackground(startBg);
+        LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        parfumStart.setLayoutParams(startLp);
+        parfumStart.setOnClickListener(v -> {
+            if (ctx instanceof MainActivity) {
+                MainActivity main = (MainActivity) ctx;
+                _saveLastParfumSettings(minutesHolder[0], modeHolder[0]);
+                main.DATAs.sendParfum(minutesHolder[0], modeHolder[0]);
+                String modeLbl = DataSend.PARFUM_MODES[modeHolder[0]];
+                main._Toast("{ PARFUM " + minutesHolder[0] + " MIN · " + modeLbl + " }");
+                main._Console(false, "►►", "PARFUM {#G}ON{##} [{#C}" + minutesHolder[0]
+                        + " MIN{##}] {#C}" + modeLbl + "{##}");
+            }
+            if (popup != null) popup.dismiss();
+        });
+        parfumActionRow.addView(parfumStart);
+        parfumPanel.addView(parfumActionRow);
+
+        // Toggle: fade the panel in/out, flip the chevron, swap the
+        // header's corner radii so it reads as one seamless card either way.
+        parfumHeader.setOnClickListener(v -> {
+            boolean nowExpanded = !expandedHolder[0];
+            expandedHolder[0] = nowExpanded;
+            parfumChevron.animate().rotation(nowExpanded ? 180f : 0f).setDuration(150).start();
+
+            GradientDrawable headerBg2 = new GradientDrawable();
+            headerBg2.setColor(parfumFill);
+            float rr = 10 * dp;
+            headerBg2.setCornerRadii(nowExpanded
+                    ? new float[]{rr, rr, rr, rr, 0, 0, 0, 0}
+                    : new float[]{rr, rr, rr, rr, rr, rr, rr, rr});
+            headerBg2.setStroke((int) dp, parfumViolet);
+            parfumHeader.setBackground(headerBg2);
+
+            if (nowExpanded) {
+                parfumPanel.setAlpha(0f);
+                parfumPanel.setVisibility(View.VISIBLE);
+                parfumPanel.animate().alpha(1f).setDuration(150).start();
+            } else {
+                parfumPanel.animate().alpha(0f).setDuration(120)
+                        .withEndAction(() -> parfumPanel.setVisibility(View.GONE))
+                        .start();
+            }
+        });
+        // Seed the header's initial background (same corner-radius logic as the toggle above).
+        GradientDrawable initialHeaderBg = new GradientDrawable();
+        initialHeaderBg.setColor(parfumFill);
+        float initialR = 10 * dp;
+        initialHeaderBg.setCornerRadii(expandedHolder[0]
+                ? new float[]{initialR, initialR, initialR, initialR, 0, 0, 0, 0}
+                : new float[]{initialR, initialR, initialR, initialR, initialR, initialR, initialR, initialR});
+        initialHeaderBg.setStroke((int) dp, parfumViolet);
+        parfumHeader.setBackground(initialHeaderBg);
+
+        body.addView(parfumGroup);
+
         // ── CLOSE ─────────────────────────────────────────────
         TextView closeBtn = new TextView(ctx);
         closeBtn.setText("CLOSE");
@@ -368,6 +725,112 @@ public class DiffuserUsagePopup {
         }
         btn.setText("HOLD TO FORCE REFILL");
         fill.animate().scaleX(0f).setDuration(150).start();
+    }
+
+    /**
+     * Small square +/- stepper button for the Parfum minutes row - compact
+     * inline-accordion sizing (28dp, shrunk down from an earlier 32dp so
+     * the whole minus/value/plus trio takes up less room).
+     *
+     * @param label      "−" or "+".
+     * @param rowFill    Lifted surface fill colour.
+     * @param strokeCol  Border colour.
+     * @param titleCol   Glyph colour.
+     * @param dp         Display density factor.
+     * @param onTap      Fired on every tap.
+     */
+    private TextView _buildStepButton(String label, int rowFill, int strokeCol,
+                                       int titleCol, float dp, Runnable onTap) {
+        TextView tv = new TextView(ctx);
+        tv.setText(label);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextColor(ThemeManager.getColor(ctx, R.color.text_default));
+        tv.setGravity(Gravity.CENTER);
+        tv.setClickable(true);
+        tv.setFocusable(true);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(rowFill);
+        bg.setCornerRadius(6 * dp);
+        bg.setStroke((int) dp, strokeCol);
+        tv.setBackground(bg);
+        int size = (int) (28 * dp);
+        tv.setLayoutParams(new LinearLayout.LayoutParams(size, size));
+        tv.setOnClickListener(v -> onTap.run());
+        return tv;
+    }
+
+    /**
+     * Clamp + commit a new Parfum minutes value and push it into both the
+     * value display and the slider - mirrors ParfumPopup._setMinutes().
+     *
+     * @param v             Requested minutes (any int - clamped here).
+     * @param minutesHolder Single-element mutable holder for the live value.
+     * @param valueView     The minutes TextView to update.
+     * @param slider        The 1-360 SeekBar to sync.
+     */
+    private void _setParfumMinutes(int v, int[] minutesHolder, TextView valueView, SeekBar slider) {
+        minutesHolder[0] = Math.max(PARFUM_MIN_MINUTES, Math.min(PARFUM_MAX_MINUTES, v));
+        valueView.setText(String.valueOf(minutesHolder[0]));
+        slider.setProgress(minutesHolder[0] - PARFUM_MIN_MINUTES);
+    }
+
+    /**
+     * Re-paints the CONTINUOUS/10 SEC mode chips so only the selected one
+     * shows the accent fill - mirrors ParfumPopup._refreshModeButtons().
+     *
+     * @param chips       All mode chips, parallel to DataSend.PARFUM_MODES.
+     * @param selectedIdx Currently-selected index.
+     * @param accent      Selected fill/border/text colour.
+     * @param rowFill     Unselected fill colour.
+     * @param strokeCol   Unselected border colour.
+     * @param titleCol    Unselected text colour.
+     * @param dp          Display density factor.
+     */
+    private void _refreshParfumModeChips(TextView[] chips, int selectedIdx, int accent,
+                                          int rowFill, int strokeCol, int titleCol, float dp) {
+        for (int i = 0; i < chips.length; i++) {
+            boolean sel = (i == selectedIdx);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(8 * dp);
+            bg.setColor(sel ? accent : rowFill);
+            bg.setStroke((int) dp, sel ? accent : strokeCol);
+            chips[i].setBackground(bg);
+            chips[i].setTextColor(sel ? ThemeManager.getColor(ctx, R.color.wheel_label_text) : titleCol);
+        }
+    }
+
+    /**
+     * Reads the last minutes/mode actually sent via START, persisted in
+     * SharedPreferences (see PARFUM_PREFS_NAME) - falls back to
+     * PARFUM_DEFAULT_MINUTES/PARFUM_DEFAULT_MODE the very first time this
+     * has ever been opened.
+     *
+     * @return {minutes, mode}
+     */
+    private int[] _loadLastParfumSettings() {
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences(PARFUM_PREFS_NAME, Context.MODE_PRIVATE);
+        int minutes = sp.getInt(PARFUM_PREF_MINUTES, PARFUM_DEFAULT_MINUTES);
+        int mode    = sp.getInt(PARFUM_PREF_MODE, PARFUM_DEFAULT_MODE);
+        minutes = Math.max(PARFUM_MIN_MINUTES, Math.min(PARFUM_MAX_MINUTES, minutes));
+        mode    = Math.max(0, Math.min(DataSend.PARFUM_MODES.length - 1, mode));
+        return new int[]{minutes, mode};
+    }
+
+    /**
+     * Persists the minutes/mode just sent via START, so the accordion
+     * opens pre-filled with it next time (see _loadLastParfumSettings()).
+     *
+     * @param minutes  Minutes just sent.
+     * @param mode     Mode index just sent.
+     */
+    private void _saveLastParfumSettings(int minutes, int mode) {
+        ctx.getSharedPreferences(PARFUM_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(PARFUM_PREF_MINUTES, minutes)
+                .putInt(PARFUM_PREF_MODE, mode)
+                .apply();
     }
 
     /**

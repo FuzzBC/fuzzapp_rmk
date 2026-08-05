@@ -52,9 +52,54 @@
          so they stay put across any future palette change. -->
     <color name="color_transparent">#00000000</color> <!-- activity_main.xml backgrounds; bgfuzzz/app/_fuzz icon backgrounds -->
     <color name="overlay_black_19">#30000000</color>  <!-- 19% black solid overlay -->
+    <color name="overlay_black_67">#AA000000</color>  <!-- 67% black overlay - SettingsManager._optShowOverlay() dim backdrop -->
     <color name="rgb_pure_red">#FF0000</color>        <!-- __r.xml literal RGB-channel swatch -->
     <color name="rgb_pure_green">#00FF00</color>      <!-- __g.xml literal RGB-channel swatch -->
     <color name="rgb_pure_blue">#0000FF</color>       <!-- __b.xml literal RGB-channel swatch -->
+    <color name="color_pure_white">#FFFFFFFF</color>  <!-- Generic opaque white - _blend() targets, selected-ring strokes -->
+    <color name="color_pure_black">#FF000000</color>  <!-- Generic opaque black - _blend() targets, solid-fill placeholders -->
+
+    <!-- ── Adaptive ink - black or white text/stroke chosen by background
+         luminance (TestModePopup._idealInk() / BackgroundPopup._idealInk(),
+         identical in both - centralized here). Fixed values on purpose:
+         which one reads legible against a given background is a contrast
+         fact, not a theme choice. -->
+    <color name="contrast_text_dark">#FF111111</color>   <!-- ink on light/bright backgrounds -->
+    <color name="contrast_text_light">#FFF3ECE2</color>  <!-- ink on dark backgrounds -->
+
+    <!-- ── Debug / Telnet status indicators - fixed, theme-independent ──
+         terminal-style status colors for the TERM debug dropdown's
+         TELNET/MQTT LOG toggles and the diffuser Telnet pane's connection
+         state (MainActivity, TelnetConsole). -->
+    <color name="telnet_status_connected">#FF39D353</color>  <!-- console/trace ON, connected -->
+    <color name="telnet_status_error">#FFFF5F56</color>      <!-- console/trace OFF, retry, error -->
+    <color name="telnet_status_connecting">#FFB8B800</color> <!-- connecting... -->
+    <color name="telnet_status_idle">#FF666666</color>       <!-- idle / not yet enabled -->
+
+    <!-- ── Telnet/terminal console chrome - fixed, theme-independent ──
+         item_telnet_line/item_console_line row text + the DIFFUSER CONSOLE
+         floating window title bar (activity_main.xml) and its floating
+         launcher button. Terminal look on purpose - stays put across
+         palette changes, same reasoning as the status colors above. -->
+    <color name="terminal_text_default">#C8D8C8</color>     <!-- item_telnet_line row text -->
+    <color name="terminal_timestamp_color">#5F5E5A</color>  <!-- console_line_time; matches ConsoleAdapter.C_MUTED -->
+    <color name="terminal_src_tag_color">#888780</color>    <!-- console_line_src, e.g. "[APP]" -->
+    <color name="terminal_accent_cyan">#8BE9FD</color>      <!-- DIFFUSER CONSOLE title + _telnet_fab glyph -->
+    <color name="terminal_close_red">#E06666</color>        <!-- _telnet_close "✕" -->
+    <color name="terminal_label_green_grey">#9AA79A</color> <!-- "TELNET ─ DIFFUSER" pane label -->
+
+    <!-- Telnet/terminal window chrome (drawables) - same fixed-theme
+         rationale as the text colors above. -->
+    <color name="terminal_window_fill">#F20A0D13</color>     <!-- _telnet_fab_bg / _telnet_window_bg solid fill -->
+    <color name="terminal_fab_ring">#708BE9FD</color>        <!-- _telnet_fab_bg stroke - terminal_accent_cyan at ~44% -->
+    <color name="terminal_titlebar_fill">#16202B</color>     <!-- _telnet_titlebar_bg solid fill -->
+    <color name="terminal_window_stroke">#3D4FD6BE</color>   <!-- _telnet_window_bg soft teal edge stroke -->
+    <color name="terminal_panel_fill">#E6070B0D</color>      <!-- _terminal_panel near-black translucent fill -->
+    <color name="terminal_panel_stroke">#33FFFFFF</color>    <!-- _terminal_panel subtle white stroke, ~20% -->
+    <color name="glow_accent_halo">#40D9883C</color>         <!-- _divider_glow_halo baked gradient - skbar_settings_title at ~25% -->
+
+    <color name="color_danger_soft">#FFF0918B</color>        <!-- TestModePopup destructive-action tint - theme-independent on purpose -->
+    <color name="update_filled_btn_text">#FF14181D</color>   <!-- UpdatePopup._filledButton() text -->
 
     <!-- ── Text ─────────────────────────────────────────────────── -->
     <color name="text_muted_grey">#B3A089</color>    <!-- SAVE DUAL COLORS label, on/off/dot indicators, lay_debug_item -->
@@ -64,6 +109,21 @@
     <!-- ── Shadows / glow ───────────────────────────────────────── -->
     <color name="text_glow_shadow">#FFAA00</color> <!-- text shadowColor on color input fields -->
     <color name="text_shadow_dark">#180D06</color>  <!-- text shadowColor -->
+
+    <!-- ── Connect-status label effects (MainActivity) ─────────────
+         Neon flicker while connected reuses text_default - see
+         _NeonFlickerON(). The scanline reuses status_off_red (same
+         "trouble" hue as everywhere else) while NOT connected - only
+         the dim track needs its own entry. -->
+    <color name="connect_scanline_track">#332A18</color> <!-- _connectinfo_scanline dim background bar -->
+
+    <!-- ── Home-screen widgets (FuzzWidgetProvider/FuzzWidgetStackProvider) ──
+         Plain white, not the amber text_default: both widgets sit on a
+         transparent background over whatever wallpaper is behind them,
+         so legibility against an arbitrary photo matters more here than
+         matching the in-app theme. -->
+    <color name="widget_text_color">#FFFFFFFF</color>
+    <color name="widget_text_shadow">#CC000000</color> <!-- widget TextView shadowColor - keeps white text legible over a bright/busy wallpaper -->
 
     <!-- ── Sensor status-strip icon tints ──────────────────────────
          Hue still carries meaning (warm=temp, cool=humidity) even

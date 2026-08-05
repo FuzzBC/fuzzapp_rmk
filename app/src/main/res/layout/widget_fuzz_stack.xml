@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1x4 home-screen widget: temp / hum / diffuser refill %, one row under
+     another. Connection icon (local WiFi vs MQTT cloud) sits top-right,
+     refresh button right under it; last-refresh time sits under the
+     diffuser row. Diffuser icon color + text switch (violet%/blue
+     no-water/red REF) at runtime in FuzzWidgetStackProvider.buildViews().
+     Every icon is a small FrameLayout: a dim offset copy behind the real
+     one fakes a soft drop shadow (see widget_fuzz_strip.xml's doc comment
+     for why a real shadowLayer/elevation isn't an option here).
+     RemoteViews only - FrameLayout/LinearLayout/TextView/ImageView. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_stack_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="26dp"
+                android:layout_height="26dp">
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginTop="1dp"
+                    android:src="@drawable/temp"
+                    android:tint="@color/widget_text_shadow" />
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:src="@drawable/temp"
+                    android:tint="@color/icon_tint_temperature" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/widget_stack_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="--°"
+                android:textColor="@color/widget_text_color"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="26dp"
+                android:layout_height="26dp">
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginTop="1dp"
+                    android:src="@drawable/hum"
+                    android:tint="@color/widget_text_shadow" />
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:src="@drawable/hum"
+                    android:tint="@color/icon_tint_humidity" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/widget_stack_hum"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="--%"
+                android:textColor="@color/widget_text_color"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+        </LinearLayout>
+
+        <!-- Diffuser row + last-refresh time right under it. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="26dp"
+                    android:layout_height="26dp">
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_marginStart="1dp"
+                        android:layout_marginTop="1dp"
+                        android:src="@drawable/_info_diffuser"
+                        android:tint="@color/widget_text_shadow" />
+
+                    <ImageView
+                        android:id="@+id/widget_stack_diffuser_icon"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:src="@drawable/_info_diffuser"
+                        android:tint="@color/status_parfum_violet" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/widget_stack_diffuser"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="--%"
+                    android:textColor="@color/widget_text_color"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:shadowColor="@color/widget_text_shadow"
+                    android:shadowDx="0"
+                    android:shadowDy="1"
+                    android:shadowRadius="3" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/widget_stack_last_update"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="28dp"
+                android:layout_marginTop="2dp"
+                android:text="--:--"
+                android:textColor="@color/widget_text_color"
+                android:textSize="10sp"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Connection icon + refresh button, stacked in the top-right corner. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="6dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <FrameLayout
+            android:layout_width="19dp"
+            android:layout_height="19dp">
+
+            <ImageView
+                android:id="@+id/widget_stack_conn_icon_shadow"
+                android:layout_width="19dp"
+                android:layout_height="19dp"
+                android:layout_marginStart="1dp"
+                android:layout_marginTop="1dp"
+                android:src="@drawable/ic_wifi_4"
+                android:tint="@color/widget_text_shadow" />
+
+            <ImageView
+                android:id="@+id/widget_stack_conn_icon"
+                android:layout_width="19dp"
+                android:layout_height="19dp"
+                android:src="@drawable/ic_wifi_4"
+                android:tint="@color/widget_text_color" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:layout_width="19dp"
+            android:layout_height="19dp"
+            android:layout_marginTop="8dp">
+
+            <ImageView
+                android:layout_width="19dp"
+                android:layout_height="19dp"
+                android:layout_marginStart="1dp"
+                android:layout_marginTop="1dp"
+                android:src="@drawable/ic_widget_refresh"
+                android:tint="@color/widget_text_shadow" />
+
+            <ImageView
+                android:id="@+id/widget_stack_refresh_btn"
+                android:layout_width="19dp"
+                android:layout_height="19dp"
+                android:src="@drawable/ic_widget_refresh"
+                android:tint="@color/widget_text_color" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

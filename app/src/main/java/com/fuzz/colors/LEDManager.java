@@ -45,6 +45,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
@@ -54,14 +56,19 @@ import android.text.InputType;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.style.ForegroundColorSpan;
-import android.view.LayoutInflater;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.ScrollView;
 import android.widget.TextView;
-
-import androidx.appcompat.app.AlertDialog;
 
 import com.flask.colorpicker.ColorPickerView;
 import com.flask.colorpicker.builder.ColorPickerDialogBuilder;
@@ -110,8 +117,14 @@ public class LEDManager {
      */
     public final float DUAL_BTN_SPLIT_ANGLE_DEG = 15f;
 
-    /** Diameter (dp) of each circular swatch in LED_BTN_DualColor[]. */
-    public final int DUAL_BTN_SIZE_DP = 48;
+    /** Diameter (dp) of each saved-pair circular swatch in the grid (index 1..N). */
+    public final int DUAL_BTN_SIZE_DP = 56;
+
+    /** Diameter (dp) of the RANDOM button (index 0) - bigger, it's the one hero action up top. */
+    public final int DUAL_BTN_RANDOM_SIZE_DP = 72;
+
+    /** Saved-pair swatches per row in the popup's grid. */
+    public final int DUAL_BTN_GRID_COLUMNS = 3;
 
     // --------------------------------------------------------
     // Channel index helpers
@@ -187,12 +200,19 @@ public class LEDManager {
     public Button[] LED_BTN_DualColor   = new Button[LED_TOTAL];
 
     /**
-     * Root container inside the currently-open Dual Color popup
-     * (lay_dual_color_popup.xml's _dual_buttons), or null while the popup is
-     * closed. _dualColorCreate() only rebuilds the button row when this is
-     * non-null - see showDualColorPopup().
+     * Root container for the SAVED-pairs grid inside the currently-open Dual
+     * Color popup - one child row per 3 swatches, built entirely in Java
+     * (see showDualColorPopup(), same "card language" as ParfumPopup /
+     * TestModePopup / DiffuserUsagePopup - no XML layout file). Null while
+     * the popup is closed; _dualColorCreate() only rebuilds when non-null.
      */
     private LinearLayout dualColorPopupContainer = null;
+
+    /** Slot the RANDOM button (index 0) is injected into (the innermost ring of the glow stack), or null while closed. */
+    private FrameLayout dualColorRandomSlot = null;
+
+    /** The currently-open Dual Color popup, or null while closed. */
+    private PopupWindow dualColorPopup = null;
 
     /** Deselects all LEDs */
     public Button LED_BTN_DeselectALL;
@@ -726,132 +746,364 @@ public class LEDManager {
     }
 
     /**
-     * Rebuild the horizontal row of dual-colour buttons from
-     * LED_DualColorList.  Button 0 is always the random button.
-     * Buttons 1..N are the saved pairs, shown in reverse order
-     * (newest first).
+     * Rebuild the Dual Color popup's two sections from LED_DualColorList:
+     *   - RANDOM (index 0), injected into dualColorRandomSlot - one big
+     *     venn-mode button, always on top since it's the primary action.
+     *   - SAVED pairs (index 1..N), injected into dualColorPopupContainer
+     *     as a grid of DUAL_BTN_GRID_COLUMNS-per-row, newest first. Shows
+     *     a muted placeholder line instead of an empty grid when the list
+     *     is empty.
      *
-     * No-op while the Dual Color popup is closed (dualColorPopupContainer ==
-     * null) - there's nothing to render into. showDualColorPopup() calls
-     * this again right after inflating, so the row is always fresh the
+     * No-op while the Dual Color popup is closed (either container == null)
+     * - there's nothing to render into. showDualColorPopup() calls this
+     * again right after inflating, so both sections are always fresh the
      * moment the popup opens; add/delete calls it too, but only have a
      * visible effect while the popup is open (harmless otherwise).
      */
     private void _dualColorCreate() {
-        if (dualColorPopupContainer == null) return;
-        LinearLayout layout = dualColorPopupContainer;
-        layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.removeAllViews();
+        if (dualColorPopupContainer == null || dualColorRandomSlot == null) return;
 
         float dp = Main.getResources().getDisplayMetrics().density;
-        int   sizePx   = (int) (DUAL_BTN_SIZE_DP * dp);
-        int   marginPx = (int) (6 * dp);
+        int strokeColor = ThemeManager.getColor(Main, R.color.stroke_line_color);
+
+        // ---- RANDOM (index 0) --------------------------------------------
+        dualColorRandomSlot.removeAllViews();
+
+        int randSizePx = (int) (DUAL_BTN_RANDOM_SIZE_DP * dp);
+        Button randBtn = new Button(Main);
+        randBtn.setId(0);
+        LED_BTN_DualColor[0] = randBtn;
+
+        DualColorDrawable randDr = new DualColorDrawable(DUAL_BTN_SPLIT_ANGLE_DEG);
+        randDr.setStroke(2.5f * dp, strokeColor);
+        // Venn pair, not a split circle - the only non-solid button in the
+        // popup, so it reads as "two colours, randomized" with no label needed.
+        randDr.setVennMode(true);
+        randBtn.setBackground(randDr);
+        reloadRandDualColor();
+
+        FrameLayout.LayoutParams randParams = new FrameLayout.LayoutParams(randSizePx, randSizePx);
+        dualColorRandomSlot.addView(randBtn, randParams);
+
+        // Long-click: hand-dial the random pair on the colour wheel.
+        randBtn.setOnLongClickListener(v -> {
+            _openRandColorWheel(randBtn, randDr);
+            return true;
+        });
+        // Click: send the current random pair, then smoothly morph the
+        // swatch to a freshly-rolled one (see _smoothRerollRandDualColor())
+        // instead of reloadRandDualColor()'s instant snap.
+        randBtn.setOnClickListener(v -> {
+            if (STS.isAmbilightOn()) {
+                Main._Toast("{ AMBILIGHT ON }");
+                return;
+            }
+            int[] rgbL = _hexToRgb(LED_RandDualColor.substring(0, 6));
+            int[] rgbR = _hexToRgb(LED_RandDualColor.substring(6, 12));
+            DATAs.sendDualColor(rgbL[_R], rgbL[_G], rgbL[_B], rgbR[_R], rgbR[_G], rgbR[_B]);
+            Main._Toast("[RANDOM DUAL COLOR]");
+            _smoothRerollRandDualColor(randDr);
+            _deselectAll();
+        });
+
+        // ---- SAVED pairs (index 1..N): 3-per-row grid, newest first ------
+        LinearLayout rowsHost = dualColorPopupContainer;
+        rowsHost.removeAllViews();
 
         int listSize = LED_DualColorList.size();
 
-        for (int i = 0; i <= listSize; i++) {
-            final int i_   = i;
-            // REVERSE index: newest colour appears closest to index 0
+        if (listSize == 0) {
+            TextView empty = new TextView(Main);
+            empty.setText("No saved pairs yet - long-press RANDOM to hand-dial one.");
+            empty.setTextColor(ThemeManager.getColor(Main, R.color.text_muted_grey));
+            empty.setTextSize(10);
+            empty.setAlpha(0.8f);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, (int) (4 * dp), 0, (int) (10 * dp));
+            rowsHost.addView(empty);
+            return;
+        }
+
+        int sizePx   = (int) (DUAL_BTN_SIZE_DP * dp);
+        int rowGapPx = (int) (8 * dp);
+        int cols     = DUAL_BTN_GRID_COLUMNS;
+
+        LinearLayout currentRow = null;
+
+        for (int i = 1; i <= listSize; i++) {
+            final int i_ = i;
+            // REVERSE index: newest colour appears first in the grid
             final int listIndex = listSize - i;
 
-            // Fixed square so the oval drawable below actually renders as
-            // a circle, not a stretched pill like the old MATCH_PARENT width.
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    sizePx, sizePx);
-            params.setMarginEnd(marginPx);
-
-            LED_BTN_DualColor[i] = new Button(Main);
-            LED_BTN_DualColor[i].setId(i);
-
-            DualColorDrawable dr = new DualColorDrawable(DUAL_BTN_SPLIT_ANGLE_DEG);
-            dr.setStroke(2 * dp, ThemeManager.getColor(Main, R.color.stroke_line_color));
-            LED_BTN_DualColor[i].setBackground(dr);
-
-            if (i > 0) {
-                // Saved pair: split colour
-                String[] cols = LED_DualColorList.get(listIndex).split("\\.");
-                int c1 = Color.parseColor("#" + cols[0]);
-                int c2 = Color.parseColor("#" + cols[1]);
-                dr.setColors(c1, c2);
-            } else {
-                // Random button: venn pair, not a split circle - the only
-                // non-solid button in the row, so it reads as "two colours,
-                // randomized" with no label needed.
-                dr.setVennMode(true);
-                reloadRandDualColor();
+            if ((i - 1) % cols == 0) {
+                currentRow = new LinearLayout(Main);
+                currentRow.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                if (i > 1) rowParams.topMargin = rowGapPx;
+                rowsHost.addView(currentRow, rowParams);
             }
 
-            layout.addView(LED_BTN_DualColor[i], params);
+            // Equal-width cell so the row reads as a real 3-column grid at
+            // any dialog width, with the fixed-size circular swatch
+            // centred inside it (a 0dp/weight=1 Button would stretch the
+            // DualColorDrawable into an oval instead of a circle).
+            FrameLayout cell = new FrameLayout(Main);
+            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            currentRow.addView(cell, cellParams);
 
-            // Long-click: delete this entry (1..N), or open the colour
-            // wheel to hand-dial the random pair (button 0)
-            LED_BTN_DualColor[i].setOnLongClickListener(v -> {
-                if (i_ != 0) {
-                    LED_DualColorList.remove(listIndex);
-                    Main._Toast("[DELETED]");
-                    _dualColorSave();
-                    _dualColorCreate();
-                } else {
-                    _openRandColorWheel(LED_BTN_DualColor[0], dr);
-                }
+            Button btn = new Button(Main);
+            btn.setId(i);
+            LED_BTN_DualColor[i] = btn;
+
+            DualColorDrawable dr = new DualColorDrawable(DUAL_BTN_SPLIT_ANGLE_DEG);
+            dr.setStroke(2 * dp, strokeColor);
+            String[] pair = LED_DualColorList.get(listIndex).split("\\.");
+            int c1 = Color.parseColor("#" + pair[0]);
+            int c2 = Color.parseColor("#" + pair[1]);
+            dr.setColors(c1, c2);
+            btn.setBackground(dr);
+
+            FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(sizePx, sizePx);
+            btnParams.gravity = Gravity.CENTER;
+            cell.addView(btn, btnParams);
+
+            // Long-click: delete this saved entry.
+            btn.setOnLongClickListener(v -> {
+                LED_DualColorList.remove(listIndex);
+                Main._Toast("[DELETED]");
+                _dualColorSave();
+                _dualColorCreate();
                 return true;
             });
 
-            // Click: apply this dual colour via UDP
-            LED_BTN_DualColor[i].setOnClickListener(v -> {
+            // Click: apply this saved pair via UDP.
+            btn.setOnClickListener(v -> {
                 if (STS.isAmbilightOn()) {
                     Main._Toast("{ AMBILIGHT ON }");
                     return;
                 }
-                if (i_ != 0) {
-                    // Saved pair
-                    String[] sp2 = LED_DualColorList.get(listIndex).split("\\.");
-                    DATAs.sendDualColor(
-                        Integer.parseInt(sp2[0].substring(0, 2), 16),
-                        Integer.parseInt(sp2[0].substring(2, 4), 16),
-                        Integer.parseInt(sp2[0].substring(4, 6), 16),
-                        Integer.parseInt(sp2[1].substring(0, 2), 16),
-                        Integer.parseInt(sp2[1].substring(2, 4), 16),
-                        Integer.parseInt(sp2[1].substring(4, 6), 16));
-                    Main._Toast("[DUAL COLOR " + i_ + "]");
-                } else {
-                    // Random
-                    int[] rgbL = _hexToRgb(LED_RandDualColor.substring(0, 6));
-                    int[] rgbR = _hexToRgb(LED_RandDualColor.substring(6, 12));
-                    DATAs.sendDualColor(
-                            rgbL[_R], rgbL[_G], rgbL[_B],
-                            rgbR[_R], rgbR[_G], rgbR[_B]);
-                    Main._Toast("[RANDOM DUAL COLOR]");
-                    reloadRandDualColor();
-                }
+                String[] sp2 = LED_DualColorList.get(listIndex).split("\\.");
+                DATAs.sendDualColor(
+                    Integer.parseInt(sp2[0].substring(0, 2), 16),
+                    Integer.parseInt(sp2[0].substring(2, 4), 16),
+                    Integer.parseInt(sp2[0].substring(4, 6), 16),
+                    Integer.parseInt(sp2[1].substring(0, 2), 16),
+                    Integer.parseInt(sp2[1].substring(2, 4), 16),
+                    Integer.parseInt(sp2[1].substring(4, 6), 16));
+                Main._Toast("[DUAL COLOR " + i_ + "]");
                 _deselectAll();
             });
         }
+
+        // Pad a partial last row with empty weighted cells so its swatches
+        // stay left-aligned at the same column width as full rows, instead
+        // of stretching to fill the leftover space.
+        if (currentRow != null) {
+            int remainder = listSize % cols;
+            if (remainder != 0) {
+                for (int pad = 0; pad < cols - remainder; pad++) {
+                    View spacer = new View(Main);
+                    LinearLayout.LayoutParams spacerParams = new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    currentRow.addView(spacer, spacerParams);
+                }
+            }
+        }
     }
 
+    /** Fixed card width (dp) - wide enough for a comfortable 3-column swatch grid, same convention as ParfumPopup.CARD_WIDTH_DP. */
+    private static final int DUAL_POPUP_CARD_WIDTH_DP = 300;
+
+    /** Backdrop dim amount behind the card - matches ParfumPopup/TestModePopup/DiffuserUsagePopup. */
+    private static final float DUAL_POPUP_DIM_AMOUNT = 0.45f;
+
     /**
-     * Show the Dual Color popup (lay_dual_color_popup.xml) - the random-pair
-     * button plus every saved pair, exactly what used to sit inline in the
-     * bottom bar (see MainActivity._Init_PageButtons()'s doc comment for why
-     * that row moved here: the footer is now a single compact DUAL COLOR
-     * trigger + TERM/LEDS/SET, not a horizontally-scrolling swatch strip).
+     * Show the Dual Color popup - the random-pair spotlight button plus
+     * every saved pair, exactly what used to sit inline in the bottom bar
+     * (see MainActivity._Init_PageButtons()'s doc comment for why that row
+     * moved here). Built entirely in Java, no XML layout file - same
+     * "accent header bar on a rounded card" language as ParfumPopup /
+     * TestModePopup / DiffuserUsagePopup, so it finally looks like it
+     * belongs with the rest of the app instead of the old plain
+     * dots+strip AlertDialog it used to be.
      *
      * Called by: MainActivity, the "DUAL COLOR" button's click listener.
      */
     public void showDualColorPopup() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(Main);
-        LayoutInflater inflater = Main.getLayoutInflater();
-        View view = inflater.inflate(R.layout.lay_dual_color_popup, null);
-        builder.setView(view);
+        float dp = Main.getResources().getDisplayMetrics().density;
+        int accentBg  = ThemeManager.getColor(Main, R.color.tab_active_tint);
+        int titleCol  = ThemeManager.getColor(Main, R.color.skbar_settings_title);
+        int cardBgCol = ThemeManager.getColor(Main, R.color.skbar_whole_settings);
+        int strokeCol = ThemeManager.getColor(Main, R.color.stroke_line_color);
+        int mutedCol  = ThemeManager.getColor(Main, R.color.text_muted_grey);
 
-        ThemeManager.tintFrameStroke(Main, view, R.color.stroke_line_color);
+        LinearLayout card = new LinearLayout(Main);
+        card.setOrientation(LinearLayout.VERTICAL);
 
-        dualColorPopupContainer = view.findViewById(R.id._dual_buttons);
-        _dualColorCreate();   // populate immediately - container is non-null now
+        // ── Accent header bar (rounded top corners matching the card) ──
+        TextView header = new TextView(Main);
+        header.setText("DUAL COLOR");
+        header.setAllCaps(true);
+        header.setLetterSpacing(0.14f);
+        header.setTypeface(null, Typeface.BOLD);
+        header.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        header.setTextColor(titleCol);
+        header.setGravity(Gravity.CENTER);
+        header.setPadding(0, (int) (12 * dp), 0, (int) (12 * dp));
+        GradientDrawable headerBg = new GradientDrawable();
+        headerBg.setColor(accentBg);
+        float cardRadius = 16 * dp;
+        headerBg.setCornerRadii(new float[]{cardRadius, cardRadius, cardRadius, cardRadius, 0, 0, 0, 0});
+        header.setBackground(headerBg);
+        card.addView(header);
 
-        AlertDialog dialog = builder.create();
-        dialog.setOnDismissListener(d -> dualColorPopupContainer = null);
-        dialog.show();
+        // ── Body ─────────────────────────────────────────────
+        LinearLayout body = new LinearLayout(Main);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding((int) (14 * dp), (int) (14 * dp), (int) (14 * dp), (int) (10 * dp));
+
+        // RANDOM spotlight: two flat, static glow rings (no real blur -
+        // minSdk 21 predates RenderEffect) behind the live venn button,
+        // fading outward from the theme accent.
+        LinearLayout randomSection = new LinearLayout(Main);
+        randomSection.setOrientation(LinearLayout.VERTICAL);
+        randomSection.setGravity(Gravity.CENTER_HORIZONTAL);
+        randomSection.setPadding(0, 0, 0, (int) (8 * dp));
+
+        int glowOuterPx = (int) (98 * dp);
+        int glowInnerPx = (int) (84 * dp);
+        int randomBtnPx = (int) (DUAL_BTN_RANDOM_SIZE_DP * dp);
+
+        FrameLayout glowSlot = new FrameLayout(Main);
+        glowSlot.setLayoutParams(new LinearLayout.LayoutParams(glowOuterPx, glowOuterPx));
+
+        View ringOuter = new View(Main);
+        GradientDrawable ringOuterBg = new GradientDrawable();
+        ringOuterBg.setShape(GradientDrawable.OVAL);
+        ringOuterBg.setColor(_withAlpha(titleCol, 0.10f));
+        ringOuter.setBackground(ringOuterBg);
+        FrameLayout.LayoutParams ringOuterLp = new FrameLayout.LayoutParams(glowOuterPx, glowOuterPx);
+        ringOuterLp.gravity = Gravity.CENTER;
+        glowSlot.addView(ringOuter, ringOuterLp);
+
+        View ringInner = new View(Main);
+        GradientDrawable ringInnerBg = new GradientDrawable();
+        ringInnerBg.setShape(GradientDrawable.OVAL);
+        ringInnerBg.setColor(_withAlpha(titleCol, 0.18f));
+        ringInner.setBackground(ringInnerBg);
+        FrameLayout.LayoutParams ringInnerLp = new FrameLayout.LayoutParams(glowInnerPx, glowInnerPx);
+        ringInnerLp.gravity = Gravity.CENTER;
+        glowSlot.addView(ringInner, ringInnerLp);
+
+        dualColorRandomSlot = new FrameLayout(Main); // the live button (built in _dualColorCreate()) lands in here
+        FrameLayout.LayoutParams randomSlotLp = new FrameLayout.LayoutParams(randomBtnPx, randomBtnPx);
+        randomSlotLp.gravity = Gravity.CENTER;
+        glowSlot.addView(dualColorRandomSlot, randomSlotLp);
+
+        randomSection.addView(glowSlot);
+
+        TextView randomLabel = new TextView(Main);
+        randomLabel.setText("RANDOM");
+        randomLabel.setAllCaps(true);
+        randomLabel.setLetterSpacing(0.12f);
+        randomLabel.setTypeface(null, Typeface.BOLD);
+        randomLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        randomLabel.setTextColor(titleCol);
+        randomLabel.setPadding(0, (int) (8 * dp), 0, 0);
+        randomSection.addView(randomLabel);
+
+        TextView randomHint = new TextView(Main);
+        randomHint.setText("tap to send · long-press to hand-dial");
+        randomHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+        randomHint.setTextColor(mutedCol);
+        randomHint.setAlpha(0.8f);
+        randomHint.setPadding(0, (int) (3 * dp), 0, 0);
+        randomSection.addView(randomHint);
+
+        body.addView(randomSection);
+
+        View divider = new View(Main);
+        divider.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (int) (1 * dp)));
+        divider.setBackgroundColor(strokeCol);
+        body.addView(divider);
+
+        TextView savedCaption = new TextView(Main);
+        savedCaption.setText("SAVED PAIRS");
+        savedCaption.setAllCaps(true);
+        savedCaption.setLetterSpacing(0.12f);
+        savedCaption.setTypeface(null, Typeface.BOLD);
+        savedCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        savedCaption.setTextColor(titleCol);
+        savedCaption.setAlpha(0.75f);
+        savedCaption.setPadding((int) (2 * dp), (int) (10 * dp), 0, (int) (6 * dp));
+        body.addView(savedCaption);
+
+        ScrollView scroll = new ScrollView(Main);
+        dualColorPopupContainer = new LinearLayout(Main);
+        dualColorPopupContainer.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(dualColorPopupContainer, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        body.addView(scroll);
+
+        card.addView(body);
+
+        // ── Card frame ───────────────────────────────────────
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(cardBgCol);
+        cardBg.setCornerRadius(cardRadius);
+        cardBg.setStroke((int) (1 * dp), strokeCol);
+        card.setBackground(cardBg);
+        card.setClipToOutline(true);
+
+        _dualColorCreate();   // populate immediately - both containers are non-null now
+
+        int widthPx = (int) (DUAL_POPUP_CARD_WIDTH_DP * dp);
+        dualColorPopup = new PopupWindow(card, widthPx, LinearLayout.LayoutParams.WRAP_CONTENT, true);
+        dualColorPopup.setOutsideTouchable(true);
+        dualColorPopup.setFocusable(true);
+        dualColorPopup.setBackgroundDrawable(new ColorDrawable(0));
+        dualColorPopup.setElevation(16 * dp);
+        dualColorPopup.showAtLocation(Main.findViewById(android.R.id.content), Gravity.CENTER, 0, 0);
+        dualColorPopup.setOnDismissListener(() -> {
+            dualColorPopupContainer = null;
+            dualColorRandomSlot = null;
+            dualColorPopup = null;
+        });
+
+        _dualColorDimBehind(dualColorPopup);
+        _dualColorAnimateIn(card);
+    }
+
+    /** Returns color with its alpha channel replaced (0-1 fraction), same trick used for the RANDOM button's static glow rings. */
+    private int _withAlpha(int color, float alphaFraction) {
+        int alpha = Math.round(255 * alphaFraction);
+        return (color & 0x00FFFFFF) | (alpha << 24);
+    }
+
+    /** Dim the window behind the popup card (dialog-style backdrop) - same helper every other popup class in this app duplicates locally. */
+    private void _dualColorDimBehind(PopupWindow p) {
+        View root = p.getContentView().getRootView();
+        WindowManager wm = (WindowManager) Main.getSystemService(Context.WINDOW_SERVICE);
+        if (wm == null || !(root.getLayoutParams() instanceof WindowManager.LayoutParams)) return;
+        WindowManager.LayoutParams lp = (WindowManager.LayoutParams) root.getLayoutParams();
+        lp.flags |= WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+        lp.dimAmount = DUAL_POPUP_DIM_AMOUNT;
+        wm.updateViewLayout(root, lp);
+    }
+
+    /** Dialog-style entrance: quick scale-up + fade-in of the card. */
+    private void _dualColorAnimateIn(View card) {
+        card.setScaleX(0.88f);
+        card.setScaleY(0.88f);
+        card.setAlpha(0f);
+        card.animate()
+            .scaleX(1f).scaleY(1f).alpha(1f)
+            .setDuration(160)
+            .setInterpolator(new DecelerateInterpolator())
+            .start();
     }
 
     /**
@@ -892,9 +1144,13 @@ public class LEDManager {
      * hitting SPIN updates the button LIVE (via dr.setColors, same drawable
      * instance the button is already showing). Closing the popup - whether
      * by tapping outside or hitting SET - commits the final pair to
-     * LED_RandDualColor, sends it over UDP exactly like a normal tap would,
-     * then rerolls for next time - same "tap = send" contract, just
-     * hand-dialled instead of purely random.
+     * LED_RandDualColor and sends it over UDP exactly like a normal tap
+     * would. Unlike a normal tap, it does NOT reroll afterward - a manual
+     * pick is a deliberate choice, so it stays showing on the button
+     * (and stays what the NEXT plain tap would resend) until the user
+     * taps for a fresh random one themselves. Previously this rerolled
+     * immediately, silently discarding whatever colour you'd just hand-
+     * dialled the moment you set it - fixed.
      */
     private void _openRandColorWheel(Button anchor, DualColorDrawable dr) {
         int[] rgbL = _hexToRgb(LED_RandDualColor.substring(0, 6));
@@ -915,9 +1171,53 @@ public class LEDManager {
                     int[] R = _hexToRgb(LED_RandDualColor.substring(6, 12));
                     DATAs.sendDualColor(L[_R], L[_G], L[_B], R[_R], R[_G], R[_B]);
                     Main._Toast("[RANDOM DUAL COLOR]");
-                    reloadRandDualColor();
                     _deselectAll();
                 });
+    }
+
+    /** Duration (ms) for the popup's RANDOM swatch to smoothly morph to a freshly-rolled pair after a tap-to-send. */
+    private static final int DUAL_RANDOM_REROLL_MS = 550;
+
+    /**
+     * Smoothly cross-fades the popup's RANDOM swatch from whatever it's
+     * currently showing to a freshly-rolled pair, instead of
+     * reloadRandDualColor()'s instant snap. One-shot (not a loop, unlike
+     * BTN_DualColorOpen's endless drift on the footer) - this only ever
+     * changes in response to a tap. Same HSV recipe as reloadRandDualColor()
+     * (high saturation/brightness, 120-180 degree complementary offset).
+     *
+     * Called by: the popup RANDOM button's click handler only - hand-
+     * dialling (_openRandColorWheel) deliberately does NOT reroll after
+     * SET, so it never calls this.
+     *
+     * @param dr  The random swatch's live drawable (LED_BTN_DualColor[0]'s background).
+     */
+    private void _smoothRerollRandDualColor(DualColorDrawable dr) {
+        int[] fromRgbL = _hexToRgb(LED_RandDualColor.substring(0, 6));
+        int[] fromRgbR = _hexToRgb(LED_RandDualColor.substring(6, 12));
+        int fromC1 = Color.rgb(fromRgbL[_R], fromRgbL[_G], fromRgbL[_B]);
+        int fromC2 = Color.rgb(fromRgbR[_R], fromRgbR[_G], fromRgbR[_B]);
+
+        Random rnd    = new Random();
+        float  hue1   = rnd.nextFloat() * 360f;
+        float  offset = 120f + (rnd.nextFloat() * 60f);
+        float  hue2   = (hue1 + offset) % 360f;
+        int toC1 = Color.HSVToColor(new float[]{hue1, 0.85f, 0.9f});
+        int toC2 = Color.HSVToColor(new float[]{hue2, 0.85f, 0.9f});
+
+        LED_RandDualColor = String.format("%06X%06X", toC1 & 0xFFFFFF, toC2 & 0xFFFFFF);
+
+        ArgbEvaluator eval = new ArgbEvaluator();
+        ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+        anim.setDuration(DUAL_RANDOM_REROLL_MS);
+        anim.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        anim.addUpdateListener(a -> {
+            float f = (float) a.getAnimatedValue();
+            int c1 = (int) eval.evaluate(f, fromC1, toC1);
+            int c2 = (int) eval.evaluate(f, fromC2, toC2);
+            dr.setColors(c1, c2);
+        });
+        anim.start();
     }
 
     /**

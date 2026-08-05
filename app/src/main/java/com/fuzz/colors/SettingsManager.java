@@ -243,6 +243,9 @@ public class SettingsManager {
     /** Scroll wrapper around the TestMode chip row – GONE until user taps _testModeLabel */
 
 
+    /** Opens the read-only button guide (tap/hold reference for every button in the app) */
+    public Button SET_BTN_Info;
+
     /** Resets all settings to their default values */
     public Button SET_BTN_Default;
 
@@ -354,6 +357,7 @@ public class SettingsManager {
     // View binding
     // --------------------------------------------------------
     private void _bindViews() {
+        SET_BTN_Info          = Main.findViewById(R.id._btn_setting_info);
         SET_BTN_Default       = Main.findViewById(R.id._btn_setting_default);
         SET_BTN_EnableDisable = Main.findViewById(R.id._btn_en_dis);
         SET_BTN_Theme         = Main.findViewById(R.id._btn_theme);
@@ -1374,7 +1378,7 @@ public class SettingsManager {
      */
     private void _optShowOverlay(View card, int widthPx) {
         android.widget.FrameLayout root = new android.widget.FrameLayout(Main);
-        root.setBackgroundColor(0xAA000000);
+        root.setBackgroundColor(ThemeManager.getColor(Main, R.color.overlay_black_67));
 
         android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
                 widthPx, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.CENTER);
@@ -1621,6 +1625,10 @@ public class SettingsManager {
      */
     private void _setupButtons() {
 
+        // ── Info (button tap/hold reference) ────────────────
+        SET_BTN_Info.setTextColor(ThemeManager.getColor(Main, R.color.skbar_settings_title));
+        SET_BTN_Info.setOnClickListener(v -> new ButtonGuidePopup(Main).show(SET_BTN_Info));
+
         // ── Default (reset all settings) - press & hold to confirm ──
         SET_BTN_Default.setTextColor(ThemeManager.getColor(Main, R.color.text_default));
         SET_BTN_Default.setOnClickListener(v ->
@@ -1853,6 +1861,7 @@ public class SettingsManager {
     /** Exact, non-animated repaint of every themed view - the single source of correctness. */
     private void _repaintFullTheme() {
         // Buttons
+        SET_BTN_Info.setTextColor(ThemeManager.getColor(Main, R.color.skbar_settings_title));
         SET_BTN_Default.setTextColor(ThemeManager.getColor(Main, R.color.text_default));
         SET_BTN_Theme.setTextColor(ThemeManager.getColor(Main, R.color.skbar_settings_title));
         updateEnableDisableButton(STS.isEnabled());
@@ -1893,6 +1902,7 @@ public class SettingsManager {
      * @param activeBg  blended tab_active_tint color for this frame
      */
     private void _paintAccentBlend(int accent, int activeBg) {
+        if (SET_BTN_Info != null) SET_BTN_Info.setTextColor(accent);
         if (SET_BTN_Theme != null) SET_BTN_Theme.setTextColor(accent);
 
         for (TextView t : _catTitleViews) t.setTextColor(accent);

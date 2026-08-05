@@ -107,7 +107,7 @@ public class TelnetConsole {
         adapter = new ConsoleAdapter(R.layout.item_telnet_line);
         rv.setAdapter(adapter);
         rv.setItemAnimator(null); // high-frequency log lines - skip animations
-        _setStatus("OFF", 0xFF666666);
+        _setStatus("OFF", ThemeManager.getColor(Main, R.color.telnet_status_idle));
     }
 
     // --------------------------------------------------------
@@ -129,11 +129,11 @@ public class TelnetConsole {
         enabled = on;
 
         if (on) {
-            _setStatus("CONNECT…", 0xFFB8B800);
+            _setStatus("CONNECT…", ThemeManager.getColor(Main, R.color.telnet_status_connecting));
             _startPane();
         } else {
             _stopPane();
-            _setStatus("OFF", 0xFF666666);
+            _setStatus("OFF", ThemeManager.getColor(Main, R.color.telnet_status_idle));
         }
     }
 
@@ -153,10 +153,10 @@ public class TelnetConsole {
             while (enabled && myGen == generation) {
                 Socket s = new Socket();
                 try {
-                    _postStatus(myGen, "CONNECT…", 0xFFB8B800);
+                    _postStatus(myGen, "CONNECT…", ThemeManager.getColor(Main, R.color.telnet_status_connecting));
                     s.connect(new InetSocketAddress(DIFFUSER_IP, TELNET_PORT), CONNECT_MS);
                     socket = s;
-                    _postStatus(myGen, DIFFUSER_IP, 0xFF39D353);
+                    _postStatus(myGen, DIFFUSER_IP, ThemeManager.getColor(Main, R.color.telnet_status_connected));
 
                     // Diffuser firmware prints UTF-8 - decoding as Latin-1 mangles it.
                     BufferedReader in = new BufferedReader(new InputStreamReader(
@@ -179,7 +179,7 @@ public class TelnetConsole {
                 }
 
                 if (!enabled || myGen != generation) break;
-                _postStatus(myGen, "RETRY…", 0xFFFF5F56);
+                _postStatus(myGen, "RETRY…", ThemeManager.getColor(Main, R.color.telnet_status_error));
                 try { Thread.sleep(RECONNECT_MS); } catch (InterruptedException e) { break; }
             }
         }, "Telnet-DIF");

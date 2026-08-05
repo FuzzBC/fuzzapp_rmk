@@ -396,6 +396,8 @@ public class TestModePopup {
     private View _buildOption(String label, boolean destructive, int rowFill, int accent,
                                boolean selected, int selectedFill, Runnable onTap) {
         float dp = ctx.getResources().getDisplayMetrics().density;
+        int colorDanger = ThemeManager.getColor(ctx, R.color.color_danger_soft);
+        int transparent = ThemeManager.getColor(ctx, R.color.color_transparent);
 
         TextView tv = new TextView(ctx);
         tv.setText(label);
@@ -404,7 +406,7 @@ public class TestModePopup {
         tv.setTypeface(null, Typeface.BOLD);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setSingleLine(true);
-        tv.setTextColor(destructive ? COLOR_DANGER
+        tv.setTextColor(destructive ? colorDanger
                                     : selected ? _idealInk(selectedFill)
                                     : ThemeManager.getColor(ctx, R.color.skbar_settings_title));
         tv.setGravity(Gravity.CENTER);
@@ -415,11 +417,11 @@ public class TestModePopup {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(10 * dp);
         if (destructive) {
-            bg.setColor(0x00000000);                                     // Transparent - outlined action
-            bg.setStroke((int) (1 * dp), COLOR_DANGER);
+            bg.setColor(transparent);                                     // Transparent - outlined action
+            bg.setStroke((int) (1 * dp), colorDanger);
         } else if (selected) {
             bg.setColor(selectedFill);                                   // Solid fill - marks the current pick
-            bg.setStroke((int) (1 * dp), 0x00000000);
+            bg.setStroke((int) (1 * dp), transparent);
         } else {
             bg.setColor(rowFill);                                        // Lifted surface fill
             bg.setStroke((int) (1 * dp), ThemeManager.getColor(ctx, R.color.skbar_track_color));
@@ -434,7 +436,7 @@ public class TestModePopup {
         tv.setOnClickListener(v -> {
             // Selected feedback: full accent (or danger) flash before dismissing
             GradientDrawable sel = (GradientDrawable) tv.getBackground().mutate();
-            sel.setColor(destructive ? (COLOR_DANGER & 0x33FFFFFF) : accent);
+            sel.setColor(destructive ? (colorDanger & 0x33FFFFFF) : accent);
             onTap.run();
         });
 

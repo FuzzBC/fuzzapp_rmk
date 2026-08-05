@@ -38,6 +38,26 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
+        <!-- "V: 1.XXX" build label - hugs the very top edge (no top padding/
+             margin on purpose) directly above the Diffuser Usage badge below
+             it, instead of floating bottom-left over the footer like before.
+             Tap to see the changelog ("What's new") - see MainActivity. -->
+        <TextView
+            android:id="@+id/_version_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="11dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="4dp"
+            android:alpha="0.75"
+            android:fontFamily="monospace"
+            android:text="V: 0.000"
+            android:textColor="@color/text_muted_grey"
+            android:textSize="9sp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
         <!-- Diffuser refill badge: icon + remaining percent + thin fill bar along
              the bottom edge. _diffuser_refill_fill's width is set programmatically
              (see StatusManager) to the live remaining-percent fraction of
@@ -53,7 +73,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="11dp"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="2dp"
             android:background="@drawable/_stroke_line_compact"
             android:clickable="true"
             android:contextClickable="false"
@@ -64,7 +84,7 @@
             android:paddingTop="8dp"
             android:paddingBottom="8dp"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/_version_label"
             tools:ignore="TouchTargetSizeCheck">
 
             <ImageView
@@ -125,6 +145,38 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             tools:ignore="HardcodedText,RtlSymmetry,TextContrastCheck,TextContrastCheck,TouchTargetSizeCheck" />
+
+        <!-- Scanline "not connected" indicator - a track + a sliding bright
+             fill bar, hugging the inside of _connectinfo's bottom edge.
+             Same start/end anchors as _connectinfo so its width always
+             matches the box regardless of the status text's length.
+             Fill's width/position are set at runtime (MainActivity
+             _ScanlineON()) since FrameLayout has no ConstraintLayout-style
+             percentage width. Gone whenever connected - see _NeonFlickerON()/
+             _ScanlineON() in MainActivity, called from DataReceive._setStatus(). -->
+        <FrameLayout
+            android:id="@+id/_connectinfo_scanline"
+            android:layout_width="0dp"
+            android:layout_height="2dp"
+            android:layout_marginBottom="4dp"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/_connectinfo"
+            app:layout_constraintEnd_toEndOf="@id/_connectinfo"
+            app:layout_constraintStart_toStartOf="@id/_connectinfo">
+
+            <View
+                android:id="@+id/_connectinfo_scanline_track"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/connect_scanline_track" />
+
+            <View
+                android:id="@+id/_connectinfo_scanline_fill"
+                android:layout_width="40dp"
+                android:layout_height="match_parent"
+                android:background="@color/status_off_red" />
+
+        </FrameLayout>
 
         <com.wang.avi.AVLoadingIndicatorView
             android:id="@+id/LoadingBar"
@@ -386,7 +438,7 @@
         android:layout_marginBottom="8dp"
         android:textAlignment="center"
         android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintBottom_toTopOf="@+id/BottomItems"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/TopItems">
@@ -488,6 +540,37 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             tools:ignore="DisableBaselineAlignment">
+
+            <Button
+                android:id="@+id/_btn_setting_info"
+                style="@style/Widget.AppCompat.Button.Colored"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical"
+                android:minHeight="34dp"
+                android:layout_weight="0"
+                android:background="@drawable/md_transparent"
+                android:cursorVisible="true"
+                android:gravity="center|center_vertical"
+                android:letterSpacing="0.05"
+                android:minWidth="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:text="@string/btn_info"
+                android:textAppearance="@android:style/TextAppearance.Material.Widget.Button.Colored"
+                android:textColor="@color/skbar_settings_title"
+                tools:ignore="HardcodedText,TextContrastCheck,TextViewEdits,TouchTargetSizeCheck" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:layout_marginStart="7dp"
+                android:layout_marginEnd="7dp"
+                android:background="@color/stroke_line_color"
+                android:importantForAccessibility="no" />
 
             <Button
                 android:id="@+id/_btn_setting_default"
@@ -662,7 +745,7 @@
         android:layout_marginEnd="3dp"
         android:layout_marginBottom="8dp"
         android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintBottom_toTopOf="@+id/BottomItems"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
@@ -1658,7 +1741,7 @@
                     android:layout_weight="1"
                     android:letterSpacing="0.14"
                     android:text="≡  DIFFUSER CONSOLE"
-                    android:textColor="#8BE9FD"
+                    android:textColor="@color/terminal_accent_cyan"
                     android:textSize="11sp"
                     android:textStyle="bold"
                     android:typeface="monospace"
@@ -1670,7 +1753,7 @@
                     android:layout_height="28dp"
                     android:gravity="center"
                     android:text="✕"
-                    android:textColor="#E06666"
+                    android:textColor="@color/terminal_close_red"
                     android:textSize="15sp"
                     android:textStyle="bold"
                     android:typeface="monospace"
@@ -1719,7 +1802,7 @@
                         android:layout_weight="1"
                         android:layout_marginStart="8dp"
                         android:text="TELNET ─ DIFFUSER"
-                        android:textColor="#9AA79A"
+                        android:textColor="@color/terminal_label_green_grey"
                         android:textSize="10sp"
                         android:letterSpacing="0.12"
                         android:textStyle="bold"
@@ -1731,7 +1814,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="OFF"
-                        android:textColor="#666666"
+                        android:textColor="@color/telnet_status_idle"
                         android:textSize="9sp"
                         android:textStyle="bold"
                         android:typeface="monospace"
@@ -1761,7 +1844,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="5dp"
         android:layout_marginBottom="5dp"
-        app:layout_constraintBottom_toTopOf="@+id/StatusLay"
+        app:layout_constraintBottom_toTopOf="@+id/BottomItems"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/TopItems">
@@ -1793,16 +1876,18 @@
             android:id="@+id/_btn_debug"
             style="@style/Widget.AppCompat.Button.Colored"
             android:layout_width="wrap_content"
-            android:layout_height="26dp"
+            android:layout_height="34dp"
             android:layout_marginStart="5dp"
             android:background="@drawable/_stroke_line"
             android:letterSpacing="0.3"
-            android:minWidth="50dip"
+            android:minWidth="56dip"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
             android:paddingTop="0dp"
             android:paddingBottom="0dp"
             android:text="@string/btn_debug"
             android:textColor="@color/text_default"
-            android:textSize="11sp"
+            android:textSize="12sp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
@@ -1811,35 +1896,137 @@
             android:id="@+id/_btn_clear_console"
             style="@style/Widget.AppCompat.Button.Colored"
             android:layout_width="wrap_content"
-            android:layout_height="26dp"
-            android:layout_marginStart="2dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
             android:background="@drawable/_stroke_line"
             android:letterSpacing="0.3"
-            android:minWidth="50dip"
+            android:minWidth="56dip"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
             android:paddingTop="0dp"
             android:paddingBottom="0dp"
             android:text="@string/btn_clear"
             android:textColor="@color/text_default"
-            android:textSize="11sp"
+            android:textSize="12sp"
             app:layout_constraintBottom_toBottomOf="@+id/_btn_debug"
             app:layout_constraintStart_toEndOf="@+id/_btn_debug"
             tools:ignore="HardcodedText,TextContrastCheck,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
 
+        <!-- Arduino/WiFi link-quality badge - TERM-only (lives inside
+             ConsoleLayout, not TopItems, so it's invisible on LEDS/SET),
+             bottom-right on the same line as DBG/CLR. -->
+        <LinearLayout
+            android:id="@+id/_ard_wifi_box"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="5dp"
+            android:background="@drawable/_stroke_line_compact"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            app:layout_constraintBottom_toBottomOf="@id/_btn_debug"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/_btn_debug">
+
+            <ImageView
+                android:id="@+id/_ard_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_arduino"
+                app:tint="@color/text_muted_grey"
+                tools:ignore="ContentDescription" />
+
+            <ImageView
+                android:id="@+id/_wifi_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_wifi_level"
+                app:tint="@color/text_muted_grey"
+                tools:ignore="ContentDescription,ImageContrastCheck" />
+
+        </LinearLayout>
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <!-- StatusLay used to be its own row (status icons + Arduino/WiFi badge)
+         sitting directly above the footer. The status icons now live
+         inside BottomItems itself (same line as the nav buttons -
+         see below) and the Arduino/WiFi badge moved up into TopItems
+         under the Diffuser Usage badge, so this container no longer
+         exists. LAY_CONSOLE/LAY_LEDS/LAY_SET below still need SOME sibling
+         id to anchor their bottom edge to, right above the footer -
+         that's now BottomItems directly (see their
+         layout_constraintBottom_toTopOf, unchanged in spirit, just
+         pointed at the new anchor since the middle row is gone). -->
+
+    <!-- Bottom-right footer row: DUAL COLOR (opens the popup - built
+         entirely in Java, see LEDManager.showDualColorPopup()) on the
+         left, TERM/LEDS/SET page-navigation buttons on the right. Page nav
+         used to be a swipe gesture anywhere on screen; replaced with these
+         explicit buttons (see MainActivity._Init_PageButtons()). -->
     <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/StatusLay"
+        android:id="@+id/BottomItems"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="3dp"
-        app:layout_constraintBottom_toTopOf="@+id/_btns_dual_color"
-        app:layout_constraintEnd_toEndOf="@+id/_btns_dual_color"
-        app:layout_constraintStart_toStartOf="@+id/_btns_dual_color">
+        android:layout_marginStart="5dp"
+        android:layout_marginEnd="5dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="10dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
 
-        <!-- Kept centered as a group: both Start/End pin to StatusLay's now-full-width
-             parent, so ConstraintLayout centers this wrap_content row automatically,
-             independent of _ard_wifi_box pinned to the right below. -->
+        <!-- Background/text color painted at runtime by
+             MainActivity._updateDualColorButtonStyle() - same accent-pill
+             treatment as the "selected" TERM/LEDS/SET state, so this reads
+             as the primary action next to that group instead of a
+             mismatched leftover panel-style button.
+             constrainedWidth + the End anchor on _status_strip: this
+             behaves as normal wrap_content whenever there's room, but gets
+             capped (never overlaps) the moment the status strip's centred
+             position would otherwise collide with it - see _status_strip's
+             own doc comment below for the other half of this. -->
+        <Button
+            android:id="@+id/_btn_dualcolor_open"
+            style="@style/Widget.AppCompat.Button.Colored"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginEnd="6dp"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:letterSpacing="0.3"
+            android:minWidth="50dip"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="0dp"
+            android:paddingBottom="0dp"
+            android:text="@string/btn_dual_color"
+            android:textSize="11sp"
+            app:layout_constrainedWidth="true"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/_status_strip"
+            app:layout_constraintHorizontal_bias="0.0"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
+
+        <!-- Status strip (TV/MOTION/AMBILIGHT/DIFFUSER) - used to be its own
+             row above this one (see the StatusLay removal note above).
+             Pinned to BottomItems's own Start/End (its full width already
+             matches the screen minus the 5dp footer margins) with default
+             0.5 bias, so this always sits at the true horizontal centre of
+             the screen - independent of DUAL COLOR's and the page-nav
+             group's widths on either side. This element's own size is
+             fixed; DUAL COLOR and the page-nav group are the ones that
+             adapt (constrainedWidth, anchored to this strip's edges) so
+             neither can ever grow into and cover it - see their own doc
+             comments. -->
         <LinearLayout
+            android:id="@+id/_status_strip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -1850,208 +2037,120 @@
 
             <ImageView
                 android:id="@+id/sts_tv"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_weight="1"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
                 android:tint="@color/status_off_red"
                 app:srcCompat="@drawable/_info_tv"
                 tools:ignore="ContentDescription" />
 
-            <View
-                android:id="@+id/_space0"
-                android:layout_width="7dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:background="?android:attr/listDivider" />
-
             <ImageView
                 android:id="@+id/sts_motion"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_weight="1"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginStart="7dp"
                 android:tint="@color/status_off_red"
                 app:srcCompat="@drawable/_info_motion"
                 tools:ignore="ContentDescription" />
 
-            <View
-                android:id="@+id/_space1"
-                android:layout_width="7dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:background="?android:attr/listDivider" />
-
             <ImageView
                 android:id="@+id/sts_ambilight"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_weight="1"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginStart="7dp"
                 android:tint="@color/status_off_red"
                 app:srcCompat="@drawable/_info_ambi"
                 tools:ignore="ContentDescription" />
 
-            <View
-                android:id="@+id/_space2"
-                android:layout_width="7dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:background="?android:attr/listDivider" />
-
             <ImageView
                 android:id="@+id/sts_diffuser"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
-                android:layout_weight="1"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginStart="7dp"
                 android:tint="@color/status_off_red"
                 app:srcCompat="@drawable/_info_diffuser"
                 tools:ignore="ContentDescription" />
 
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/_ard_wifi_box"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/_stroke_line"
-            android:gravity="center"
-            android:orientation="horizontal"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-            <ImageView
-                android:id="@+id/_ard_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_arduino"
-                app:tint="@color/text_muted_grey"
-                tools:ignore="ContentDescription" />
-
-            <ImageView
-                android:id="@+id/_wifi_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_marginStart="4dp"
-                android:src="@drawable/ic_wifi_level"
-                app:tint="@color/text_muted_grey"
-                tools:ignore="ContentDescription" />
-
-        </LinearLayout>
-    </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <TextView
-        android:id="@+id/_version_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginBottom="4dp"
-        android:padding="6dp"
-        android:alpha="0.75"
-        android:fontFamily="monospace"
-        android:text="V: 0.000"
-        android:textColor="@color/text_muted_grey"
-        android:textSize="13sp"
-        app:layout_constraintBottom_toTopOf="@id/_btns_dual_color"
-        app:layout_constraintStart_toStartOf="parent" />
-
-    <!-- Bottom-right footer row: DUAL COLOR (opens the swatch popup - see
-         lay_dual_color_popup.xml / LEDManager.showDualColorPopup()) on the
-         left, TERM/LEDS/SET page-navigation buttons on the right. Page nav
-         used to be a swipe gesture anywhere on screen; replaced with these
-         explicit buttons (see MainActivity._Init_PageButtons()). -->
-    <androidx.constraintlayout.widget.ConstraintLayout
-        android:id="@+id/_btns_dual_color"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="5dp"
-        android:layout_marginEnd="5dp"
-        android:layout_marginBottom="10dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <Button
-            android:id="@+id/_btn_dualcolor_open"
-            style="@style/Widget.AppCompat.Button.Colored"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:background="@drawable/_stroke_line"
-            android:letterSpacing="0.3"
-            android:minWidth="50dip"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:paddingTop="0dp"
-            android:paddingBottom="0dp"
-            android:text="@string/btn_dual_color"
-            android:textColor="@color/text_default"
-            android:textSize="11sp"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
-
+        <!-- constrainedWidth + the Start anchor on _status_strip: normal
+             wrap_content whenever there's room, capped the moment it would
+             collide with the centred status strip. The three buttons below
+             switch to 0dp/weight=1 (instead of plain wrap_content) so that
+             WHEN this group does get capped, they shrink together
+             proportionally instead of the LinearLayout just clipping
+             whichever button runs out of room last (SET) - minWidth on
+             each is still the hard floor, ellipsize/singleLine is the
+             last-resort safety net beyond that. -->
         <LinearLayout
             android:id="@+id/_page_nav_buttons"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
             android:orientation="horizontal"
+            app:layout_constrainedWidth="true"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintHorizontal_bias="1.0"
+            app:layout_constraintStart_toEndOf="@id/_status_strip"
             app:layout_constraintTop_toTopOf="parent">
 
+            <!-- Backgrounds/colors for all three are painted at runtime by
+                 MainActivity._updatePageButtonStates() - active vs. idle
+                 reflects whichever page is actually on screen, so nothing
+                 static to set here beyond text/sizing. -->
             <Button
                 android:id="@+id/_btn_page_term"
                 style="@style/Widget.AppCompat.Button.Colored"
-                android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:background="@drawable/_stroke_line"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="32dp"
+                android:ellipsize="end"
+                android:singleLine="true"
                 android:letterSpacing="0.3"
-                android:minWidth="50dip"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
+                android:minWidth="52dip"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
                 android:paddingTop="0dp"
                 android:paddingBottom="0dp"
                 android:text="@string/btn_page_term"
-                android:textColor="@color/text_default"
                 android:textSize="11sp"
                 tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
 
             <Button
                 android:id="@+id/_btn_page_leds"
                 style="@style/Widget.AppCompat.Button.Colored"
-                android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/_stroke_line"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="32dp"
+                android:layout_marginStart="5dp"
+                android:ellipsize="end"
+                android:singleLine="true"
                 android:letterSpacing="0.3"
-                android:minWidth="50dip"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
+                android:minWidth="52dip"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
                 android:paddingTop="0dp"
                 android:paddingBottom="0dp"
                 android:text="@string/btn_page_leds"
-                android:textColor="@color/text_default"
                 android:textSize="11sp"
                 tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
 
             <Button
                 android:id="@+id/_btn_page_set"
                 style="@style/Widget.AppCompat.Button.Colored"
-                android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/_stroke_line"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="32dp"
+                android:layout_marginStart="5dp"
+                android:ellipsize="end"
+                android:singleLine="true"
                 android:letterSpacing="0.3"
-                android:minWidth="50dip"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
+                android:minWidth="52dip"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
                 android:paddingTop="0dp"
                 android:paddingBottom="0dp"
                 android:text="@string/btn_page_set"
-                android:textColor="@color/text_default"
                 android:textSize="11sp"
                 tools:ignore="HardcodedText,TextContrastCheck,TouchTargetSizeCheck,TextSizeCheck" />
 
@@ -2622,7 +2721,7 @@ Slow TV > COM > uCOM > BED [3]"
         android:elevation="26dp"
         android:gravity="center"
         android:text="&gt;_"
-        android:textColor="#8BE9FD"
+        android:textColor="@color/terminal_accent_cyan"
         android:textSize="16sp"
         android:textStyle="bold"
         android:typeface="monospace"

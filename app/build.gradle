@@ -58,6 +58,11 @@ dependencies {
 
     implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
 
+    // WorkManager - schedules FuzzWidgetProvider's periodic background
+    // refresh (WidgetUpdateWorker); the OS's own widget updatePeriodMillis
+    // is floored at 30 min and can't hit the 15 min end of the ask.
+    implementation 'androidx.work:work-runtime:2.9.1'
+
     // RecyclerView for displaying scrollable lists/grid UI components
     implementation 'androidx.recyclerview:recyclerview:1.3.2'
 

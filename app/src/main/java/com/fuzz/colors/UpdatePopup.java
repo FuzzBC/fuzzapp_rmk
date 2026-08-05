@@ -387,7 +387,7 @@ public class UpdatePopup {
         btn.setLetterSpacing(0.06f);
         btn.setTypeface(null, Typeface.BOLD);
         btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        btn.setTextColor(0xFF14181D);
+        btn.setTextColor(ContextCompat.getColor(ctx, R.color.update_filled_btn_text));
         btn.setGravity(Gravity.CENTER);
         btn.setPadding((int) (12 * dp), (int) (10 * dp), (int) (12 * dp), (int) (10 * dp));
         btn.setClickable(true);
@@ -435,7 +435,7 @@ public class UpdatePopup {
 
     private int _rowFill() {
         int base = ThemeManager.getColor(ctx, R.color.skbar_whole_settings);
-        return _blend(base, 0xFFFFFFFF, 0.07f);
+        return _blend(base, ThemeManager.getColor(ctx, R.color.color_pure_white), 0.07f);
     }
 
     private int _blend(int a, int b, float t) {

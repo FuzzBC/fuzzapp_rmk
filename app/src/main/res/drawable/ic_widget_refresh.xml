@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Refresh glyph for the widget's manual-refresh button - two arcs
+     forming a broken circle plus an arrowhead, same stroke-based style
+     as ic_wifi_level/ic_arduino so it tints consistently. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M18.4,8 A7,7 0 1 1 17,5.6" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,3.2 L18.6,6.6 L15,7 z" />
+</vector>

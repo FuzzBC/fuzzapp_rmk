@@ -1380,8 +1380,18 @@ public class DataReceive {
                 break;
         }
 
-        // Always re-apply rainbow animation on status change
-        Main._RainbowTextOFF(Main.TEXT_ConnectInfo);
-        Main._RainbowTextON(Main.TEXT_ConnectInfo);
+        // Re-apply the right effect for the new status - neon flicker while
+        // genuinely reachable (Connected/Cloud), sliding red scanline
+        // otherwise. Always stop both first: switching straight from one
+        // active effect to the other (e.g. Connected -> NoWifi) must not
+        // leave the old animator running underneath the new one.
+        Main._NeonFlickerOFF(Main.TEXT_ConnectInfo);
+        Main._ScanlineOFF();
+        boolean reachable = (status == Status.Connected || status == Status.Cloud);
+        if (reachable) {
+            Main._NeonFlickerON(Main.TEXT_ConnectInfo);
+        } else {
+            Main._ScanlineON();
+        }
     }
 }

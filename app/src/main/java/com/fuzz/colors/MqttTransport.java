@@ -80,10 +80,15 @@ public class MqttTransport {
     public static final String MQTT_BASE = "LEDs";
     /** Single duplex topic - both ends publish AND subscribe here; must match firmware MQTT_TOPIC. */
     public static final String MQTT_TOPIC = MQTT_BASE + "/cmd";
-    /** Sender tag WE publish with (byte 0 of every payload) - lets our own subscription drop the echo. */
-    private static final byte TAG_APP = 'A';
+    /**
+     * Sender tag WE publish with (byte 0 of every payload) - lets our own
+     * subscription drop the echo. Package-private (not private) so
+     * WidgetStatusFetcher can build a byte-identical publish payload for its
+     * own short-lived MQTT connection without duplicating the tag value.
+     */
+    static final byte TAG_APP = 'A';
     /** Sender tag expected on inbound device publishes; must match firmware MQTT_TAG_DEV. */
-    private static final byte TAG_DEV = 'D';
+    static final byte TAG_DEV = 'D';
 
     /** Keep-alive / connection-timeout seconds. */
     private static final int KEEPALIVE_S = 30;
@@ -92,9 +97,12 @@ public class MqttTransport {
     // --------------------------------------------------------
     // Credential storage (SharedPreferences - see class doc above)
     // --------------------------------------------------------
-    private static final String PREFS_NAME  = "FuZz_MqttCred";
-    private static final String KEY_USER    = "user";
-    private static final String KEY_PASS    = "pass";
+    // Package-private (not private): WidgetStatusFetcher reads the same
+    // cached credentials for its own short-lived MQTT connection - same
+    // single source of truth as TAG_APP/TAG_DEV above.
+    static final String PREFS_NAME  = "FuZz_MqttCred";
+    static final String KEY_USER    = "user";
+    static final String KEY_PASS    = "pass";
     /** True once the user has explicitly dismissed the credentials dialog ("Not now" / back/outside-tap). */
     private static final String KEY_DECLINED = "declined";
 

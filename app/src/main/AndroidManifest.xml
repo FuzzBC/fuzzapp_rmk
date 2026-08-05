@@ -27,6 +27,41 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Home-screen widget: temp/hum/diffuser refill % + connection icon.
+             See FuzzWidgetProvider for the tap/refresh behaviour and
+             WidgetUpdateWorker for the background refresh (WorkManager,
+             scheduled from onEnabled() - see widget_fuzz_info.xml for why
+             updatePeriodMillis itself is 0). -->
+        <receiver
+            android:name=".FuzzWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.fuzz.colors.ACTION_WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_fuzz_info" />
+        </receiver>
+
+        <!-- Home-screen widget, 1x4 stacked variant: temp/hum/diffuser refill %
+             one under another, a corner connection icon + refresh button,
+             and the last-refresh time under the diffuser row (see
+             FuzzWidgetStackProvider/widget_fuzz_stack.xml). Shares
+             FuzzWidgetProvider's data cache and background-refresh job -
+             see WidgetScheduling. -->
+        <receiver
+            android:name=".FuzzWidgetStackProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.fuzz.colors.ACTION_WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_fuzz_stack_info" />
+        </receiver>
     </application>
 
 </manifest>

@@ -94,16 +94,18 @@ package com.fuzz.colors;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.ArgbEvaluator;
+import android.animation.Keyframe;
 import android.animation.ObjectAnimator;
+import android.animation.PropertyValuesHolder;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.provider.Settings;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Shader;
+import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -121,11 +123,13 @@ import android.annotation.SuppressLint;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.DecelerateInterpolator;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.TextView;
 
@@ -145,6 +149,7 @@ import com.wang.avi.AVLoadingIndicatorView;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import pl.droidsonroids.gif.GifDrawable;
 import pl.droidsonroids.gif.GifImageView;
@@ -229,6 +234,18 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** Opens the Debug dialog (Term tab) */
     Button BTN_Debug;
 
+    /** TERM / LEDS / SET footer nav buttons, index-matched to NAV_PAGES - see _updatePageButtonStates(). */
+    private Button[] PAGE_NAV_BTNS;
+
+    /** Opens the Dual Color popup - footer button, left of the page-nav group. */
+    private Button BTN_DualColorOpen;
+
+    /** Background of BTN_DualColorOpen - colours driven live by dualColorCycleAnim, see _startDualColorButtonCycle(). */
+    private DualColorPillDrawable dualColorBtnBg;
+
+    /** Drives BTN_DualColorOpen's endless slow colour drift - see _startDualColorButtonCycle(). */
+    private ValueAnimator dualColorCycleAnim;
+
     /** Term console list - chronological (oldest -> newest), bottom-append. */
     public RecyclerView RV_Console;
 
@@ -248,8 +265,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      */
     private int lastLogSeq = -1;
 
-    /** Connection status / Arduino IP:port label (rainbow animated) */
+    /** Connection status / Arduino IP:port label (neon flicker / scanline animated - see _NeonFlickerON()/_ScanlineON()) */
     public TextView TEXT_ConnectInfo;
+
+    /** Scanline container (shown only while NOT connected) + its sliding fill bar - see _ScanlineON()/_ScanlineOFF() */
+    public FrameLayout LAY_ConnectScanline;
+    public View VIEW_ConnectScanlineFill;
 
     /** Top-left link indicator: Arduino board icon + WiFi signal-strength icon. */
     public ImageView IMG_ArdIcon, IMG_WifiIcon;
@@ -278,8 +299,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** Handler that auto-hides the toast after 2.5 s */
     Handler ToastHandler = new Handler();
 
-    /** Animator driving the rainbow text effect on TEXT_ConnectInfo */
-    ValueAnimator ConnectInfoAnimator;
+    /** Animator driving the neon-flicker alpha/glow effect on TEXT_ConnectInfo while connected */
+    ObjectAnimator ConnectNeonAnimator;
+
+    /** Animator sliding VIEW_ConnectScanlineFill back and forth while NOT connected */
+    ValueAnimator ConnectScanlineAnimator;
 
     /* ====================================================== */
     /*  Background image state  (shared with SET)             */
@@ -919,6 +943,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         if (MQTT != null) MQTT.disconnect();
         if (TELNET != null) TELNET.setEnabled(false);  // close both telnet sockets/threads
         if (updateInstaller != null) updateInstaller.unregister();
+        if (dualColorCycleAnim != null) dualColorCycleAnim.cancel();
+        if (navStrokeRunAnim != null) navStrokeRunAnim.cancel();
     }
 
     /* ====================================================== */
@@ -1060,7 +1086,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         AVLoading = findViewById(R.id.LoadingBar);
 
         // Connection status label + top-left Arduino / WiFi-signal indicator
-        TEXT_ConnectInfo = findViewById(R.id._connectinfo);
+        TEXT_ConnectInfo       = findViewById(R.id._connectinfo);
+        LAY_ConnectScanline    = findViewById(R.id._connectinfo_scanline);
+        VIEW_ConnectScanlineFill = findViewById(R.id._connectinfo_scanline_fill);
         IMG_ArdIcon      = findViewById(R.id._ard_icon);
         IMG_WifiIcon     = findViewById(R.id._wifi_icon);
         updateWifiSignal(0, 0);   // start greyed-out until the first 'w' packet
@@ -1113,8 +1141,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             return false;
         });
 
-        // Installed-version label, bottom-left above the dual-colour swatch row -
-        // tap it to see "What's new" (bundled CHANGELOG.md, see AGENTS.md)
+        // Installed-version label, top-left corner above the Diffuser Usage
+        // badge - tap it to see "What's new" (bundled CHANGELOG.md, see AGENTS.md)
         TextView versionLabel = findViewById(R.id._version_label);
         if (versionLabel != null) {
             versionLabel.setText("V: " + BuildConfig.VERSION_NAME);
@@ -1207,6 +1235,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         if (toIndex < 0) return; // page not in current NAV_PAGES (telnet toggled off)
         int fromIndex = navPageIndex;
         navPageIndex  = toIndex;
+        _updatePageButtonStates(toIndex);
 
         ConstraintLayout from = NAV_PAGES[fromIndex];
         ConstraintLayout to   = NAV_PAGES[toIndex];
@@ -1450,15 +1479,196 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
      * Called by: onCreate(), once NAV_PAGES and LED are both ready.
      */
     private void _Init_PageButtons() {
-        View btnTerm = findViewById(R.id._btn_page_term);
-        View btnLeds = findViewById(R.id._btn_page_leds);
-        View btnSet  = findViewById(R.id._btn_page_set);
+        Button btnTerm = findViewById(R.id._btn_page_term);
+        Button btnLeds = findViewById(R.id._btn_page_leds);
+        Button btnSet  = findViewById(R.id._btn_page_set);
+        PAGE_NAV_BTNS = new Button[]{ btnTerm, btnLeds, btnSet };
+
         if (btnTerm != null) btnTerm.setOnClickListener(v -> _NavigateToPage(0)); // TERM - NAV_PAGES[0] (LAY_CONSOLE)
         if (btnLeds != null) btnLeds.setOnClickListener(v -> _NavigateToPage(1)); // LEDS - NAV_PAGES[1]
         if (btnSet  != null) btnSet.setOnClickListener(v -> _NavigateToPage(2));  // SET  - NAV_PAGES[2]
 
-        View btnDualColor = findViewById(R.id._btn_dualcolor_open);
-        if (btnDualColor != null) btnDualColor.setOnClickListener(v -> LED.showDualColorPopup());
+        // Same accent-pill treatment every button/tab in the app already uses for
+        // "this one is active" (see SettingsManager._setupCategoryTabs()) - flat
+        // outline when idle, tinted+bordered fill + accent text when selected.
+        // _SetLayout() ran once already during onCreate (before this method wires
+        // the buttons), so sync the visuals to whatever page that landed on now.
+        for (Button b : PAGE_NAV_BTNS) {
+            if (b != null) b.setTypeface(null, Typeface.BOLD);
+        }
+        _updatePageButtonStates(navPageIndex);
+
+        BTN_DualColorOpen = findViewById(R.id._btn_dualcolor_open);
+        if (BTN_DualColorOpen != null) {
+            BTN_DualColorOpen.setTypeface(null, Typeface.BOLD);
+            BTN_DualColorOpen.setOnClickListener(v -> LED.showDualColorPopup());
+        }
+        _startDualColorButtonCycle();
+    }
+
+    /** Duration (ms) of one leg of the DUAL COLOR button's colour drift - slow and gentle on purpose. */
+    private static final int DUAL_COLOR_CYCLE_MS = 6000;
+
+    /**
+     * Starts (once) an endless, slow left/right colour drift on the DUAL
+     * COLOR button - a fresh high-contrast random pair every
+     * DUAL_COLOR_CYCLE_MS, smoothly cross-faded in rather than cut, so the
+     * button's own fill literally reads as "two colours, one left one
+     * right" - matching exactly what it opens. Text stays a fixed dark
+     * colour (wheel_label_text, the same one already used for labels sat
+     * on top of colourful wheel backgrounds elsewhere in the app) since
+     * _randomDualColorPair() always keeps brightness high, so it stays
+     * legible against every hue without needing to track the fill.
+     * Called once from _Init_PageButtons(); runs for the Activity's
+     * lifetime and is cancelled in onDestroy().
+     */
+    private void _startDualColorButtonCycle() {
+        if (BTN_DualColorOpen == null || dualColorCycleAnim != null) return;
+
+        float dp = getResources().getDisplayMetrics().density;
+        int[] start = _randomDualColorPair();
+
+        dualColorBtnBg = new DualColorPillDrawable(start[0], start[1]);
+        dualColorBtnBg.setStroke(1.5f * dp, ThemeManager.getColor(this, R.color.skbar_settings_title));
+        BTN_DualColorOpen.setBackground(dualColorBtnBg);
+        BTN_DualColorOpen.setTextColor(ThemeManager.getColor(this, R.color.wheel_label_text));
+
+        _dualColorCycleStep(start[0], start[1]);
+    }
+
+    /**
+     * One leg of the endless drift: smoothly morphs the button's fill from
+     * (fromC1, fromC2) to a freshly-rolled random pair over
+     * DUAL_COLOR_CYCLE_MS, then immediately rolls and starts the next leg
+     * on completion - see _startDualColorButtonCycle().
+     */
+    private void _dualColorCycleStep(int fromC1, int fromC2) {
+        int[] target = _randomDualColorPair();
+        ArgbEvaluator eval = new ArgbEvaluator();
+
+        dualColorCycleAnim = ValueAnimator.ofFloat(0f, 1f);
+        dualColorCycleAnim.setDuration(DUAL_COLOR_CYCLE_MS);
+        dualColorCycleAnim.setInterpolator(new AccelerateDecelerateInterpolator());
+        dualColorCycleAnim.addUpdateListener(a -> {
+            float f = (float) a.getAnimatedValue();
+            int c1 = (int) eval.evaluate(f, fromC1, target[0]);
+            int c2 = (int) eval.evaluate(f, fromC2, target[1]);
+            if (dualColorBtnBg != null) dualColorBtnBg.setColors(c1, c2);
+        });
+        // cancel() also fires onAnimationEnd (after onAnimationCancel), so
+        // without this flag onDestroy()'s cancel() would immediately chain
+        // into a brand-new animator right as the Activity goes away.
+        dualColorCycleAnim.addListener(new AnimatorListenerAdapter() {
+            private boolean cancelled = false;
+
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                cancelled = true;
+            }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (!cancelled) _dualColorCycleStep(target[0], target[1]);
+            }
+        });
+        dualColorCycleAnim.start();
+    }
+
+    /**
+     * High-saturation, high-brightness random HSV pair (a random hue plus a
+     * 120-180 degree complementary offset) - same recipe as
+     * LEDManager.reloadRandDualColor(), duplicated locally rather than
+     * shared since this can start before LED is constructed in onCreate.
+     * Brightness is kept high on purpose so BTN_DualColorOpen's fixed dark
+     * text stays readable against every hue this ever rolls.
+     */
+    private int[] _randomDualColorPair() {
+        Random rnd    = new Random();
+        float  hue1   = rnd.nextFloat() * 360f;
+        float  offset = 120f + (rnd.nextFloat() * 60f);
+        float  hue2   = (hue1 + offset) % 360f;
+        int c1 = Color.HSVToColor(new float[]{hue1, 0.85f, 0.9f});
+        int c2 = Color.HSVToColor(new float[]{hue2, 0.85f, 0.9f});
+        return new int[]{c1, c2};
+    }
+
+    /** Drives the selected nav button's marching-dash stroke - see _startNavStrokeRun(). */
+    private ValueAnimator navStrokeRunAnim;
+
+    /** Duration (ms) for the dashes to march exactly one full dash+gap cycle - the loop point, so it never visibly "pops". */
+    private static final int NAV_STROKE_RUN_MS = 600;
+
+    /**
+     * Re-paints the TERM/LEDS/SET footer buttons so the one matching
+     * activeIndex reads as "you are here": tinted fill + a marching-dash
+     * accent stroke that endlessly runs around its perimeter (see
+     * RunningStrokeDrawable), versus a plain static outline + muted text
+     * for the other two. Called on every page change (_SetLayout()) and
+     * on theme switch (applyThemeColors()) so it never goes stale.
+     *
+     * @param activeIndex  index into NAV_PAGES / PAGE_NAV_BTNS of the page now on screen.
+     */
+    private void _updatePageButtonStates(int activeIndex) {
+        if (PAGE_NAV_BTNS == null) return;
+
+        float dp = getResources().getDisplayMetrics().density;
+        int colorActive   = ThemeManager.getColor(this, R.color.skbar_settings_title);
+        int colorInactive = ThemeManager.getColor(this, R.color.text_muted_grey);
+        int fillActive    = ThemeManager.getColor(this, R.color.tab_active_tint);
+        int strokeIdle    = ThemeManager.getColor(this, R.color.stroke_line_color);
+
+        for (int i = 0; i < PAGE_NAV_BTNS.length; i++) {
+            Button b = PAGE_NAV_BTNS[i];
+            if (b == null) continue;
+            boolean sel = (i == activeIndex);
+
+            if (sel) {
+                RunningStrokeDrawable bg = new RunningStrokeDrawable(
+                        fillActive, colorActive, 1.5f * dp, 6f * dp, 4f * dp);
+                b.setBackground(bg);
+            } else {
+                GradientDrawable bg = new GradientDrawable();
+                bg.setCornerRadius(8 * dp);
+                bg.setColor(Color.TRANSPARENT);
+                bg.setStroke(Math.round(1f * dp), strokeIdle);
+                b.setBackground(bg);
+            }
+            b.setTextColor(sel ? colorActive : colorInactive);
+        }
+
+        _startNavStrokeRun();
+    }
+
+    /**
+     * Starts (once) a shared, endless ValueAnimator that advances
+     * dashPhase through exactly one RunningStrokeDrawable dash+gap cycle
+     * per loop, INFINITE repeat - same "one shared animator, not one per
+     * button" convention as LEDManager's LED_SelectPulseAnim, so the
+     * marching motion is driven from a single clock no matter which
+     * button is currently selected. Re-entrant: _updatePageButtonStates()
+     * calls this on every page change, but the animator itself is only
+     * ever created once (it already applies to whichever button is
+     * selected NOW, since it reads PAGE_NAV_BTNS[navPageIndex] fresh on
+     * every frame rather than holding a stale reference).
+     */
+    private void _startNavStrokeRun() {
+        if (navStrokeRunAnim != null) return;
+
+        navStrokeRunAnim = ValueAnimator.ofFloat(0f, 1f);
+        navStrokeRunAnim.setDuration(NAV_STROKE_RUN_MS);
+        navStrokeRunAnim.setRepeatCount(ValueAnimator.INFINITE);
+        navStrokeRunAnim.setInterpolator(null); // linear - constant marching speed
+        navStrokeRunAnim.addUpdateListener(a -> {
+            if (PAGE_NAV_BTNS == null || navPageIndex < 0 || navPageIndex >= PAGE_NAV_BTNS.length) return;
+            Button selBtn = PAGE_NAV_BTNS[navPageIndex];
+            if (selBtn == null) return;
+            android.graphics.drawable.Drawable bg = selBtn.getBackground();
+            if (!(bg instanceof RunningStrokeDrawable)) return;
+            RunningStrokeDrawable rsd = (RunningStrokeDrawable) bg;
+            float f = (float) a.getAnimatedValue();
+            rsd.setDashPhase(f * rsd.getCycleLengthPx());
+        });
+        navStrokeRunAnim.start();
     }
 
     /**
@@ -1707,12 +1917,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 icon.setText("\uD83D\uDDA5\uFE0F");           // 🖥️
                 name.setText("TELNET");
                 sub.setText(telnetEnabled ? "console ON" : "console OFF");
-                sub.setTextColor(telnetEnabled ? 0xFF39D353 : 0xFFFF5F56);
+                sub.setTextColor(telnetEnabled
+                        ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
+                        : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
             } else if (position == SET.SET_Debug.length + 1) { // virtual MQTT LOG cell
                 icon.setText("\uD83D\uDCE1");                  // 📡
                 name.setText("MQTT LOG");
                 sub.setText(mqttLogEnabled ? "trace ON" : "trace OFF");
-                sub.setTextColor(mqttLogEnabled ? 0xFF39D353 : 0xFFFF5F56);
+                sub.setTextColor(mqttLogEnabled
+                        ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
+                        : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
             } else {
                 // SET_Debug drives getCount(), so the icon/subtitle tables can
                 // fall short if only one of the three is extended. Degrade to a
@@ -1833,6 +2047,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         ThemeManager.tintFrameStroke(this, BTN_Debug,        R.color.stroke_line_color);
         ThemeManager.tintFrameStroke(this, BTN_ClearConsole, R.color.stroke_line_color);
         ThemeManager.tintFrameStroke(this, TEXT_ConnectInfo, R.color.stroke_line_color);
+
+        _updatePageButtonStates(navPageIndex);
+
+        // Only re-tint the border/text - the fill keeps drifting undisturbed.
+        if (dualColorBtnBg != null) {
+            float dp = getResources().getDisplayMetrics().density;
+            dualColorBtnBg.setStroke(1.5f * dp, ThemeManager.getColor(this, R.color.skbar_settings_title));
+        }
+        if (BTN_DualColorOpen != null) {
+            BTN_DualColorOpen.setTextColor(ThemeManager.getColor(this, R.color.wheel_label_text));
+        }
 
         if (LED != null) LED.applyThemeColors();
     }
@@ -1971,53 +2196,112 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     /* ====================================================== */
-    /*  Rainbow text animation  (ConnectInfo label)           */
+    /*  ConnectInfo label effects - neon flicker / scanline    */
     /* ====================================================== */
+    /*  Connected (Connected/Cloud) -> neon flicker (this label
+     *  IS the good/normal state, so it stays in the theme's own
+     *  accent colour - text_default - rather than switching to
+     *  status_on_green, which would clash with the amber palette).
+     *  Not connected (everything else) -> sliding red scanline
+     *  underline, reusing status_off_red so it reads as "trouble"
+     *  the same way every other status dot in the app already does.
+     *  Both replace the old always-on rainbow gradient - see
+     *  DataReceive._setStatus() for what calls these and when. */
 
     /**
-     * Start a scrolling rainbow gradient on the ConnectInfo TextView.
-     * If the effect is already running, returns immediately (idempotent).
+     * Start the neon-flicker effect: an irregular alpha dip (like a
+     * neon sign settling) plus a constant soft glow, looping forever.
+     * Idempotent - returns immediately if already running.
      *
      * @param textView  The TextView to animate (typically TEXT_ConnectInfo).
      */
-    public void _RainbowTextON(TextView textView) {
-        if (ConnectInfoAnimator != null && ConnectInfoAnimator.isRunning()) return;
+    public void _NeonFlickerON(TextView textView) {
+        if (ConnectNeonAnimator != null && ConnectNeonAnimator.isRunning()) return;
 
-        final Paint paint = textView.getPaint();
-        final float textWidth = paint.measureText(textView.getText().toString());
+        int glow = ContextCompat.getColor(this, R.color.text_glow_shadow);
+        textView.setShadowLayer(10f, 0f, 0f, glow);
 
-        final int[] rainbow = {
-            0xFFFF0000, 0xFFFF7F00, 0xFFFFFF00, 0xFF00FF00,
-            0xFF0000FF, 0xFF4B0082, 0xFF8B00FF, 0xFFFF0000
-        };
+        // Irregular flicker beats (three quick dips near the start of each
+        // ~3.2s loop, then a long steady stretch) - keyframe fractions, not
+        // a smooth sine, so it actually reads as "flicker" rather than "pulse".
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofKeyframe("alpha",
+                Keyframe.ofFloat(0f,    1f),
+                Keyframe.ofFloat(0.03f, 1f),
+                Keyframe.ofFloat(0.04f, 0.4f),
+                Keyframe.ofFloat(0.05f, 1f),
+                Keyframe.ofFloat(0.06f, 1f),
+                Keyframe.ofFloat(0.07f, 0.4f),
+                Keyframe.ofFloat(0.08f, 1f),
+                Keyframe.ofFloat(0.09f, 1f),
+                Keyframe.ofFloat(0.10f, 0.4f),
+                Keyframe.ofFloat(0.11f, 1f),
+                Keyframe.ofFloat(1f,    1f));
 
-        ConnectInfoAnimator = ValueAnimator.ofFloat(0, 1);
-        ConnectInfoAnimator.setDuration(10000);
-        ConnectInfoAnimator.setRepeatCount(ValueAnimator.INFINITE);
-        ConnectInfoAnimator.setInterpolator(null);
-        ConnectInfoAnimator.addUpdateListener(a -> {
-            float val = (float) a.getAnimatedValue();
-            LinearGradient grad = new LinearGradient(
-                    val * textWidth, 0,
-                    (val * textWidth) + textWidth, 0,
-                    rainbow, null, Shader.TileMode.REPEAT);
-            paint.setShader(grad);
-            textView.invalidate();
-        });
-        ConnectInfoAnimator.start();
+        ConnectNeonAnimator = ObjectAnimator.ofPropertyValuesHolder(textView, pvh);
+        ConnectNeonAnimator.setDuration(3200);
+        ConnectNeonAnimator.setRepeatCount(ValueAnimator.INFINITE);
+        ConnectNeonAnimator.start();
     }
 
     /**
-     * Stop the rainbow gradient animation on the ConnectInfo TextView.
-     * Resets the paint shader so the text returns to its default colour.
+     * Stop the neon-flicker effect and restore the label to its normal,
+     * fully-opaque, un-glowed state.
      *
      * @param textView  The TextView to reset (typically TEXT_ConnectInfo).
      */
-    public void _RainbowTextOFF(TextView textView) {
-        if (ConnectInfoAnimator != null && ConnectInfoAnimator.isRunning()) {
-            ConnectInfoAnimator.cancel();
+    public void _NeonFlickerOFF(TextView textView) {
+        if (ConnectNeonAnimator != null && ConnectNeonAnimator.isRunning()) {
+            ConnectNeonAnimator.cancel();
         }
-        textView.getPaint().setShader(null);
+        textView.setAlpha(1f);
+        textView.setShadowLayer(0f, 0f, 0f, 0);
+    }
+
+    /**
+     * Start the scanline effect: a short bright bar slides back and forth
+     * along the track just inside TEXT_ConnectInfo's bottom edge, sized to
+     * whatever the current status text measures (the track's width already
+     * follows _connectinfo via ConstraintLayout - see activity_main.xml).
+     * Idempotent - returns immediately if already running.
+     */
+    public void _ScanlineON() {
+        if (LAY_ConnectScanline == null || VIEW_ConnectScanlineFill == null) return;
+        if (ConnectScanlineAnimator != null && ConnectScanlineAnimator.isRunning()) return;
+
+        LAY_ConnectScanline.setVisibility(View.VISIBLE);
+
+        // Wait one layout pass so LAY_ConnectScanline has picked up
+        // _connectinfo's just-changed width before we measure it.
+        LAY_ConnectScanline.post(() -> {
+            int trackWidth = LAY_ConnectScanline.getWidth();
+            if (trackWidth <= 0) return;   // not laid out yet - next status change will retry
+
+            int fillWidth = Math.max((int) (trackWidth * 0.4f), 1);
+            ViewGroup.LayoutParams lp = VIEW_ConnectScanlineFill.getLayoutParams();
+            lp.width = fillWidth;
+            VIEW_ConnectScanlineFill.setLayoutParams(lp);
+
+            float range = trackWidth - fillWidth;
+            ConnectScanlineAnimator = ValueAnimator.ofFloat(0f, range);
+            ConnectScanlineAnimator.setDuration(1400);
+            ConnectScanlineAnimator.setRepeatCount(ValueAnimator.INFINITE);
+            ConnectScanlineAnimator.setRepeatMode(ValueAnimator.REVERSE);
+            ConnectScanlineAnimator.setInterpolator(new AccelerateDecelerateInterpolator());
+            ConnectScanlineAnimator.addUpdateListener(a ->
+                    VIEW_ConnectScanlineFill.setTranslationX((float) a.getAnimatedValue()));
+            ConnectScanlineAnimator.start();
+        });
+    }
+
+    /**
+     * Stop the scanline effect and hide the track entirely.
+     */
+    public void _ScanlineOFF() {
+        if (ConnectScanlineAnimator != null && ConnectScanlineAnimator.isRunning()) {
+            ConnectScanlineAnimator.cancel();
+        }
+        if (LAY_ConnectScanline != null) LAY_ConnectScanline.setVisibility(View.GONE);
+        if (VIEW_ConnectScanlineFill != null) VIEW_ConnectScanlineFill.setTranslationX(0f);
     }
 
     /* ====================================================== */

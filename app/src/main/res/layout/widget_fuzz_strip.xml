@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compact 4x1 home-screen widget: temp / hum / diffuser refill % on one
+     row, connection icon (local WiFi vs MQTT cloud) at the end of it,
+     then a thin "Updated HH:mm" + manual-refresh row below. Diffuser icon
+     color + text switch (violet%/blue no-water/red REF) at runtime in
+     FuzzWidgetProvider.buildViews(). Every icon is a small FrameLayout:
+     a dim offset copy behind the real one fakes a soft drop shadow,
+     since ImageView has no shadowLayer and elevation shadows need a
+     background/outline transparent icons don't have.
+     RemoteViews only - FrameLayout/LinearLayout/TextView/ImageView. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="28dp"
+                android:layout_height="28dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginTop="1dp"
+                    android:src="@drawable/temp"
+                    android:tint="@color/widget_text_shadow" />
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/temp"
+                    android:tint="@color/icon_tint_temperature" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/widget_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="--°"
+                android:textColor="@color/widget_text_color"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="28dp"
+                android:layout_height="28dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginTop="1dp"
+                    android:src="@drawable/hum"
+                    android:tint="@color/widget_text_shadow" />
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/hum"
+                    android:tint="@color/icon_tint_humidity" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/widget_hum"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="--%"
+                android:textColor="@color/widget_text_color"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="28dp"
+                android:layout_height="28dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginTop="1dp"
+                    android:src="@drawable/_info_diffuser"
+                    android:tint="@color/widget_text_shadow" />
+
+                <ImageView
+                    android:id="@+id/widget_diffuser_icon"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/_info_diffuser"
+                    android:tint="@color/status_parfum_violet" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/widget_diffuser"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="--%"
+                android:textColor="@color/widget_text_color"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:shadowColor="@color/widget_text_shadow"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="28dp"
+            android:layout_height="28dp">
+
+            <ImageView
+                android:id="@+id/widget_conn_icon_shadow"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="1dp"
+                android:layout_marginTop="1dp"
+                android:src="@drawable/ic_wifi_4"
+                android:tint="@color/widget_text_shadow" />
+
+            <ImageView
+                android:id="@+id/widget_conn_icon"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_wifi_4"
+                android:tint="@color/widget_text_color" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Divider - a plain android.view.View isn't in RemoteViews' allowed
+         class list (only specific containers + TextView/ImageView/etc are),
+         so a content-less TextView stands in for it here; that IS allowed. -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="6dp"
+        android:background="@color/stroke_line_color"
+        android:text="" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/widget_last_update"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="--:--"
+            android:textColor="@color/widget_text_color"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:shadowColor="@color/widget_text_shadow"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="3" />
+
+        <FrameLayout
+            android:layout_width="24dp"
+            android:layout_height="24dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginStart="1dp"
+                android:layout_marginTop="1dp"
+                android:src="@drawable/ic_widget_refresh"
+                android:tint="@color/widget_text_shadow" />
+
+            <ImageView
+                android:id="@+id/widget_refresh_btn"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_widget_refresh"
+                android:tint="@color/widget_text_color" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+</LinearLayout>
