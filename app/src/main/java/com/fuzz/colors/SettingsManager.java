@@ -92,6 +92,7 @@ import android.widget.TextView;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.drawable.DrawableCompat;
 
+import com.xw.repo.BubbleConfigBuilder;
 import com.xw.repo.BubbleSeekBar;
 
 import java.util.ArrayList;
@@ -135,6 +136,22 @@ public class SettingsManager {
 
     /** Maximum brightness/clear incremental step */
     private final int LED_MAX_BAR_BRCL_INCREMENTAL = 10;
+
+    /**
+     * Bar-row value ranges at or below this get per-value snap-stepping
+     * (BubbleConfigBuilder#sectionCount / #seekStepSection) instead of free
+     * continuous dragging - see _buildBarRow(). Currently only the 1-10
+     * BR/CL INCREMENTAL settings qualify.
+     */
+    private static final int _TINY_BAR_RANGE_THRESHOLD = 20;
+
+    /**
+     * thumbRadiusOnDragging (dp) applied to tiny-range bar rows only - large
+     * enough that the section-mark dots it also sizes (see _buildBarRow())
+     * clear the row template's 5dp track stroke instead of being painted
+     * over by it.
+     */
+    private static final int _TINY_BAR_MARK_THUMB_RADIUS_DP = 12;
 
     // --------------------------------------------------------
     // Debug / TestMode string tables  (read-only)
@@ -881,8 +898,37 @@ public class SettingsManager {
         label.setText(s.description());
 
         int max = _effectiveMax(s);
-        bar.getConfigBuilder().min(s.minValue()).max(Math.max(max, s.minValue() + 1))
-                .progress(s.currentValue()).build();
+        int clampedMax = Math.max(max, s.minValue() + 1);
+        int range = clampedMax - s.minValue();
+
+        BubbleConfigBuilder cfg = bar.getConfigBuilder().min(s.minValue()).max(clampedMax)
+                .progress(s.currentValue());
+        // Tiny ranges (e.g. the 1-10 BR/CL INCREMENTAL settings) get
+        // per-value snap-stepping plus visible dot marks, so a drag lands
+        // crisply on one of the handful of valid values and you can see
+        // exactly where each one sits. Left as a plain continuous fill bar
+        // above the threshold - forcing a section per unit across a wide
+        // range (e.g. 0-180s) would turn quick coarse positioning into a
+        // fiddly notched drag (and 180 dots into visual noise), fighting the
+        // bar's "broad strokes, steppers do exact values" role (see the
+        // class doc above).
+        if (range <= _TINY_BAR_RANGE_THRESHOLD) {
+            // showSectionMark() draws its dots in mTrackColor/mSecondTrackColor
+            // (BubbleSeekBar.java), so they pick up whatever _tintRowChrome()
+            // sets below without any extra color config here.
+            //
+            // thumbRadiusOnDragging also doubles as the section-mark dot
+            // radius in BubbleSeekBar's draw code (dotRadius = (thumbRadius
+            // OnDragging - 2dp) / 2), and the marks are drawn UNDER the
+            // track/second-track line, not over it - at this row template's
+            // default 6dp (dot diameter 4dp) that's smaller than the 5dp
+            // track stroke, so the line fully painted over the dots and
+            // they never showed. Bumping it just for these tiny-range rows
+            // makes the dots big enough to poke out past the line.
+            cfg.sectionCount(range).seekStepSection().showSectionMark()
+                    .thumbRadiusOnDragging(_TINY_BAR_MARK_THUMB_RADIUS_DP);
+        }
+        cfg.build();
 
         RowViews rv = new RowViews();
         rv.type = s.type();

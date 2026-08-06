@@ -167,6 +167,9 @@ class FlashConsole:
         # and stop itself instead of running on indefinitely. See
         # _reconnect_telnet_with_retry.
         self._telnet_reconnect_token = 0
+        # Same idea as _telnet_reconnect_token, for the post-flash serial
+        # reconnect chain. See _reconnect_serial_with_retry.
+        self._serial_reconnect_token = 0
         
         # UI state
         self.serial_ports = []
@@ -1103,7 +1106,12 @@ class FlashConsole:
             if kind == 'serial':
                 self.serial_port_var.set(a)
                 self.baud_var.set(b)
-                self._connect_serial()
+                # Not a plain _connect_serial(): esptool has only just closed
+                # the port, and Windows can briefly keep holding the OS-level
+                # handle before it's actually free - an instant single
+                # attempt here regularly lost that race with
+                # PermissionError(13, 'Access is denied').
+                self._reconnect_serial_with_retry()
             else:
                 self.telnet_ip_var.set(a)
                 self.telnet_port_var.set(b)
@@ -1115,6 +1123,55 @@ class FlashConsole:
                 # exactly what was showing up here.
                 self._reconnect_telnet_with_retry()
         self._resume_connections = []
+
+    # esptool closes the port itself right after flashing, but Windows can
+    # take a moment to actually release the underlying OS handle - a single
+    # immediate reopen here regularly raced that and lost with
+    # PermissionError(13, 'Access is denied'). This is a local resource, not
+    # a network round-trip like the telnet reboot wait below, so the budget
+    # and delay are both far shorter.
+    _SERIAL_RECONNECT_BUDGET_S = 5
+    _SERIAL_RECONNECT_DELAY_MS = 250
+
+    def _reconnect_serial_with_retry(self, deadline=None, attempt=0, token=None):
+        """Retry the post-flash serial reconnect for up to
+        _SERIAL_RECONNECT_BUDGET_S seconds while Windows finishes releasing
+        the COM port handle esptool just closed. pyserial's open() fails (or
+        succeeds) essentially instantly, so unlike the telnet chain below
+        this runs straight on the UI thread instead of a worker thread.
+
+        token: mirrors _reconnect_telnet_with_retry's cancellation guard - a
+        manual Connect/Disconnect click (or a newer chain) supersedes and
+        silently stops this one. See that method's docstring for why a
+        stale chain left running is worse than it sounds."""
+        now = time.time()
+        first_call = deadline is None
+        if first_call:
+            self._serial_reconnect_token += 1
+            token = self._serial_reconnect_token
+            deadline = now + self._SERIAL_RECONNECT_BUDGET_S
+        elif token != self._serial_reconnect_token:
+            return  # superseded - a manual connect/disconnect or a newer chain took over
+
+        port = self.serial_port_var.get().strip()
+        baud = self.baud_var.get()
+
+        conn = SerialConnection(port, baud)
+        success, message = conn.connect()
+
+        if success:
+            self.serial_connection = conn
+            self._log(self.console_output, f"Connected to {port} @ {baud}", tag='serial')
+            self.serial_connect_btn.state(['disabled'])
+            self.serial_disconnect_btn.state(['!disabled'])
+            return
+
+        if now >= deadline:
+            self._log(self.console_output, f"Connection failed: {message}", tag='serial')
+            return
+
+        self.root.after(self._SERIAL_RECONNECT_DELAY_MS,
+                       lambda: self._reconnect_serial_with_retry(deadline, attempt + 1, token))
 
     # A device's WiFi-rejoin time after an OTA reboot varies a lot in
     # practice (observed anywhere from ~5s to 90s+ on the same device/network)
@@ -1228,15 +1285,24 @@ class FlashConsole:
         
         self.serial_connection = SerialConnection(port, baud)
         success, message = self.serial_connection.connect()
-        
+
         if success:
+            # Only a successful manual connect supersedes a still-running
+            # post-flash retry chain - see _reconnect_serial_with_retry's
+            # docstring (mirrors the same reasoning as the telnet token).
+            self._serial_reconnect_token += 1
             self._log(self.console_output, f"Connected to {port} @ {baud}", tag='serial')
             self.serial_connect_btn.state(['disabled'])
             self.serial_disconnect_btn.state(['!disabled'])
         else:
             self._log(self.console_output, f"Connection failed: {message}", tag='serial')
-            
+
     def _disconnect_serial(self):
+        # Also supersede any pending auto-reconnect chain - an explicit
+        # Disconnect means the user doesn't want to be reconnected out from
+        # under them a moment later.
+        self._serial_reconnect_token += 1
+
         if self.serial_connection:
             self.serial_connection.disconnect()
             self.serial_connection = None
