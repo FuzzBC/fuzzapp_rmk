@@ -13,6 +13,9 @@ See AGENTS.md for the rule on keeping this updated.
 - Fixed: an active heartbeat LED animation could keep running in the
   background (and draining battery) after closing the app, instead of
   stopping when the app closes.
+- Changed: the brightness/clear increment slider (a small 1-10 range) now
+  snaps to each value with a visible dot, instead of a smooth drag where
+  it was hard to tell exactly which value you'd landed on.
 
 ## 8.004
 - Fixed: the home-screen widgets' background refresh never actually
