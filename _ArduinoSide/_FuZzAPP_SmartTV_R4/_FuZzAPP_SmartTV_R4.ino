@@ -1436,6 +1436,35 @@ static inline void ForceShow() {
 	LED::State.LastRefreshTime = TimeNow;
 }
 
+/**
+ * @brief  Shared final step for "stop actively driving the strip": clear every
+ *         pending ramp target, blank the buffer, kill every non-locked task,
+ *         then force an immediate hardware push. This exact ordering - clear
+ *         targets and blank BEFORE killing tasks, ForceShow() LAST - was the
+ *         subject of six separate bugfix cycles (changelog 2.4.5-2.5.6) landed
+ *         piecemeal across cmdEnableDisable()/UDPRAW::End()/T_LEDS_TO_OFF()
+ *         before converging here; any future ordering fix now only needs to
+ *         land in this one place.
+ *
+ * @param  killTag  Task-name tag passed through to TSK::KillTasksAvoidLocked()
+ *                   (the caller's own registered name, so it isn't killed
+ *                   mid-execution by its own cleanup).
+ *
+ * Deliberately does NOT touch MOTION::State.Status, TV::State.Status,
+ * UDPRAW::State.Status, or call DIF::Shutdown()/DIF::AutoOff()/APP::updStatus()
+ * - callers differ legitimately on those (e.g. a full LED disable never
+ * re-arms motion, UDPRAW::End() re-arms it only conditionally) and must set
+ * them before calling this.
+ */
+static void ForceOffAndKillTasks(const char *killTag) {
+	for (int i = 0; i < LED_NUM_TOTAL; i++) {
+		LED::State.TargetColor[i] = CRGB(0, 0, 0);
+	}
+	LED::setAll(0, 0, 0, 0);
+	TSK::KillTasksAvoidLocked(killTag);
+	LED::ForceShow();
+}
+
 /* * * * * * * * * * * * * * * * * * * * * * * * */
 /* LED SMOOTH TRANSITION TASKS  * * * * * * * * * */
 /* * * * * * * * * * * * * * * * * * * * * * * * */
@@ -1910,13 +1939,10 @@ void T_LEDS_TO_OFF(taskId_t taskId) {
             PRNT::_print(PRNT::formatMSG("%32s : fade complete - all LEDs off" NL, "T_LEDS_TO_OFF"));
         #endif
 
-        setAll(0, 0, 0, 0);
-        Show();
-
         MOTION::State.Status = motON;
         APP::updStatus("LED::T_LEDS_TO_OFF");
         APP::updColors_Force();
-        TSK::KillTasksAvoidLocked("T_LEDS_TO_OFF");
+        ForceOffAndKillTasks("T_LEDS_TO_OFF");
     }
 }
 
@@ -7219,24 +7245,16 @@ void cmdEnableDisable() {
 	LED::State.Enabled = !LED::State.Enabled;
 
 	if (!LED::State.Enabled) { // Led's Disabled
-		// Disabled means dark and staying dark - not "handed to motion". These
-		// two presets were doing what End's handover did: motON re-arms
-		// motion, which relights the strip on the next MOTION::Status(), and any
-		// transition task left running ramps back up because LED::setAll() does
-		// not touch LED::State.TargetColor. So force everything idle and clear the
-		// targets, then blank and kill - blank-before-kill, same order as
-		// T_LEDS_TO_OFF, so nothing re-arms after the strip goes dark.
+		// Disabled means dark and staying dark - not "handed to motion". motON
+		// re-arms motion, which relights the strip on the next MOTION::Status(),
+		// so it must NOT be set here (unlike the other ForceOffAndKillTasks()
+		// callers). See ForceOffAndKillTasks()'s doc for why the clear/blank/kill
+		// ordering itself is shared.
 		TV::State.Status     = false;                                          // TV idle - State
 		MOTION::State.Status = motOFF;                                         // Do NOT re-arm - State
 		UDPRAW::State.Status = false;                                          // Ambilight off - State
 
-		for (int i = 0; i < LED_NUM_TOTAL; i++) {
-			LED::State.TargetColor[i] = CRGB(0, 0, 0);                         // Nothing left to ramp toward - State
-		}
-
-		LED::setAll(0, 0, 0, 0);                                         // Blank the buffer - Action
-		TSK::KillTasksAvoidLocked("Enable_Disable");                // Cancel every ramp - Action
-		LED::ForceShow();                                                // Push the blank NOW - the periodic
+		LED::ForceOffAndKillTasks("Enable_Disable");                     // Push the blank NOW - the periodic
 		                                                                // refresh is gated on LED::State.Enabled and
 		                                                                // will never run once disabled - Action
 		DIF::Shutdown();                                                 // Force diffuser off - Action
@@ -10781,12 +10799,7 @@ void End(bool handover) {
 	// This is what ends the strip dark - not the motion state above, which
 	// stays armed so the sensors keep working.
 	if (!handover) {
-		for (int i = 0; i < LED_NUM_TOTAL; i++) {
-			LED::State.TargetColor[i] = CRGB(0, 0, 0);                          // No lit destination left - State
-		}
-		LED::setAll(0, 0, 0, 0);                                          // Blank the buffer - Action
-		TSK::KillTasksAvoidLocked("UDPRAW_End");                         // Cancel every ramp - Action
-		LED::ForceShow();                                                // Push the blank immediately - Action
+		LED::ForceOffAndKillTasks("UDPRAW_End");                         // No lit destination left - Action
 	}
 }
 
@@ -11158,12 +11171,12 @@ bool Connected_Cached() {
  * @brief  Poll WiFi.localIP() until a valid (non-zero) address is assigned.
  *
  * After WL_CONNECTED the DHCP lease may take another second or two.
- * Polls every 500 ms for up to NET_IP_TIMEOUT ms before giving up.
+ * Polls every 500 ms for up to NET_IP_TIMEOUT seconds before giving up.
  *
  * @return Assigned IPAddress, or IPAddress(0,0,0,0) on timeout.
  */
 IPAddress getIP() {
-    uint8_t ticks = (uint8_t)(NET_IP_TIMEOUT / 500);           // poll budget - Setup
+    uint8_t ticks = (uint8_t)(NET_IP_TIMEOUT * 2);              // poll budget, seconds -> 500ms ticks - Setup
     IPAddress ip  = WiFi.localIP();                             // First read - Action
 
     while (ip == IPAddress(0, 0, 0, 0) && ticks > 0) {
@@ -11200,7 +11213,7 @@ void Reconnect(taskId_t taskId) {
 
     Connect();                                     // Issue handshake - Action
 
-    uint8_t ticks = (uint8_t)(NET_CONNECT_TIMEOUT / 500);  // 10 s ceiling - Setup
+    uint8_t ticks = (uint8_t)(NET_CONNECT_TIMEOUT * 2);     // 10 s ceiling, seconds -> 500ms ticks - Setup
     // Don't starve an active ambilight stream for the full ceiling - WaitWithYield()
     // never services UDPRAW::Loop(), so every tick here is dead time for the LEDs.
     // Bail fast instead; this task's own reschedule (NET_RETRY_DELAY) tries again soon.

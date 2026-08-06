@@ -77,9 +77,10 @@
 // Buzzer: A0 peak-hold envelope; 1 beep = mode advance confirm, >1 = shutdown
 // Logging: every line is tagged "[TAG   ] message" (UDP_R, UDP_S, MODE, WATER,
 //          PARFUM, BUZZ, STRIP, SEQ, WIFI, OTA, TELNET, CMD, BOOT, DIF).
-//          Only important lines are emitted by default; define _DEBUG in the .h
-//          to add the repeating per-poll/per-frame detail. Console replies
-//          (S / D / ? / banner) always print.
+//          Two tiers, same naming as the SmartTV file: LITE lines (logMsg)
+//          are always emitted; VERBOSE lines (vlogMsg) add the repeating
+//          per-poll/per-frame detail and need DIF_DEBUG_VERBOSE defined in
+//          the .h. Console replies (S / D / ? / banner) always print.
 // Telnet: port 23, same command set as Serial — M0-M4/E/Crrggbb/S/D/? (see cmdHelp()),
 //         plus telnet-only "Q" which closes the session (sent by the phone app
 //         when its TELNET console toggle is switched off)
@@ -209,6 +210,16 @@ static uint8_t        g_seqModeAttempts = 0;
 static bool          g_wifiConnecting   = false;
 static unsigned long g_wifiConnNextMs   = 0;
 
+// True only for the very first WiFi connect of this power-on cycle. The
+// MODE-cycling resync in startWifiSequence() exists to recalibrate the
+// mirrored g_mode/g_powered in case someone pressed the diffuser's own
+// physical button while this ESP had no way to observe it - only plausible
+// across a real power-on. A later WiFi drop/reconnect mid-session doesn't
+// change anything about the diffuser itself, so it must NOT re-trigger that
+// disruptive resync (physically stepping MODE and shutting the diffuser
+// down) just because the WiFi radio blipped. See finishWifiConnect().
+static bool          g_coldBoot         = true;
+
 // ── Out-of-water "Dn while dry" strip alert ───────────────────
 static bool          g_oowAlertActive   = false;
 
@@ -272,7 +283,7 @@ static const uint8_t PARFUM_BREATHE_ORDER[STRIP_LED_COUNT] = { 4, 5, 3, 6, 2, 7,
 #define dbgPrint(s)    LOG::dbgWrite(s)
 #define dbgPrintln(s)  do { LOG::dbgWrite(s); LOG::dbgWrite("\n"); } while(0)
 
-#ifdef _DEBUG
+#ifdef DIF_DEBUG_VERBOSE
     #define vlogMsg(...)  LOG::logMsg(__VA_ARGS__)
 #else
     #define vlogMsg(...)  do { } while (0)     /* compiled out, strings too */
@@ -291,6 +302,7 @@ static uint8_t g_ackResult = ACK_OK;   // outcome selected by UDP::udpDispatch()
 namespace LOG {
     static void cmdDebugInfo();
     static void cmdHelp();
+    static void cmdQuickStatus();
     static void dbgPrintf(const char *fmt, ...);
     static void dbgWrite(const char *buf);
     static char* formatMSG(const char *fmt, ...);
@@ -402,6 +414,12 @@ namespace TELNET {
     static void tickTelnet();
 }
 
+#ifdef DIF_TEST_MODE
+namespace TEST {
+    static void runSelfTest();
+}
+#endif
+
 
 /* ============================================================================
    FUNCTIONS - grouped by category, alphabetical within each (see FUNCS map in
@@ -432,24 +450,24 @@ static void cmdDebugInfo() {
     dbgPrintf ("%-14s: %u B\n", "Free heap", (unsigned)ESP.getFreeHeap());
     dbgPrintln("── Diffuser ──");
     dbgPrintf ("%-14s: %s\n", "Power", g_powered ? "ON" : "OFF");
-    dbgPrintf ("%-14s: M%u (%s)%s\n", "Mode", g_mode, MODE::modeName(g_mode),
+    dbgPrintf ("%-14s: %s%s\n", "Mode", MODE::modeName(g_mode),
                g_outOfWater ? "  [OUT OF WATER]" : "");
-    dbgPrintf ("%-14s: lastDn=%s (M%u)   retried=%s\n", "Auto-retry",
-               g_haveLastDn ? "yes" : "no", g_lastDnMode, g_shutdownRetried ? "yes" : "no");
+    dbgPrintf ("%-14s: last settings=%s (have=%s)   retried=%s\n", "Auto-retry",
+               MODE::modeName(g_lastDnMode), g_haveLastDn ? "yes" : "no", g_shutdownRetried ? "yes" : "no");
     if (g_parfumActive) {
         dbgPrintf("%-14s: ACTIVE - %u/%u min remaining\n", "Parfum", PARFUM::parfumRemainingMin(), g_parfumSetMin);
         if (g_parfumPendingKind == PARFUM_PEND_ON)
-            dbgPrintf("%-14s: Dn -> M%u (%s)\n", "Parfum queue", g_parfumPendingMode, MODE::modeName(g_parfumPendingMode));
+            dbgPrintf("%-14s: turn on -> %s\n", "Parfum queue", MODE::modeName(g_parfumPendingMode));
         else if (g_parfumPendingKind == PARFUM_PEND_OFF)
-            dbgPrintf("%-14s: Df (off)\n", "Parfum queue");
+            dbgPrintf("%-14s: turn off\n", "Parfum queue");
         else if (g_parfumHavePrevDn)
-            dbgPrintf("%-14s: none - expiry reverts to M%u (%s)\n", "Parfum queue", g_parfumPrevMode, MODE::modeName(g_parfumPrevMode));
+            dbgPrintf("%-14s: none - expiry reverts to %s\n", "Parfum queue", MODE::modeName(g_parfumPrevMode));
         else
             dbgPrintf("%-14s: none - expiry shuts down (no prior mode)\n", "Parfum queue");
     } else
         dbgPrintf("%-14s: inactive\n", "Parfum");
     if (g_modeTargetActive)
-        dbgPrintf("%-14s: -> M%u (%s), %s\n", "Targeting", g_modeTarget, MODE::modeName(g_modeTarget),
+        dbgPrintf("%-14s: -> %s, %s\n", "Targeting", MODE::modeName(g_modeTarget),
                   g_modePending ? "press sent, awaiting buzzer" : "advancing");
     dbgPrintf ("%-14s: env=%.1f   active=%s   burst=%u   quiet=%u   totalBeeps=%lu\n", "Buzzer",
                g_buzEnv, g_buzToneActive ? "yes" : "no", g_buzBurst, g_buzQuiet, g_buzTotalCount);
@@ -460,7 +478,7 @@ static void cmdDebugInfo() {
     dbgPrintf ("%-14s: %ums/frame\n", "Speed", g_effectTickMs);
     dbgPrintf ("%-14s: #%02X%02X%02X\n", "Base1", g_effectBase1.r, g_effectBase1.g, g_effectBase1.b);
     dbgPrintf ("%-14s: #%02X%02X%02X\n", "Base2", g_effectBase2.r, g_effectBase2.g, g_effectBase2.b);
-    dbgPrintf ("%-14s: %s\n", "OOW alert", g_oowAlertActive ? "active" : "no");
+    dbgPrintf ("%-14s: %s\n", "No-water alert", g_oowAlertActive ? "active" : "no");
     dbgPrintf ("%-14s: %s\n", "WiFi seq", g_wifiConnecting ? "connecting" : "idle");
     dbgPrintln("── Usage ──");
     dbgPrintf ("%-14s: %s (effective, mode-weighted)\n", "Since refill", uptimeStr((unsigned long)g_usageAccumSec * 1000UL));
@@ -500,9 +518,22 @@ static void cmdHelp() {
     dbgPrintln("Crrggbb    Set solid strip colour (manual test — full brightness)");
     dbgPrintln("S          Quick status (mode / strip)");
     dbgPrintln("D          Debug info (full state dump — mode, strip, buzzer, WiFi)");
+#ifdef DIF_TEST_MODE
+    dbgPrintln("T          Run self-test - sweeps every command (no WiFi/OTA), verbose");
+#endif
     dbgPrintln("? or H     This help");
     dbgPrintln("Q          Close this telnet session (telnet only)");
     dbgPrintln("──────────────────────────");
+}
+
+/** @brief  Serial/Telnet "S" — quick human-readable status (mode / parfum / strip). */
+static void cmdQuickStatus() {
+    dbgPrintf ("%-8s: %s\n", "Power", g_powered ? "ON" : "OFF");
+    dbgPrintf ("%-8s: %s%s\n", "Mode", MODE::modeName(g_mode), g_outOfWater ? "  [OUT OF WATER]" : "");
+    if (g_parfumActive)
+        dbgPrintf("%-8s: ACTIVE - %u min remaining\n", "Parfum", PARFUM::parfumRemainingMin());
+    uint8_t code = STRIP::stripStatusCode();
+    dbgPrintf ("%-8s: %s\n", "Strip", STRIP::stripStatusName(code));
 }
 
 /** @brief  printf to 256-byte stack buffer → dbgWrite. */
@@ -612,15 +643,15 @@ static bool looksLikeProblem(const char *msg) {
  *
  * Use the short forms below rather than calling this directly:
  *
- *   logMsg(tag, fmt, ...)   ALWAYS emitted — state changes, commands that
- *                           did something, errors, boot/network events.
- *   vlogMsg(tag, fmt, ...)  Only when _DEBUG is defined in the .h — raw
- *                           packet dumps, per-frame/per-poll detail, and
- *                           anything that repeats on a timer.
+ *   logMsg(tag, fmt, ...)   LITE — ALWAYS emitted: state changes, commands
+ *                           that did something, errors, boot/network events.
+ *   vlogMsg(tag, fmt, ...)  VERBOSE — only when DIF_DEBUG_VERBOSE is defined
+ *                           in the .h: raw packet dumps, per-frame/per-poll
+ *                           detail, and anything that repeats on a timer.
  *
  * Console REPLIES (S / D / ? / connect banner) never go through here: they
- * answer a request and must show up regardless of _DEBUG, so they keep
- * using raw dbgPrintf/dbgPrintln.
+ * answer a request and must show up regardless of DIF_DEBUG_VERBOSE, so they
+ * keep using raw dbgPrintf/dbgPrintln.
  *
  * @param  tag  Short subsystem tag, e.g. "UDP_R", "MODE", "WATER".
  * @param  fmt  printf format WITHOUT trailing newline — appended here.
@@ -1108,7 +1139,7 @@ static void applyModeAdvance() {
         g_mode++;
     } else {
         applyShutdown();
-        LOG::logMsg("MODE", "-> M0 (OFF)");
+        LOG::logMsg("MODE", "-> OFF");
     }
 }
 
@@ -1133,7 +1164,7 @@ static void applyShutdown() {
     bool passingThrough = g_modeTargetActive && g_modeTargetWraps && !g_outOfWater;
     if (passingThrough) return;
     STRIP::stripOff();
-    if (g_oowAlertActive) { g_oowAlertActive = false; LOG::logMsg("WATER", "OOW alert stopped (OFF)"); }
+    if (g_oowAlertActive) { g_oowAlertActive = false; LOG::logMsg("WATER", "out-of-water alert stopped (shutdown)"); }
 }
 
 static void clearPendingStatusReply() {
@@ -1146,16 +1177,16 @@ static void clearPendingStatusReply() {
  * @param  p  Decoded strip payload — effect-next / solid colour / dual colour.
  */
 static bool cmdDiffuserOn(uint8_t m, const DnPayload &p, bool isWaterRetry) {
-    if (WIFI::wifiSequenceActive()) { LOG::logMsg("UDP_R", "Dn ignored - WiFi self-test sequence active"); return false; }
+    if (WIFI::wifiSequenceActive()) { LOG::logMsg("UDP_R", "turn-on request ignored - WiFi self-test sequence active"); return false; }
     if (!isWaterRetry) {
         g_shutdownRetried = false;            // Genuine new start (real Dn, or non-fast auto-restore) —
     }                                          // re-arm the one-shot; the retry itself must NOT do this.
     if (g_outOfWater) {                       // New start attempt — reset OOW, retry & re-check normally
-        LOG::logMsg("WATER", "Dn received - resetting out-of-water, retrying normal start");
-        if (g_oowAlertActive) { g_oowAlertActive = false; LOG::logMsg("WATER", "OOW alert stopped (retry)"); }
+        LOG::logMsg("WATER", "turn-on request received - clearing out-of-water, retrying normal start");
+        if (g_oowAlertActive) { g_oowAlertActive = false; LOG::logMsg("WATER", "out-of-water alert stopped (retrying)"); }
         g_outOfWater = false;                 // Falls through — buzzerFinalizeBurst will re-diagnose
     }
-    if (m == 0 || m > MODE_MAX) { LOG::logMsg("UDP_R", "Dn invalid mode %02X (M1-M%u)", m, MODE_MAX); return false; }
+    if (m == 0 || m > MODE_MAX) { LOG::logMsg("UDP_R", "turn-on request rejected - mode %u is invalid (must be 1-%u)", m, MODE_MAX); return false; }
 
     g_lastDnMode    = m;                       // Remember for unsolicited-shutdown auto-restart
     g_lastDnPayload = p;
@@ -1175,33 +1206,36 @@ static bool cmdDiffuserOn(uint8_t m, const DnPayload &p, bool isWaterRetry) {
 }
 
 static bool cmdModeTarget(uint8_t t) {
-    if (WIFI::wifiSequenceActive())  { LOG::logMsg("MODE", "ignored - WiFi self-test sequence active"); return false; }
-    if (t > MODE_MAX)         { LOG::logMsg("MODE", "invalid M%u (M0-M%u)", t, MODE_MAX); return false; }
+    if (WIFI::wifiSequenceActive())  { LOG::logMsg("MODE", "mode change ignored - WiFi self-test sequence active"); return false; }
+    if (t > MODE_MAX)         { LOG::logMsg("MODE", "mode %u rejected - out of range (0-%u)", t, MODE_MAX); return false; }
     if (t == 0) {
         if (g_parfumActive) {                      // Local override (console M0) — PARFUM::parfumStop() clears the
             g_parfumActive      = false;           // flag before calling here, so this only fires for
             g_parfumSetMin      = 0;               // Serial/Telnet commands. UDP Df never reaches this.
             g_parfumPendingKind = PARFUM_PEND_NONE; // Drop any queued Dn/Df — explicit local stop wins.
-            LOG::logMsg("PARFUM", "cancelled - local M0 override");
+            g_parfumHavePrevDn  = false;           // Drop the restore snapshot too, same as parfumStop() -
+                                                     // this IS a manual stop, just one that can't route through
+                                                     // parfumStop() itself (it calls back into cmdModeTarget(0)).
+            LOG::logMsg("PARFUM", "cancelled - switched off");
         }
         if (g_oowAlertActive) {
             g_oowAlertActive = false;
-            LOG::logMsg("WATER", "OOW alert stopped (mode-off)");
+            LOG::logMsg("WATER", "out-of-water alert stopped (switched off)");
         }
         STRIP::stripOff();                            // Stop command received — strip off now
         g_modeTargetWraps = false;
         if (!g_powered) {
-            vlogMsg("MODE", "already M0 (OFF)");
+            vlogMsg("MODE", "already off");
             sendPendingStatusReply(UDP_STATUS_AFTER_SHUTDOWN);
             return true;
         }
-        LOG::logMsg("MODE", "M0 - shutdown (long-press)");
+        LOG::logMsg("MODE", "shutdown requested (long-press)");
         g_shutdownCmdPending = true;           // Marks the upcoming buzzer burst as commanded, not a fault
         pulseModeRaw(BTN_LONG_MS);
         return true;
     }
     if (g_powered && g_mode == t) {
-        vlogMsg("MODE", "already M%u (%s)", t, modeName(t));
+        vlogMsg("MODE", "already %s", modeName(t));
         sendPendingStatusReply(UDP_STATUS_AFTER_TARGET);
         return true;
     }
@@ -1213,8 +1247,8 @@ static bool cmdModeTarget(uint8_t t) {
     // touching OFF, so a shutdown mid-sequence there is a real drop, not a step.
     g_modeTargetWraps  = g_powered && (t < g_mode);
     { int steps = g_powered ? (int)t - (int)g_mode : (int)t;
-      LOG::logMsg("MODE", "M%u (%s) -> M%u (%s) [%d step(s)]",
-                g_mode, modeName(g_mode), t, modeName(t), steps); }
+      LOG::logMsg("MODE", "%s -> %s [%d step(s)]",
+                modeName(g_mode), modeName(t), steps); }
     continueModeTarget();
     return true;
 }
@@ -1224,7 +1258,7 @@ static void continueModeTarget() {
     if (!g_modeTargetActive || g_modePending) return;
     if (g_mode == g_modeTarget) {
         g_modeTargetActive = false;
-        LOG::logMsg("MODE", "M%u (%s)", g_mode, modeName(g_mode));
+        LOG::logMsg("MODE", "now %s", modeName(g_mode));
         sendPendingStatusReply(UDP_STATUS_AFTER_TARGET);
         return;
     }
@@ -1299,7 +1333,7 @@ static void buzzerFinalizeBurst() {
             g_modePending = false;
             if (g_mode < MODE_MAX) g_mode++;              // Mirror one confirmed step forward
             g_seqNextMs = millis() + WIFI_SEQ_MODE_GAP_MS; // Pace the next press a little slower
-            vlogMsg("SEQ", "burst %u beep(s) - step confirmed, M%u (%s)", n, g_mode, MODE::modeName(g_mode));
+            vlogMsg("SEQ", "burst %u beep(s) - step confirmed, now %s", n, MODE::modeName(g_mode));
         } else if (n > 1) {
             LOG::logMsg("SEQ", "burst %u beep(s) - shutdown detected, mirror calibrated", n);
             g_modePending = false;
@@ -1347,20 +1381,20 @@ static void buzzerFinalizeBurst() {
         }
 
         if (commanded) {
-            LOG::logMsg("MODE", "M0 (OFF) - commanded");
+            LOG::logMsg("MODE", "shutdown confirmed");
         } else if (expectedPassThru) {
             // Expected shutdown during mode transition to a non-zero target - continue the transition
-            vlogMsg("MODE", "M0 (OFF) - passing through to M%u", g_modeTarget);
+            vlogMsg("MODE", "passing through OFF, continuing to %s", MODE::modeName(g_modeTarget));
         } else if (wasModeTarget && targetWasM0) {
             // Target was M0 - transition complete
-            LOG::logMsg("MODE", "M0 (OFF) - target reached");
+            LOG::logMsg("MODE", "shutdown complete");
         } else if (wasFast && !g_shutdownRetried && g_haveLastDn) {
             // First fast unsolicited drop this cycle — one auto-restart before concluding
             // it's dry. g_shutdownRetried stays true through the retry itself (see
             // cmdDiffuserOn's isWaterRetry) so a second fast drop falls through to OOW
             // below instead of looping; it's only re-armed by a genuine new start.
             g_shutdownRetried = true;
-            LOG::logMsg("WATER", "unsolicited fast shutdown - retrying M%u with last settings", g_lastDnMode);
+            LOG::logMsg("WATER", "unexpected shutdown - retrying %s with last settings", MODE::modeName(g_lastDnMode));
             MODE::cmdDiffuserOn(g_lastDnMode, g_lastDnPayload, true);   // isWaterRetry — don't re-arm the one-shot
         } else if (wasFast) {
             LOG::logMsg("WATER", "out of water - shut down again right after restart");
@@ -1370,6 +1404,8 @@ static void buzzerFinalizeBurst() {
                 g_parfumActive      = false;
                 g_parfumSetMin      = 0;
                 g_parfumPendingKind = PARFUM_PEND_NONE;   // Drop any queued Dn/Df too — tank is dry
+                g_parfumHavePrevDn  = false;              // Drop the restore snapshot too, same as parfumStop() -
+                                                            // a dry tank can't be reverted to "whatever ran before"
                 LOG::logMsg("PARFUM", "cancelled - out of water");
             }
             STRIP::startOowAlert();                   // Overrides MODE::applyShutdown()'s STRIP::stripOff() with blue-alert
@@ -1381,10 +1417,10 @@ static void buzzerFinalizeBurst() {
             // Skip auto-restart while a genuine (wrapping) mode-target transition is still
             // active (e.g., M2→M1 during parfum) - g_modeTargetActive is already false here
             // for an aborted ascending target, so that case still gets the restart.
-            LOG::logMsg("PARFUM", "unsolicited shutdown - restarting, %u min remaining", PARFUM::parfumRemainingMin());
+            LOG::logMsg("PARFUM", "unexpected shutdown - restarting, %u min remaining", PARFUM::parfumRemainingMin());
             MODE::cmdDiffuserOn(g_lastDnMode, g_lastDnPayload);
         } else {
-            LOG::logMsg("MODE", "M0 (OFF) - unsolicited");   // No auto-restore — stays off until a new Dn
+            LOG::logMsg("MODE", "unexpected shutdown");   // No auto-restore — stays off until a new turn-on request
         }
     } else {
         vlogMsg("BUZZ", "unmapped burst");
@@ -1397,7 +1433,7 @@ static void tickBuzzer() {
     int   dev = abs(raw - g_buzBaseline);
     g_buzEnv  = max((float)dev, g_buzEnv * BUZZER_ENV_DECAY);
 
-#if BUZZER_DEBUG
+#ifdef DIF_DEBUG_BUZZER_RAW
     LOG::logMsg("BUZZ", "raw=%d dev=%d env=%.1f act=%d str=%u",
               raw, dev, g_buzEnv, g_buzToneActive, g_buzQuiet);
 #endif
@@ -1478,6 +1514,16 @@ static void finalizeRefillCycle() {
 
 /** @brief  Load all usage-tracking fields from EEPROM (called once from setup()). */
 static void loadUsageFromEeprom() {
+#ifdef DIF_TEST_MODE
+    g_usageAccumSec          = 0;
+    g_refillHistoryCount     = 0;
+    g_refillHistoryNext      = 0;
+    g_totalRefillCount       = 0;
+    for (uint8_t i = 0; i < REFILL_HISTORY_SIZE; i++) g_refillHistory[i] = 0;
+    g_usageLastSavedAccumSec = 0;
+    LOG::logMsg("USAGE", "test mode - EEPROM skipped, starting from zero");
+    return;
+#endif
     EEPROM.get(EE_ADDR_USAGE_ACCUM,    g_usageAccumSec);
     EEPROM.get(EE_ADDR_REFILL_COUNT,   g_refillHistoryCount);
     EEPROM.get(EE_ADDR_REFILL_NEXT,    g_refillHistoryNext);
@@ -1514,6 +1560,12 @@ static void loadUsageFromEeprom() {
  *         used right after a refill cycle finalizes.
  */
 static void saveUsageToEeprom(bool includeHistory) {
+    g_usageLastSaveMs        = millis();
+    g_usageLastSavedAccumSec = g_usageAccumSec;
+#ifdef DIF_TEST_MODE
+    (void)includeHistory;      // test mode - nothing actually written, flash stays untouched
+    return;
+#endif
     EEPROM.put(EE_ADDR_USAGE_ACCUM, g_usageAccumSec);
     if (includeHistory) {
         EEPROM.put(EE_ADDR_REFILL_COUNT,  g_refillHistoryCount);
@@ -1524,8 +1576,6 @@ static void saveUsageToEeprom(bool includeHistory) {
         }
     }
     EEPROM.commit();
-    g_usageLastSaveMs        = millis();
-    g_usageLastSavedAccumSec = g_usageAccumSec;
 }
 
 /**
@@ -1607,8 +1657,6 @@ static bool parfumStart(uint16_t minutes, uint8_t mode) {
     if (minutes < 1)              minutes = 1;
     if (minutes > PARFUM_MAX_MIN) minutes = PARFUM_MAX_MIN;
 
-    uint8_t reqMode = mode;             // keep the requested E purely for the log line below
-
     if (!g_parfumActive) {                     // Fresh window only — a Dp re-trigger while already
         g_parfumHavePrevDn  = g_haveLastDn;    // active just extends/restarts the timer, so keep the
         g_parfumPrevMode    = g_lastDnMode;    // original pre-parfum snapshot instead of re-capturing
@@ -1633,9 +1681,8 @@ static bool parfumStart(uint16_t minutes, uint8_t mode) {
     g_parfumEndMs       = millis() + (unsigned long)minutes * 60000UL;
     g_parfumPendingKind = PARFUM_PEND_NONE;    // Fresh window — drop any queue left from a prior one
 
-    LOG::logMsg("PARFUM", "ON - %u min, requested M%u -> running M%u (%s), breathe cue (fallback #%02X%02X%02X %s)",
-              minutes, reqMode, mode, MODE::modeName(mode),
-              PARFUM_COLOR_R, PARFUM_COLOR_G, PARFUM_COLOR_B, STRIP::effectName(PARFUM_EFFECT));
+    LOG::logMsg("PARFUM", "started - %u min, mode %s",
+              minutes, MODE::modeName(mode));
 
     if (!MODE::cmdDiffuserOn(mode, p)) {                              // Rejected (WiFi seq active) — abort window
         g_parfumActive = false;
@@ -1664,7 +1711,7 @@ static bool parfumStop(const char *reason, bool naturalExpiry) {
     if (!g_parfumActive) return true;                           // Already inactive - nothing to do
     g_parfumActive = false;
     g_parfumSetMin = 0;
-    LOG::logMsg("PARFUM", "OFF - %s", reason);
+    LOG::logMsg("PARFUM", "stopped (%s)", reason);
 
     ParfumPendingKind pending = g_parfumPendingKind;            // Snapshot before the one-shot reset below —
     g_parfumPendingKind = PARFUM_PEND_NONE;                     // otherwise a queued Df is indistinguishable
@@ -1672,16 +1719,16 @@ static bool parfumStop(const char *reason, bool naturalExpiry) {
     if (naturalExpiry && pending == PARFUM_PEND_ON) {
         uint8_t   m = g_parfumPendingMode;
         DnPayload p = g_parfumPendingPayload;
-        LOG::logMsg("PARFUM", "applying queued Dn mode=%02X(%s)", m, MODE::modeName(m));
+        LOG::logMsg("PARFUM", "applying queued mode change: %s", MODE::modeName(m));
         if (MODE::cmdDiffuserOn(m, p)) return true;                   // Still valid — run it instead of shutting down
-        LOG::logMsg("PARFUM", "queued Dn no longer valid - falling back to shutdown");
+        LOG::logMsg("PARFUM", "queued mode change no longer valid - shutting down instead");
     } else if (naturalExpiry && pending == PARFUM_PEND_NONE && g_parfumHavePrevDn) {
         uint8_t   m = g_parfumPrevMode;                         // Nothing queued — fall back to whatever mode
         DnPayload p = g_parfumPrevPayload;                      // was running right before this parfum window
         g_parfumHavePrevDn = false;                             // started, instead of turning off.
-        LOG::logMsg("PARFUM", "no command received - reverting to pre-parfum M%02X(%s)", m, MODE::modeName(m));
+        LOG::logMsg("PARFUM", "nothing queued - reverting to previous mode: %s", MODE::modeName(m));
         if (MODE::cmdDiffuserOn(m, p)) return true;                   // Still valid — restore it instead of shutting down
-        LOG::logMsg("PARFUM", "pre-parfum mode no longer valid - falling back to shutdown");
+        LOG::logMsg("PARFUM", "previous mode no longer valid - shutting down instead");
     }
     // pending == PARFUM_PEND_OFF (explicit Df queued) falls straight through to shutdown below,
     // same as a manual stop or either fallback above failing validity.
@@ -1722,6 +1769,7 @@ static void connectWiFi() {
     LOG::logMsg("WIFI", "connecting to %s", WIFI_SSID);
     WiFi.mode(WIFI_STA);
     beginWifiConnect();
+    unsigned long deadline = millis() + WIFI_BOOT_CONNECT_TIMEOUT_MS;
     // Boot-time only: nothing else needs servicing yet, so pump the same
     // non-blocking pieces (strip cue + pin release) without delay().
     while (g_wifiConnecting) {
@@ -1729,6 +1777,13 @@ static void connectWiFi() {
         tickWifiConnecting();
         STRIP::tickStripWifiCue();
         STRIP::tickStripFade();
+        if (g_wifiConnecting && (long)(millis() - deadline) >= 0) {
+            // Give up blocking setup() any further - WIFI::tickWifi() (from loop(),
+            // every WIFI_CHECK_MS) takes over the retry non-blocking from here on.
+            LOG::logMsg("WIFI", "connect timed out after %lums - continuing boot, retrying in background", WIFI_BOOT_CONNECT_TIMEOUT_MS);
+            g_wifiConnecting = false;
+            return;
+        }
         yield();
     }
 }
@@ -1741,7 +1796,12 @@ static void finishWifiConnect() {
     g_telnetSrv.begin();                        // Must (re)bind after WiFi comes up
     g_telnetSrv.setNoDelay(true);
     PROTO::udpOpen();
-    startWifiSequence();                        // connected -> step MODE until shutdown detected
+    if (g_coldBoot) {                           // Only the first connect of this power-on cycle needs to
+        g_coldBoot = false;                     // recalibrate against a possible manual button press made
+        startWifiSequence();                    // while WiFi was never up yet - see g_coldBoot's declaration.
+    } else {
+        vlogMsg("SEQ", "reconnect - skipping MODE resync (not a fresh boot)");
+    }
 }
 
 static void setupOTA() {
@@ -1753,7 +1813,7 @@ static void setupOTA() {
     });
     ArduinoOTA.onEnd([]()                     { LOG::logMsg("OTA", "done - rebooting"); ESP.restart(); });
     ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
-#ifdef _DEBUG
+#ifdef DIF_DEBUG_VERBOSE
         LOG::dbgPrintf("[OTA   ] %u%%\r", p / (t / 100));     // \r overwrite - raw, not logMsg
 #else
         (void)p; (void)t;
@@ -1911,7 +1971,7 @@ static void cmdHistoryQuery() {
     }
 
     udpSend(resp);
-    vlogMsg("UDP_S", "Dh -> %s (history %u/%u)", resp, g_refillHistoryCount, REFILL_HISTORY_SIZE);
+    vlogMsg("UDP_S", "history reply sent (%u/%u entries): %s", g_refillHistoryCount, REFILL_HISTORY_SIZE, resp);
 }
 
 /**
@@ -1935,16 +1995,15 @@ static void cmdStatusQuery(bool silent) {
              accumMin, avgMin, g_refillHistoryCount, totalRefills);
     udpSend(resp);
     if (silent) return;
-    vlogMsg("UDP_S", "Ds -> %s (mode=M%u(%s)%s%s strip=%u(%s) dual=%s br=%u/255 speed=%ums base1=#%02X%02X%02X base2=#%02X%02X%02X usage=%umin avg=%umin refills=%u/%u total=%u)",
-              resp,
-              g_mode,       MODE::modeName(g_mode),
+    vlogMsg("UDP_S", "status reply sent (mode=%s%s%s strip=%u(%s) dual=%s br=%u/255 speed=%ums base1=#%02X%02X%02X base2=#%02X%02X%02X usage=%umin avg=%umin refills=%u/%u total=%u): %s",
+              MODE::modeName(g_mode),
               g_outOfWater ? " [OUT OF WATER]" : "",
               g_parfumActive ? " [PARFUM]" : "",
               stripCode,    STRIP::stripStatusName(stripCode),
               g_effectDual ? "yes" : "no", g_stripBrightness, g_effectTickMs,
               g_effectBase1.r, g_effectBase1.g, g_effectBase1.b,
               g_effectBase2.r, g_effectBase2.g, g_effectBase2.b,
-              accumMin, avgMin, g_refillHistoryCount, REFILL_HISTORY_SIZE, totalRefills);
+              accumMin, avgMin, g_refillHistoryCount, REFILL_HISTORY_SIZE, totalRefills, resp);
 }
 
 /** @brief  Poll UDP socket; dispatch one packet per call. */
@@ -2040,7 +2099,7 @@ static void udpDispatch(char *buf) {
             LOG::logMsg("USAGE", "manual refill - banking %lus, resetting accumulator", g_usageAccumSec);
             if (g_oowAlertActive) {
                 g_oowAlertActive = false;
-                LOG::logMsg("WATER", "OOW alert cleared (manual refill)");
+                LOG::logMsg("WATER", "out-of-water alert cleared (manual refill)");
             }
             g_outOfWater = false;                  // Tank is no longer dry - Logic
             USAGE::finalizeRefillCycle();           // Bank current usage, reset accumulator, persist EEPROM
@@ -2050,12 +2109,12 @@ static void udpDispatch(char *buf) {
         if ((c1 == 'f' || c1 == 'F') && len == 2) {
             if (g_parfumActive) {                                   // Parfum insists — stop refused now, but
                 g_parfumPendingKind = PARFUM_PEND_OFF;               // queued as the last command (clears any
-                LOG::logMsg("PARFUM", "Df queued (off) - %u min remaining", PARFUM::parfumRemainingMin());
-                cmdStatusQuery();                                    // queued Dn) — applied at natural expiry
+                LOG::logMsg("PARFUM", "turn-off queued - %u min remaining", PARFUM::parfumRemainingMin());
+                cmdStatusQuery();                                    // queued turn-on) — applied at natural expiry
                 g_ackResult = ACK_LOCKED;                            // deferred, not applied now
                 return;
             }
-            LOG::logMsg("UDP_R", "Df - shutdown");
+            LOG::logMsg("UDP_R", "shutdown request - turning off");
             g_udpStatusReplyMode = UDP_STATUS_AFTER_SHUTDOWN;
             if (!MODE::cmdModeTarget(0)) { MODE::clearPendingStatusReply(); g_ackResult = ACK_LOCKED; }
             return;
@@ -2063,30 +2122,30 @@ static void udpDispatch(char *buf) {
         if ((c1 == 'p' || c1 == 'P') && (len == 6 || len == 7)) {   // Dp0000 cancel, or DpMMMME start
             unsigned int mins = 0;
             if (sscanf(buf + 2, "%4x", &mins) != 1) {
-                LOG::logMsg("UDP_R", "Dp bad payload [%s] (0000-%04X)", buf, PARFUM_MAX_MIN);
+                LOG::logMsg("UDP_R", "parfum request rejected - bad payload [%s] (0-%u min)", buf, PARFUM_MAX_MIN);
                 g_ackResult = ACK_REJECTED;
                 return;
             }
             bool minsClamped = false;
             if (mins > PARFUM_MAX_MIN) {                            // Out of range but well-formed — coerce
-                LOG::logMsg("UDP_R", "Dp minutes %04X clamped to %04X (max)", mins, PARFUM_MAX_MIN);
+                LOG::logMsg("UDP_R", "parfum minutes clamped: %u min requested, max is %u min", mins, PARFUM_MAX_MIN);
                 mins = PARFUM_MAX_MIN;
                 minsClamped = true;
             }
             if (mins == 0) {
-                if (len != 6) { LOG::logMsg("UDP_R", "dp0000 cancel takes no mode digit [%s]", buf); g_ackResult = ACK_REJECTED; return; }
+                if (len != 6) { LOG::logMsg("UDP_R", "parfum cancel rejected - no mode digit expected [%s]", buf); g_ackResult = ACK_REJECTED; return; }
                 if (g_parfumActive) { if (!PARFUM::parfumStop("cancel command")) g_ackResult = ACK_LOCKED; }
                 else { vlogMsg("PARFUM", "cancel - already inactive"); cmdStatusQuery(); }
                 return;
             }
             if (len != 7) {                                         // Starting a run — E is mandatory
-                LOG::logMsg("UDP_R", "Dp start needs mode digit (DpMMMME) [%s]", buf);
+                LOG::logMsg("UDP_R", "parfum start rejected - missing mode digit (1=CONT or 2=10 SEC) [%s]", buf);
                 g_ackResult = ACK_REJECTED;
                 return;
             }
             unsigned int e = 0;
             if (sscanf(buf + 6, "%1x", &e) != 1 || (e != 1 && e != 2)) {
-                LOG::logMsg("UDP_R", "Dp bad mode E=%X [%s] (E=1 or 2 only)", e, buf);
+                LOG::logMsg("UDP_R", "parfum start rejected - mode %u is invalid (must be 1=CONT or 2=10 SEC) [%s]", e, buf);
                 g_ackResult = ACK_REJECTED;
                 return;
             }
@@ -2129,9 +2188,9 @@ static void udpDispatch(char *buf) {
                 ok = false;
             }
 
-            if (!ok) { LOG::logMsg("UDP_R", "Dn bad payload [%s]", buf); g_ackResult = ACK_REJECTED; return; }
+            if (!ok) { LOG::logMsg("UDP_R", "turn-on request rejected - bad payload [%s]", buf); g_ackResult = ACK_REJECTED; return; }
             if (mh == 0 || mh > MODE_MAX) {
-                LOG::logMsg("UDP_R", "Dn bad mode %02X (M1-M%u) [%s]", mh, MODE_MAX, buf);
+                LOG::logMsg("UDP_R", "turn-on request rejected - mode %u is invalid (must be 1-%u) [%s]", mh, MODE_MAX, buf);
                 g_ackResult = ACK_REJECTED;
                 return;
             }
@@ -2140,21 +2199,21 @@ static void udpDispatch(char *buf) {
                 g_parfumPendingKind    = PARFUM_PEND_ON;             // queue this as the last command — applied
                 g_parfumPendingMode    = (uint8_t)mh;                // instead of the plain shutdown once the
                 g_parfumPendingPayload = p;                          // window naturally expires (see PARFUM::parfumStop())
-                LOG::logMsg("PARFUM", "Dn queued mode=%02X(%s) - %u min remaining",
-                          mh, MODE::modeName((uint8_t)mh), PARFUM::parfumRemainingMin());
+                LOG::logMsg("PARFUM", "queued mode change: %s - %u min remaining",
+                          MODE::modeName((uint8_t)mh), PARFUM::parfumRemainingMin());
                 g_ackResult = ACK_LOCKED;                            // deferred, not applied now
                 return;
             }
 
-            LOG::logMsg ("UDP_R", "Dn mode=%02X(%s) effect=%u(%s)", mh, MODE::modeName((uint8_t)mh), p.effect, STRIP::effectName(p.effect));
-            vlogMsg("UDP_R", "Dn dual=%s rgb1=#%02X%02X%02X rgb2=#%02X%02X%02X br=%u/255 speed=%ums payload=[%s]",
+            LOG::logMsg ("UDP_R", "turn-on request: mode %s, effect %s", MODE::modeName((uint8_t)mh), STRIP::effectName(p.effect));
+            vlogMsg("UDP_R", "turn-on payload: dual=%s rgb1=#%02X%02X%02X rgb2=#%02X%02X%02X br=%u/255 speed=%ums payload=[%s]",
                     p.dual ? "yes" : "no", p.r1, p.g1, p.b1, p.r2, p.g2, p.b2,
                     p.brightness, p.speedMs, pay);
             if (!MODE::cmdDiffuserOn((uint8_t)mh, p)) g_ackResult = ACK_LOCKED;
             return;
         }
     }
-    LOG::logMsg("UDP_R", "unrecognized: [%s]", buf);
+    LOG::logMsg("UDP_R", "unrecognized command: [%s]", buf);
     g_ackResult = ACK_UNSUPPORTED;
 }
 
@@ -2197,13 +2256,15 @@ static void udpSend(const char *msg) {
     if (!msg || WiFi.status() != WL_CONNECTED) return;
     if (g_udpSenderIP == IPAddress(0,0,0,0)) return;
 
-    unsigned long t = millis();
-    bool ok = false;
-    while (millis()-t < UDP_TIMEOUT_MS) { if (g_udp.beginPacket(g_udpSenderIP, UDP_PORT)) { ok=true; break; } }
-    if (!ok) return;
+    // Single attempt, no spin-retry: beginPacket()/endPacket() essentially
+    // never fail on a connected link, and the old retry loops could busy-wait
+    // loop() for up to UDP_TIMEOUT_MS each (up to ~200ms combined) — long
+    // enough to blot out several BUZZER_SAMPLE_MS ticks and risk missing or
+    // miscounting a real confirmation beep. A failed attempt here just skips
+    // this one reply; the next status poll picks it back up.
+    if (!g_udp.beginPacket(g_udpSenderIP, UDP_PORT)) return;
     g_udp.write(msg);
-    t = millis();
-    while (millis()-t < UDP_TIMEOUT_MS) { if (g_udp.endPacket()) break; }
+    g_udp.endPacket();
 }
 
 } // namespace PROTO
@@ -2238,9 +2299,12 @@ static void handleCmd(String s) {
             STRIP::applyDnPayload(p);
         } else LOG::logMsg("CMD", "bad colour: [%s]", s.c_str());
     }
-    else if (s == "S")            PROTO::cmdStatusQuery();
+    else if (s == "S")            { PROTO::cmdStatusQuery(); LOG::cmdQuickStatus(); }
     else if (s == "D")            LOG::cmdDebugInfo();
     else if (s == "?" || s == "H") LOG::cmdHelp();
+#ifdef DIF_TEST_MODE
+    else if (s == "T")            TEST::runSelfTest();
+#endif
     else LOG::logMsg("CMD", "unknown: [%s] - send ? or H for help", s.c_str());
 }
 
@@ -2281,7 +2345,7 @@ static void tickTelnet() {
             LOG::dbgPrintf ("%-10s: %s\n", "MAC", WiFi.macAddress().c_str());
             LOG::dbgPrintf ("%-10s: %d dBm\n", "Signal", (int)WiFi.RSSI());
             LOG::dbgPrintf ("%-10s: %s\n", "Uptime", LOG::uptimeStr(millis()));
-            LOG::dbgPrintf ("%-10s: M%u (%s)%s\n", "Mode", g_mode, MODE::modeName(g_mode),
+            LOG::dbgPrintf ("%-10s: %s%s\n", "Mode", MODE::modeName(g_mode),
                        g_outOfWater ? "  [OUT OF WATER]" : "");
             LOG::dbgPrintf ("%-10s: %s\n", "Strip", STRIP::stripStatusName(STRIP::stripStatusCode()));
             LOG::cmdHelp();
@@ -2317,6 +2381,123 @@ static void tickTelnet() {
 
 } // namespace TELNET
 
+#ifdef DIF_TEST_MODE
+/* ============================================================================
+   TEST
+   Self-test command ("T", DIF_TEST_MODE builds only) — sweeps every console
+   and UDP command through the real handlers (TELNET::handleCmd() /
+   PROTO::udpExec()), the same code a phone app or a person typing at the
+   console would hit. WiFi/OTA are excluded, since a single WeMos only ever
+   has one live WiFi link to test against, not a repeatable command sweep.
+   Defining DIF_TEST_MODE also forces DIF_DEBUG_VERBOSE on (see the .h), so
+   every step's full verbose trace prints alongside the LITE lines.
+   ============================================================================ */
+namespace TEST {
+
+/** @return true once nothing is mid-flight on the physical MODE/buzzer link —
+ *  lets a step finish early instead of always waiting out its full ceiling. */
+static bool modeSettled() {
+    return !g_modeTargetActive && !g_modePending && !g_shutdownCmdPending;
+}
+
+/** @brief  Keep buzzer/mode/parfum/strip ticking for up to ms milliseconds (or
+ *  until settled() says done, if given) — runs the same tick functions
+ *  loop() does, so a real buzzer confirmation during a test step still
+ *  registers instead of being frozen out by this being one long call. */
+static void pump(unsigned long ms, bool (*settled)() = nullptr) {
+    unsigned long start      = millis();
+    unsigned long lastBuzzMs = start;
+    while (millis() - start < ms) {
+        unsigned long now = millis();
+        if (now - lastBuzzMs >= BUZZER_SAMPLE_MS) { lastBuzzMs = now; BUZZ::tickBuzzer(); }
+        MODE::tickPinRelease();
+        MODE::tickModeTimeout();
+        PARFUM::tickParfum();
+        STRIP::tickStripEffect();
+        STRIP::tickStripFade();
+        STRIP::tickStripOowChase();
+        STRIP::tickStripParfumBreathe();
+        ArduinoOTA.handle();
+        if (settled && settled()) return;
+        delay(1);
+    }
+}
+
+/** @brief  Run one command through the real console path (TELNET::handleCmd,
+ *  same as a person typing it), announce it, then pump() to let it settle. */
+static void step(const char *label, const char *cmd, unsigned long settleMs, bool (*settled)() = nullptr) {
+    LOG::dbgPrintf("\n[TEST] %-30s console \"%s\"\n", label, cmd);
+    TELNET::handleCmd(String(cmd));
+    pump(settleMs, settled);
+}
+
+/** @brief  Run one command through the real UDP path (PROTO::udpExec(), same
+ *  parser/dispatcher a UDP packet from the phone app hits), announce it, then
+ *  pump() to let it settle. buf must be mutable — udpExec() parses in place. */
+static void stepUdp(const char *label, char *buf, unsigned long settleMs, bool (*settled)() = nullptr) {
+    LOG::dbgPrintf("\n[TEST] %-30s UDP \"%s\"\n", label, buf);
+    PROTO::udpExec(buf);
+    pump(settleMs, settled);
+}
+
+/** @brief  Serial/Telnet "T" — sweep every command. */
+static void runSelfTest() {
+    const unsigned long MODE_CEIL_MS = MODE_CONFIRM_MS * MODE_MAX + 1000UL;   // worst-case 4-step chain + margin
+
+    dbgPrintln("\n════════════════════════════════════════════════");
+    dbgPrintln("  SELF-TEST - sweeping every command (WiFi/OTA excluded)");
+    dbgPrintln("  A \"TIMED OUT\" line under a mode step is expected");
+    dbgPrintln("  if no diffuser is wired to MODE_PIN/BUZZER_PIN yet.");
+    dbgPrintln("════════════════════════════════════════════════");
+
+    step("quick status",               "S",        300);
+    step("debug dump",                 "D",        300);
+
+    step("effect cycle",               "E",        500);
+    step("effect cycle",               "E",        500);
+    step("effect cycle",               "E",        500);
+
+    step("solid colour (red)",         "CFF0000",  500);
+    step("solid colour (green)",       "C00FF00",  500);
+    step("solid colour (blue)",        "C0000FF",  500);
+    step("bad colour - reject",        "CGG0000",  300);
+
+    step("parfum start (1 min)",       "P1",       1500);
+    step("parfum cancel",              "P0",       500);
+    step("bad parfum minutes - reject","P9999",    300);
+
+    dbgPrintln("\n[TEST] -- mode sweep (physically drives the diffuser) --");
+    step("mode -> CONT",               "M1", MODE_CEIL_MS, modeSettled);
+    step("mode -> 10 SEC",             "M2", MODE_CEIL_MS, modeSettled);
+    step("mode -> 2H AFTER SLEEP",     "M3", MODE_CEIL_MS, modeSettled);
+    step("mode -> 4H AFTER SLEEP",     "M4", MODE_CEIL_MS, modeSettled);
+    step("mode -> shutdown",           "M0", MODE_CEIL_MS, modeSettled);
+
+    step("unknown command - reject",   "X",        300);
+
+    dbgPrintln("\n[TEST] -- UDP-side equivalents (same PROTO::udpExec() a phone/UDP client hits) --");
+    char buf[32];
+    strcpy(buf, "Ds");                     stepUdp("status query",                    buf, 300);
+    strcpy(buf, "Dc");                     stepUdp("status poll (silent)",            buf, 300);
+    strcpy(buf, "Dh");                     stepUdp("refill history",                  buf, 300);
+    strcpy(buf, "Dr");                     stepUdp("manual refill",                   buf, 300);
+    strcpy(buf, "Dn01ZZZZZZFF001A");       stepUdp("turn-on, bad payload - reject",    buf, 300);
+    strcpy(buf, "Dn09FF0000FF001A");       stepUdp("turn-on, bad mode - reject",       buf, 300);
+    strcpy(buf, "Dn01FF0000FF001A");       stepUdp("turn-on, valid (CONT, red)",       buf, MODE_CEIL_MS, modeSettled);
+    strcpy(buf, "Dp00010");                stepUdp("parfum, bad mode digit - reject", buf, 300);
+    strcpy(buf, "Dp00011");                stepUdp("parfum start (1 min, CONT)",       buf, 1000);
+    strcpy(buf, "Dp0000");                 stepUdp("parfum cancel",                    buf, 500);
+    strcpy(buf, "Df");                     stepUdp("shutdown",                         buf, MODE_CEIL_MS, modeSettled);
+    strcpy(buf, "Zx");                     stepUdp("unrecognized command - reject",    buf, 300);
+
+    dbgPrintln("\n════════════════════════════════════════════════");
+    dbgPrintln("  SELF-TEST COMPLETE");
+    dbgPrintln("════════════════════════════════════════════════\n");
+}
+
+} // namespace TEST
+#endif // DIF_TEST_MODE
+
 /* ============================================================================
    SETUP / LOOP
    ============================================================================ */
@@ -2350,10 +2531,10 @@ void setup() {
     g_usageLastTickMs = g_usageLastSaveMs = g_usageLastCheckMs = now;
     if (g_powered) g_powerOnMs = now;          // Boot assumes already running — start the OOW window now
 
-    LOG::logMsg("BOOT", "done - M0-M%u / strip x%u", MODE_MAX, STRIP_LED_COUNT);
-    LOG::logMsg("DIF", "powered=%s mode=M%u (%s) strip=%s",
+    LOG::logMsg("BOOT", "done - modes 0-%u, strip x%u LEDs", MODE_MAX, STRIP_LED_COUNT);
+    LOG::logMsg("DIF", "powered=%s mode=%s strip=%s",
               g_powered ? "true" : "false",
-              g_mode, MODE::modeName(g_mode),
+              MODE::modeName(g_mode),
               g_stripMode == STRIP_OFF ? "off" : "on");
 }
 

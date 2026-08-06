@@ -38,6 +38,11 @@ public class FuzzWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager manager, int[] widgetIds) {
+        // Re-affirms the periodic job (idempotent, KEEP policy) on every system-triggered
+        // update, not just the one-time onEnabled() transition - the OS (Doze, OEM battery
+        // managers, "unused apps" hibernation) can silently drop the WorkManager job, and
+        // onEnabled() alone never notices, leaving the widget stuck showing stale data.
+        WidgetScheduling.ensurePeriodicRefresh(context);
         for (int id : widgetIds) _safeUpdate(context, manager, id, false);
     }
 

@@ -19,11 +19,6 @@
 #define TELNET_PORT         23
 #define UDP_PORT            8439
 #define UDP_BUF_SIZE        256           // Max inbound packet (bytes)
-#define UDP_TIMEOUT_MS      100           // beginPacket/endPacket spin ceiling (was 5ms - too
-                                          // tight for a peer the diffuser hasn't replied to
-                                          // recently, e.g. a test tool instead of the SmartTV's
-                                          // steady poll traffic; see SmartTV's DIF_UDP_TIMEOUT
-                                          // for the same fix applied to its diffuser-relay link)
 
 // ── UDP command ACK envelope ────────────────────────────────
 // SmartTV may wrap any command as "#SS<cmd>" (SS = 2 hex seq); we dispatch the
@@ -131,14 +126,22 @@
 
 // ── WiFi connect/reconnect self-test sequence ────────────
 // While (re)connecting: the strip breathes blue every WIFI_SEQ_STEP_MS
-// as a "still trying" indicator (no timeout — runs until connected).
-// Once connected: MODE is short-pressed one step at a time, waiting for the
-// diffuser's real buzzer confirmation between presses, until a shutdown
-// (>1 beep) burst is detected — which re-calibrates the firmware's mirrored
-// state to known ground truth.
+// as a "still trying" indicator. Once connected: MODE is short-pressed one
+// step at a time, waiting for the diffuser's real buzzer confirmation
+// between presses, until a shutdown (>1 beep) burst is detected — which
+// re-calibrates the firmware's mirrored state to known ground truth.
 #define WIFI_SEQ_STEP_MS         300UL    // Strip breathing-cue interval while connecting
 #define WIFI_SEQ_MODE_GAP_MS     300UL    // Extra pacing after each confirmed MODE step
 #define WIFI_SEQ_MODE_MAX_ATTEMPTS (MODE_MAX + 2)  // Safety cap if no shutdown beep is heard
+
+// WIFI::connectWiFi() (setup()-time only) blocks the boot sequence while it
+// waits for the first connect. A wrong/out-of-range WIFI_SSID would other-
+// wise hang setup() forever with no OTA/UDP/telnet ever coming up, and no
+// way back short of a physical re-flash. After this long it gives up
+// blocking and lets setup() continue; WIFI::tickWifi() (see WIFI_CHECK_MS)
+// then keeps retrying non-blocking from loop() forever afterward, so the
+// device still self-heals once the AP is reachable again.
+#define WIFI_BOOT_CONNECT_TIMEOUT_MS 30000UL
 
 // ── Out-of-water strip alert ──────────────────────────────
 // As soon as out-of-water is diagnosed, the strip runs the blue Chase
@@ -172,7 +175,6 @@
 #define EE_USAGE_SIZE           (EE_ADDR_TOTAL_REFILLS + 4)     // EEPROM.begin() size for this block
 
 // ── Buzzer A0 detection ──────────────────────────────────
-#define BUZZER_DEBUG        0             // 1 = stream envelope to serial (threshold tuning)
 #define BUZZER_SAMPLE_MS    5UL           // A0 sample interval
 #define BUZZER_CAL_SAMPLES  50            // Boot-time calibration sample count
 #define BUZZER_ENV_DECAY    0.90f         // Peak-hold decay per sample (↑ = slower)
@@ -190,13 +192,38 @@
 #define LED_BLINK_MS        500UL         // LED toggle period (when connected)
 
 // ── Feature switches ─────────────────────────────────────
-// Log verbosity. Undefined (default) = only important lines reach Serial and
-// the telnet console: boot/network events, commands that changed something,
-// errors and warnings. Define it to also stream the repeating, per-poll and
-// per-frame detail (raw UDP packets, Ds status replies, strip effect changes,
-// buzzer bursts, WiFi self-test steps) — see the log table in the changelog.
-// Console REPLIES (S / D / ? / connect banner) are never affected.
-// #define _DEBUG                         // Uncomment for verbose logging
+// Log verbosity — two-tier scheme, same naming as the SmartTV file: LITE is
+// every logMsg() call and is always on (boot/network events, commands that
+// changed something, errors and warnings). VERBOSE is every vlogMsg() call,
+// gated by this switch — the repeating, per-poll and per-frame detail (raw
+// UDP packets, Ds status replies, strip effect changes, buzzer bursts, WiFi
+// self-test steps, OTA progress %) — see the log table in the changelog.
+// Console REPLIES (S / D / ? / connect banner) are never affected either way.
+// #define DIF_DEBUG_VERBOSE              // Uncomment for verbose logging
+
+// Buzzer raw envelope trace (threshold tuning) — kept on its OWN switch, not
+// folded into DIF_DEBUG_VERBOSE: this alone prints one line per A0 sample
+// (BUZZER_SAMPLE_MS = 5ms), 100+ lines/sec while a tone is active, which
+// would flood everything else VERBOSE prints (confirmed live: it buried the
+// self-test's step-by-step output under ~130KB of buzzer noise the first
+// time this ran folded in). Turn on only when actively tuning
+// BUZZER_ON_THR/BUZZER_OFF_THR - never together with a "T" self-test run.
+// #define DIF_DEBUG_BUZZER_RAW
+
+// Test mode — adds a "T" console/telnet command (self-test: sweeps every
+// command except WiFi/OTA against the real diffuser, printing each step) and
+// keeps usage/refill-history EEPROM RAM-only for as long as this is defined,
+// so repeated test runs never wear the flash or overwrite real accumulated
+// data. Automatically pulls in DIF_DEBUG_VERBOSE too (cascade below), so a
+// test run always prints the full per-step trace, not just LITE lines.
+// The mode sweep (M1-M4, M0, and the UDP "Dn"/"Df" equivalents) physically
+// pulses MODE_PIN and waits on a real buzzer confirmation from the diffuser —
+// expect "TIMED OUT" lines if nothing is wired up yet, that's normal.
+// #define DIF_TEST_MODE                  // Uncomment for the "T" self-test + EEPROM-safe testing
+
+#if defined(DIF_TEST_MODE) && !defined(DIF_DEBUG_VERBOSE)
+    #define DIF_DEBUG_VERBOSE
+#endif
 
 // ── String tables (ROM) ─────────────────────────────────
 // Indexed 1-4 (MODE_MAX entries)

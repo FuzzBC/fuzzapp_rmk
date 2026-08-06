@@ -953,6 +953,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         // Single call handles cold start, resume from background, and transport selection
         _connectTransport("onResume"); // Execute connection sequence cleanly once
 
+        // Second safety net for the home-screen widgets' periodic refresh job: onEnabled()
+        // only fires once, when a widget is first placed, so if the OS ever silently drops
+        // that WorkManager job (Doze, OEM battery managers, "unused apps" hibernation) it
+        // never gets re-armed until the widget is removed and re-added. Re-affirming here
+        // is idempotent (KEEP policy) and cheap, and only actually schedules anything when
+        // a FuZz widget instance is currently placed on a home screen.
+        WidgetScheduling.ensureIfAnyPlaced(this);
+
         // Register shake sensor listener
         if (SHAKE_Accelerometer != null) { // Check accelerometer hardware reference
             SHAKE_SensManager.registerListener(

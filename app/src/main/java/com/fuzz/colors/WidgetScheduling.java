@@ -71,6 +71,21 @@ final class WidgetScheduling {
         }
     }
 
+    /** Call from MainActivity.onResume() - re-arms the periodic job, but only when at least one FuZz widget is actually placed on a home screen (mirrors cancelIfNothingPlaced()'s check, just inverted). */
+    static void ensureIfAnyPlaced(Context context) {
+        try {
+            AppWidgetManager manager = AppWidgetManager.getInstance(context);
+            for (Class<?> provider : PROVIDERS) {
+                if (manager.getAppWidgetIds(new ComponentName(context, provider)).length > 0) {
+                    ensurePeriodicRefresh(context);
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            Log.e("FuzzWidget", "ensureIfAnyPlaced failed", t);
+        }
+    }
+
     /** Call from onDisabled() - only actually cancels once every provider reports zero placed instances. */
     static void cancelIfNothingPlaced(Context context) {
         try {

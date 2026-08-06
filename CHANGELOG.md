@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.007
+- Fixed: the home-screen widgets could stop refreshing on their own after a
+  while (stuck showing an old temperature/humidity/refill reading and an
+  old "updated at" time) with no way to fix it short of removing and
+  re-adding the widget. The background refresh job is now re-armed
+  automatically whenever the widget redraws or the app is opened, so a
+  refresh dropped by the phone's battery manager recovers on its own.
+
 ## 8.005
 - Fixed: if a home-screen widget refreshed in the background at the exact
   moment the app was waiting for the board to confirm a command, the board's
