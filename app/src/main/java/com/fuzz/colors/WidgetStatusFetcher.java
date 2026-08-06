@@ -96,10 +96,18 @@ class WidgetStatusFetcher {
         // it or the board's reply lands on a port nothing is listening on -
         // which is why this always silently timed out and fell through to
         // MQTT cloud instead, even with the board on the same LAN.
-        // setReuseAddress so this short-lived socket can coexist with the
-        // live app's own long-lived one if both happen to be active at once
-        // (harmless - Linux delivers to whichever bound most recently, and
-        // this socket closes again within UDP_TIMEOUT_MS).
+        //
+        // setReuseAddress lets this short-lived socket coexist with the live
+        // app's own long-lived one when both happen to be bound at once - but
+        // "coexist" only means bind() doesn't throw. With plain SO_REUSEADDR
+        // (no SO_REUSEPORT) a later bind to the same port can silently steal
+        // subsequent datagrams from the earlier-bound socket instead of both
+        // receiving them, so if the app is actively awaiting a reply on this
+        // exact port when this runs, ITS reply can land here instead and the
+        // app sees a false "NO ACK". DataReceive.isReceivingActively() is the
+        // narrow guard for that specific collision window (foregrounded app,
+        // mid-command) - skip straight to MQTT cloud instead of racing it.
+        if (DataReceive.isReceivingActively()) return null;
         try (DatagramSocket socket = new DatagramSocket(null)) {
             socket.setReuseAddress(true);
             socket.bind(new java.net.InetSocketAddress(DataSend.ARDUINO_PORT));

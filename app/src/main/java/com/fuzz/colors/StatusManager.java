@@ -399,16 +399,18 @@ public class StatusManager {
 
     /**
      * Parse a full status packet and update all STS state + UI.
-     * Format: sAAbbCCddEEffGGHH  (17 chars, all hex pairs)
+     * Format: sAAbbCCddHH  (11 chars, all hex pairs)
      *   s  – literal prefix
      *   AA – TV state          (STS_Tv enum ordinal)
      *   bb – Motion state      (STS_Motion enum ordinal)
      *   CC – Ambilight state   (STS_Ambilight enum ordinal)
      *   dd – AmbientMode state (STS_AmbientMode enum ordinal)
-     *   EE – Temperature °C    (raw value)
-     *   ff – Humidity %        (raw value)
-     *   GG – Enable/Disable    (0 = OFF, non-zero = ON)
      *   HH – Diffuser state    (STS_Diffuser enum ordinal, 4 = PARFUM)
+     *
+     * Temperature/humidity and Enable/Disable used to ride along in this same
+     * packet (older 17-char format) but now arrive in their own packets -
+     * climate in 'H', enable in 'E' - so this parser only ever reads the 5
+     * fields above; see DataReceive._recvClimate() / the 'E' handler for those.
      *
      * Called by DATAr on the UI thread.
      *

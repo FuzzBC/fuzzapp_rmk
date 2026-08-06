@@ -122,6 +122,18 @@ public class DataReceive {
     /** Flag that keeps the while-loop alive */
     private boolean isReceiving = false;
 
+    /**
+     * Static mirror of "the app's own receive thread is actively consuming
+     * DataSend.ARDUINO_PORT right now" - true only between startReceiving()
+     * and stopReceiving()/the socket-exception bailout, i.e. while the app is
+     * foregrounded and genuinely listening for a reply. Exists so headless
+     * callers with no MainActivity/DataReceive instance (WidgetStatusFetcher,
+     * running from WidgetUpdateWorker) can tell whether binding their own
+     * short-lived socket to the same port would race the live app for its
+     * own replies. See isReceivingActively() / WidgetStatusFetcher._fetchLocalUdp().
+     */
+    private static volatile boolean sReceivingActively = false;
+
     /** Timestamp of the last successfully received packet (ms) */
     private long lastReceiveTime = 0;
 
@@ -403,6 +415,7 @@ public class DataReceive {
 
         Log.v("DATA_R", "Starting receive thread");
         isReceiving = true;
+        sReceivingActively = true;
         receiveThread = new Thread(() -> {
             byte[]         buffer = new byte[1024];
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
@@ -414,6 +427,7 @@ public class DataReceive {
             } catch (SocketException e) {
                 e.printStackTrace();
                 isReceiving = false;
+                sReceivingActively = false;
                 Log.i("DATA_ERR", "SOCKET EXCEPTION");
                 Log.v("DATA_R", "Socket exception: " + e.getMessage());
                 Main.runOnUiThread(() ->
@@ -476,6 +490,22 @@ public class DataReceive {
             receiveThread.interrupt();
         }
         isReceiving = false;
+        sReceivingActively = false;
+    }
+
+    /**
+     * @return true if the app's own receive thread is actively consuming
+     * DataSend.ARDUINO_PORT right now (foregrounded, between startReceiving()
+     * and stopReceiving()). NOT the same as isUdpAvailable() - this says
+     * nothing about whether the board is answering, only whether something
+     * else binding the same local port right now would steal the app's own
+     * replies out from under it.
+     *
+     * Called by: WidgetStatusFetcher._fetchLocalUdp(), to skip its own bind
+     * while the live app would collide with it (see class doc there).
+     */
+    public static boolean isReceivingActively() {
+        return sReceivingActively;
     }
 
     // ========================================================

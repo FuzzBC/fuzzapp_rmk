@@ -72,6 +72,8 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class DataSend {
 
@@ -213,6 +215,20 @@ public class DataSend {
      */
     private DatagramSocket socket;
 
+    /**
+     * Single persistent worker backing every outgoing send (see _transmit()/
+     * _transmitUdpDirect()), replacing a dedicated "new Thread()" per packet.
+     * A UDP sock.send() never blocks meaningfully (no round-trip, just handing
+     * the datagram to the kernel), so serializing all sends through one
+     * long-lived thread costs nothing in practice while removing the
+     * create/run/teardown overhead of spinning up a fresh Thread for every
+     * colour tap, brightness drag tick, and settings change - and, as a
+     * side effect, makes send order deterministic instead of racing N
+     * independently-started threads against each other. Same pattern as
+     * BackgroundPopup.IO.
+     */
+    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
+
     // --------------------------------------------------------
     // ACK bookkeeping (all touched on the main looper only)
     // --------------------------------------------------------
@@ -273,13 +289,27 @@ public class DataSend {
         this.socket = socket;
     }
 
+    /**
+     * Stop ioExecutor's worker thread. Without this, an Activity recreation
+     * that doesn't go through process death (e.g. a config change not listed
+     * in AndroidManifest's android:configChanges) would leak the old
+     * DataSend's executor thread every time a new one is constructed.
+     *
+     * @note   Does not touch the shared socket - DATAr (DataReceive) owns
+     *         and closes that.
+     *
+     * Called by: MainActivity.onDestroy().
+     */
+    public void shutdown() {
+        ioExecutor.shutdown();
+    }
+
     // --------------------------------------------------------
     // Private core sender
     // --------------------------------------------------------
     /**
-     * Background-thread UDP send worker.
-     * Spawns a new Thread for every packet so the UI thread
-     * is never blocked.  Shows the loading spinner on success.
+     * Background-thread UDP send worker, via the shared ioExecutor so the
+     * UI thread is never blocked. Shows the loading spinner on success.
      *
      * @param message  Protocol string to send (ASCII, UTF-8).
      *                 Example: "LC" or "LBff"
@@ -390,7 +420,7 @@ public class DataSend {
             Log.v("DATA_S", "UDP : No socket available for: " + packet);
             return;
         }
-        new Thread(() -> {
+        ioExecutor.execute(() -> {
             try {
                 InetAddress address = InetAddress.getByName(ARDUINO_IP);
                 byte[] buffer = packet.getBytes();
@@ -404,7 +434,7 @@ public class DataSend {
                 Log.e("DATA_ERR", "UDP : Exception in _transmit: " + e.getMessage());
                 Log.v("DATA_S", "UDP : Transmit exception: " + e.getMessage());
             }
-        }).start();
+        });
     }
 
     /**
@@ -671,7 +701,7 @@ public class DataSend {
             Log.v("DATA_S", "UDP : Socket not available for direct send");
             return;
         }
-        new Thread(() -> {
+        ioExecutor.execute(() -> {
             try {
                 InetAddress address = InetAddress.getByName(ARDUINO_IP);
                 byte[] buffer = packet.getBytes();
@@ -681,7 +711,7 @@ public class DataSend {
                 Log.e("DATA_ERR", "UDP : Exception in _transmitUdpDirect: " + e.getMessage());
                 Log.v("DATA_S", "UDP : direct exception: " + e.getMessage());
             }
-        }).start();
+        });
     }
 
     /**

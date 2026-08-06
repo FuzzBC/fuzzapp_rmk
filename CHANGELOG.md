@@ -5,6 +5,15 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.005
+- Fixed: if a home-screen widget refreshed in the background at the exact
+  moment the app was waiting for the board to confirm a command, the board's
+  reply could be delivered to the widget instead of the app - making the app
+  wrongly show "NO ACK" even though the command actually went through.
+- Fixed: an active heartbeat LED animation could keep running in the
+  background (and draining battery) after closing the app, instead of
+  stopping when the app closes.
+
 ## 8.004
 - Fixed: the home-screen widgets' background refresh never actually
   succeeded over local WiFi, even with the board on the same network -

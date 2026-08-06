@@ -997,11 +997,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         super.onDestroy();
         transportHandler.removeCallbacks(transportSupervisor);
         DATAr.destroy();
+        DATAs.shutdown();
         if (MQTT != null) MQTT.disconnect();
         if (TELNET != null) TELNET.setEnabled(false);  // close both telnet sockets/threads
         if (updateInstaller != null) updateInstaller.unregister();
         if (dualColorCycleAnim != null) dualColorCycleAnim.cancel();
         if (navStrokeRunAnim != null) navStrokeRunAnim.cancel();
+        if (LED != null) LED.stopAllAnimations();  // HBFx's Handler loop + the LED-select pulse animator - see stopAllAnimations() doc
     }
 
     /* ====================================================== */
@@ -1808,7 +1810,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (bgImage == null || !bgImage.exists()) {
             Log.e("BG_ACTIVITY", "BG image file does not exist: " + bgImage);
-            _Toast("GIF NOT FOUND > " + bgImage.getName());
+            _Toast("GIF NOT FOUND" + (bgImage != null ? " > " + bgImage.getName() : ""));
             return;
         }
 

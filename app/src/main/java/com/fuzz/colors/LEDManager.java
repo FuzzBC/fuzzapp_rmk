@@ -1393,6 +1393,28 @@ public class LEDManager {
         }
     }
 
+    /**
+     * Stop every animation LEDManager owns that repeats indefinitely on its
+     * own (Handler.postDelayed()/ValueAnimator.INFINITE) rather than being
+     * driven by user interaction. Neither HBFx's Handler loop nor
+     * LED_SelectPulseAnim is tied to the Activity lifecycle by itself - a
+     * Handler is bound to the Looper, not the Activity, and the pulse
+     * animator only stops itself when the LAST LED gets deselected (never,
+     * if one is still selected at teardown, which is the common case since
+     * at least one LED is selected by default). Without this, either one
+     * left running at Activity destroy pins the old Activity in memory
+     * through LED -> Main and keeps spending CPU on a destroyed screen.
+     *
+     * Called by: MainActivity.onDestroy().
+     */
+    public void stopAllAnimations() {
+        if (HBFx != null) HBFx.stop();
+        if (LED_SelectPulseAnim != null) {
+            LED_SelectPulseAnim.cancel();
+            LED_SelectPulseAnim = null;
+        }
+    }
+
     // ========================================================
     //  Colour update (called by DATAr)
     // ========================================================
