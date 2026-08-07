@@ -1491,7 +1491,16 @@ void T_LUX_BR_CHANGE(taskId_t taskId) {
         const int targetBr = IsHB(i) ? hbTgtBr : getLuxBrightness(LED::State.StoredBrightness[i]);
 
         if (TG_BRIGHTNESS(i, targetBr, brInc, false)) {
-            setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false);
+            // setPixel() forces CurrentColor to black whenever brVal is 0 (see
+            // T_SMOOTH_CHANGE's matching fix) - this call only intends to
+            // re-render the SAME colour at a new brightness, but a brightness
+            // step that lands on exactly 0 (auto-dim reaching "off") would
+            // otherwise silently wipe the colour memory with no command and
+            // no restore, confirmed live: LEDs correctly coloured moments
+            // earlier came back as pure black with no user action in between.
+            const CRGB steppedColor = LED::State.CurrentColor[i];
+            setPixel(i, steppedColor.r, steppedColor.g, steppedColor.b, LED::State.CurrentBrightness[i], false);
+            LED::State.CurrentColor[i] = steppedColor;
             anyChanged = true;
         }
     }
@@ -1585,12 +1594,26 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
         TSK::KillTasksAvoidLocked("T_SMOOTH_CHANGE");
 
         if (APP::Am.Status) {
-            memcpy(LED::State.AmbientBackgroundColor,      LED::State.CurrentColor,      LED_NUM * sizeof(CRGB));
-            memcpy(LED::State.AmbientBackgroundBrightness, LED::State.CurrentBrightness, LED_NUM * sizeof(uint8_t));
-            BIT_SET_ALL(EE_AmbientChanged, sizeof(EE_AmbientChanged));              // Track all ambient color changes
+            // Copy only the LEDs actually in THIS fade (APP::State.SelectedLedCache),
+            // not a blanket copy of the whole array - CurrentColor for an
+            // unselected LED can be transiently wrong for reasons unrelated to
+            // this fade (e.g. T_LUX_BR_CHANGE's brightness-0 self-refresh), and
+            // a blanket copy here would silently "confirm" that into permanent
+            // storage for LEDs this fade never touched. Confirmed live: this is
+            // exactly how a handful of correctly-set LEDs came back black after
+            // an unrelated single-LED fade completed elsewhere.
+            for (int cacheIdx = 0; cacheIdx < APP::State.SelectedCount; cacheIdx++) {
+                const int ledN = APP::State.SelectedLedCache[cacheIdx];
+                LED::State.AmbientBackgroundColor[ledN]      = LED::State.CurrentColor[ledN];
+                LED::State.AmbientBackgroundBrightness[ledN] = LED::State.CurrentBrightness[ledN];
+                BIT_SET(EE_AmbientChanged, ledN);
+            }
         } else if (!isBrightnessMode) {
-            memcpy(LED::State.StoredColor, LED::State.CurrentColor, LED_NUM * sizeof(CRGB));
-            BIT_SET_ALL(EE_ColorChanged, sizeof(EE_ColorChanged));                  // Track all LED color changes
+            for (int cacheIdx = 0; cacheIdx < APP::State.SelectedCount; cacheIdx++) {
+                const int ledN = APP::State.SelectedLedCache[cacheIdx];
+                LED::State.StoredColor[ledN] = LED::State.CurrentColor[ledN];
+                BIT_SET(EE_ColorChanged, ledN);
+            }
             if (LED_NUM > LED_START_I_HB) {
                 CRGB hbColor = LED::State.CurrentColor[LED_NUM - 1];
                 for (int j = 0; j < LED_HB_NUM; j++) LED::State.TargetColor[HB(j)] = hbColor;
