@@ -10525,9 +10525,16 @@ void SelfTest() {
         bootNum = 0;
     }
 
-    bool writeOk = w(addr, EE_TEST_MAGIC) && w(addr + 1, bootNum)
-                && w(addr + 2, bootNum ^ 0x55) && w(addr + 3, bootNum + 1)
-                && w(addr + 4, ~bootNum)       && w(addr + 5, bootNum * 3);
+    // Each w() call must always run regardless of any earlier one's result -
+    // && short-circuits, which previously skipped later writes entirely the
+    // moment one call falsely reported failure (see the w() cast fix below).
+    bool writeOk = true;
+    if (!w(addr,     EE_TEST_MAGIC))          writeOk = false;
+    if (!w(addr + 1, bootNum))                writeOk = false;
+    if (!w(addr + 2, bootNum ^ 0x55))          writeOk = false;
+    if (!w(addr + 3, bootNum + 1))             writeOk = false;
+    if (!w(addr + 4, (uint8_t)~bootNum))       writeOk = false;
+    if (!w(addr + 5, bootNum * 3))             writeOk = false;
     if (!writeOk) {
         PRNT::_print(PRNT::formatMSG("%32s ! failed writing boot #%d pattern for next-boot check" NL, "EEPROM_TEST", bootNum));
     }
@@ -10574,18 +10581,24 @@ bool Set(uint8_t settingId, uint8_t value) {
 bool w(int index, int value) {
     EEPROM.update(index, value);
 
-    
-    const int readback = EEPROM.read(index);
-    if (readback != value) {
-        PRNT::_print(PRNT::formatMSG("%32s ! error at index [%d], wanted [%d], readback [%d]" NL, "w", index, value, readback));
+    // EEPROM.update() narrows value to a uint8_t on write, so the
+    // comparison must too - a caller passing a computed value outside
+    // 0-255 (e.g. ~someUint8, which promotes to a negative int) would
+    // otherwise always mismatch here even though the byte itself was
+    // written correctly (confirmed live: this masked a real write, see
+    // EE::SelfTest()'s fix).
+    const uint8_t expected = (uint8_t)value;
+    const uint8_t readback = EEPROM.read(index);
+    if (readback != expected) {
+        PRNT::_print(PRNT::formatMSG("%32s ! error at index [%d], wanted [%d], readback [%d]" NL, "w", index, expected, readback));
         #ifdef ENABLE_LOG_EEPROM
-            PRNT::_print(PRNT::formatMSG("%32s : WRITE_FAILED EEPROM [%d] expected [%d] got [%d]" NL, "w", index, value, readback));
+            PRNT::_print(PRNT::formatMSG("%32s : WRITE_FAILED EEPROM [%d] expected [%d] got [%d]" NL, "w", index, expected, readback));
         #endif
         return false;
     }
     
     #ifdef ENABLE_LOG_EEPROM
-        PRNT::_print(PRNT::formatMSG("%32s : WRITE_OK EEPROM [%d] value [%d] verified" NL, "w", index, value));
+        PRNT::_print(PRNT::formatMSG("%32s : WRITE_OK EEPROM [%d] value [%d] verified" NL, "w", index, expected));
     #endif
     
     return true;
