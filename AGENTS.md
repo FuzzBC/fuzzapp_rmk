@@ -41,10 +41,17 @@ be a generic placeholder instead of a real changelog.
   `.py`/`.pyw`, not in a `.json` config. This repo is public.
   - WiFi SSID/password and the Diffuser's OTA password live in
     `_ArduinoSide/_Shared/WiFiCredentials.h` - gitignored, never committed.
-    Both `_FuZzAPP_Diffuser.h` and `_FuZzAPP_SmartTV_R4_DEF.h` `#include`
-    it via a relative path (`../_Shared/WiFiCredentials.h`) so there's one
-    file to edit for both devices; `FuZzAPP_FlashConsole.pyw` reads the same
-    file at runtime (`_load_ota_password()`) for the OTA flash password.
+    Both `_FuZzAPP_Diffuser.h` and `_FuZzAPP_SmartTV_R4_DEF.h` `#include
+    <WiFiCredentials.h>` (angle brackets - a quoted relative path like
+    `"../_Shared/WiFiCredentials.h"` does NOT reliably resolve under
+    arduino-cli, confirmed by an actual "No such type or directory" compile
+    failure despite the file existing on disk). `compiler.py`'s `compile()`
+    instead adds `_ArduinoSide/_Shared` as an ad-hoc `--library` search path
+    on every compile, computed from `sketch_path` (no hardcoded paths) - so
+    there's still one file to edit for both devices.
+    `FuZzAPP_FlashConsole.pyw` reads the same file at runtime
+    (`_load_ota_password()`) for the OTA flash password - that's plain
+    Python file I/O, unaffected by the arduino-cli include quirk above.
     `WiFiCredentials.h.example` is the tracked template - copy it to
     `WiFiCredentials.h` in the same folder and fill in real values.
   - `_ArduinoSide/.Compiler/flashconsole_config.json` is gitignored the same

@@ -159,6 +159,17 @@ class ArduinoCompiler:
             # build-cache directory, which flash_ota needs to find the file to
             # upload directly via espota.py.
             cmd = [self.arduino_cli_path, "compile", "--fqbn", fqbn, "--export-binaries", "--verbose", sketch_path]
+            # Both sketches read WiFi/OTA credentials from a shared, gitignored
+            # header at _ArduinoSide/_Shared/WiFiCredentials.h via
+            # #include <WiFiCredentials.h> - a quoted relative include
+            # ("../_Shared/...") does NOT reliably resolve under arduino-cli
+            # (confirmed: "No such file or directory" even though the file
+            # exists on disk), so instead it's added as an ad-hoc library
+            # search path here. Flat directory of headers only (no
+            # library.properties/src/) is a valid legacy-layout library.
+            shared_dir = os.path.normpath(os.path.join(os.path.dirname(sketch_path), '..', '_Shared'))
+            if os.path.isdir(shared_dir):
+                cmd += ["--library", shared_dir]
             return self._run_command(cmd, "Compilation", callback, quiet=True)
         finally:
             self.timeout_seconds = original_timeout

@@ -5,11 +5,14 @@
 
 // ── Credentials ─────────────────────────────────────────────
 // WIFI_SSID / WIFI_PASS / OTA_PASSWORD are pulled from the shared,
-// gitignored ../_Shared/WiFiCredentials.h (never committed) so both this
-// sketch and _FuZzAPP_SmartTV_R4 read the WiFi password from one place.
-// Copy WiFiCredentials.h.example there and fill in real values - see
-// AGENTS.md.
-#include "../_Shared/WiFiCredentials.h"
+// gitignored _ArduinoSide/_Shared/WiFiCredentials.h (never committed) so
+// both this sketch and _FuZzAPP_SmartTV_R4 read the WiFi password from one
+// place. Copy WiFiCredentials.h.example there and fill in real values -
+// see AGENTS.md. Angle-bracket include on purpose: a quoted relative path
+// ("../_Shared/...") does not reliably resolve under arduino-cli, so
+// FlashConsole.pyw's compiler.py instead adds _Shared as a --library
+// search path at compile time.
+#include <WiFiCredentials.h>
 #define WIFI_SSID           WIFI_SSID_VALUE
 #define WIFI_PASS           WIFI_PASS_VALUE
 #define OTA_HOSTNAME        "FuZz-Diffuser"

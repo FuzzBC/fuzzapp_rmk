@@ -157,6 +157,9 @@ android.lock
 # =========================
 /_ArduinoSide/.Compiler/flashconsole_config.json
 
+# FlashConsole single-instance lock file (runtime, not project history)
+/_ArduinoSide/.Compiler/.res/.flashconsole.lock
+
 # =========================
 # Build-time copy of the root CHANGELOG.md (see copyChangelog in
 # app/build.gradle) - root CHANGELOG.md is the source of truth, not this.
