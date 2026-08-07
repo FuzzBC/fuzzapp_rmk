@@ -2832,18 +2832,18 @@ void setLux(int newLux) {
 
     if (LED::State.Enabled) {                                                  // Only animate when strip is on - Logic
         if (UDPRAW::State.Status) {
-            // Deliberately NOT re-armed here while a stream is active - each
-            // re-arm makes T_UDPRAW_SET_COLOR ramp 206 non-TV pixels and
-            // re-latch the 238-LED back/HB strips (see UDPRAW::Loop()'s
-            // g_nonTvDirty) for the rest of the ramp, purely because ambient
-            // room lux ticked over - not worth the extra per-packet show()
-            // cost during a low-latency ambilight stream. LISENS::State.Lux
-            // is already updated above, so getLuxBrightness() reads the
-            // current value the next time anything else re-arms this task
-            // (e.g. the next stream's Init()) - this just skips forcing it
-            // to happen mid-stream, not the value itself going stale.
+            // Re-armed on every lux change, same as the LC/LB app-command
+            // paths (see UDPRAW_SetColor()) - the non-TV zones (COM/BED/
+            // LAMP/HB) should reflect color/brightness/lux updates
+            // immediately, same as they already do for a manual colour or
+            // brightness change while streaming. The per-packet TV zone
+            // path (UDPRAW::Loop() -> H_writeStripPixel) is untouched and
+            // stays unthrottled - this only re-triggers the one-shot fade
+            // task for the 206 non-TV pixels, not the live stream itself.
+            TSK::KillTasksAvoidLocked("LISENS_Change_UDPRAW");
+            TSK::AddTask("LISENS_Change_UDPRAW", "T_UDPRAW_SET_COLOR", UDPRAW::T_UDPRAW_SET_COLOR, TASK_MS, EE::Get(EE_UDPRAW_BR_CL_DEL), 0, false); // Raw EE - not adapted, matches Init()'s own registration
             #ifdef ENABLE_LOG_LUX
-                PRNT::_print(PRNT::formatMSG("%32s : path UDPRAW - re-arm skipped (stream active)" NL, "LUX_Apply"));
+                PRNT::_print(PRNT::formatMSG("%32s : path UDPRAW - T_UDPRAW_SET_COLOR re-armed" NL, "LUX_Apply"));
             #endif
         } else if (TV::State.Status) {                                         // Update TV - Action
             if (TV::State.Transitioning) {
