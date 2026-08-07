@@ -802,6 +802,14 @@ namespace DIF { extern DIFx State; }
 extern WiFiUDP DIF_UDP;
 extern IPAddress DIF_TARGET_IP;
 namespace APP { extern ARDx Ard; }
+
+/* WIFI_SSID/WIFI_PASS PROGMEM values (defined in the .ino) are sourced from
+   the shared, gitignored ../_Shared/WiFiCredentials.h (never committed) so
+   both this sketch and _FuZzAPP_Diffuser read the WiFi password from one
+   place. Copy WiFiCredentials.h.example there and fill in real values -
+   see AGENTS.md. Included here (a real on-disk header) rather than from the
+   .ino so the relative path resolves correctly under arduino-cli. */
+#include "../_Shared/WiFiCredentials.h"
 extern const char WIFI_SSID[];
 extern const char WIFI_PASS[];
 namespace NET { extern NETx Wifi;  /* connectTime[6] */ }

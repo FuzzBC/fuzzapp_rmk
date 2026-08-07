@@ -136,8 +136,8 @@ BME280I2C bme280sensor;
 
 /* --- Network ------------------------------------------------------------ */
 
-const char WIFI_SSID[] PROGMEM = "FuZz";
-const char WIFI_PASS[] PROGMEM = "REDACTED-WIFI-PASSWORD";
+const char WIFI_SSID[] PROGMEM = WIFI_SSID_VALUE;
+const char WIFI_PASS[] PROGMEM = WIFI_PASS_VALUE;
 namespace NET { NETx Wifi; }
 namespace NET { DATEx Date; }
 WiFiUDP   RTC_UDP;

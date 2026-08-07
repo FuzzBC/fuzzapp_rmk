@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## Unreleased
+- Security/repo hygiene (no effect on the app itself): the Arduino firmware's
+  WiFi and OTA passwords are no longer hardcoded in source. They now live in
+  a local, gitignored credentials file so the source tree — including this
+  repository, now public — never contains a real password. See
+  `_ArduinoSide/_Shared/WiFiCredentials.h.example` and the firmware
+  changelogs under `_ArduinoSide/` for details.
+
 ## 8.007
 - Fixed: the home-screen widgets could stop refreshing on their own after a
   while (stuck showing an old temperature/humidity/refill reading and an

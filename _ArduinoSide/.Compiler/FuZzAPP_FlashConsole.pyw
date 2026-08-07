@@ -23,6 +23,22 @@ from compiler import ArduinoCompiler
 
 _LOCK_FILE = os.path.join(res_path, '.flashconsole.lock')
 
+
+def _load_ota_password():
+    """Read OTA_PASSWORD_VALUE out of the shared, gitignored
+    ../_Shared/WiFiCredentials.h (same file the Arduino sketches read their
+    WiFi/OTA credentials from - see WiFiCredentials.h.example and AGENTS.md)
+    so the OTA password lives in exactly one place. Returns None if that
+    file hasn't been created yet (fresh clone before copying the example)."""
+    creds_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '_Shared', 'WiFiCredentials.h')
+    try:
+        with open(creds_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'OTA_PASSWORD_VALUE\s+"([^"]*)"', text)
+    return m.group(1) if m else None
+
 if sys.platform == 'win32':
     _TASKKILL_FLAGS = subprocess.CREATE_NO_WINDOW
 else:
@@ -149,7 +165,7 @@ class FlashConsole:
                 port=8266,
                 telnet_port=23,
                 fqbn='esp8266:esp8266:d1',
-                ota_password='REDACTED-OTA-PASSWORD'  # must match OTA_PASSWORD in _FuZzAPP_Diffuser.h
+                ota_password=_load_ota_password()  # from ../_Shared/WiFiCredentials.h - must match OTA_PASSWORD_VALUE there
             )
         ]
         

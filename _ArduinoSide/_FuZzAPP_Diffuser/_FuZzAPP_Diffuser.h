@@ -4,10 +4,16 @@
 #pragma once
 
 // ── Credentials ─────────────────────────────────────────────
-#define WIFI_SSID           "FuZz"
-#define WIFI_PASS           "REDACTED-WIFI-PASSWORD"
+// WIFI_SSID / WIFI_PASS / OTA_PASSWORD are pulled from the shared,
+// gitignored ../_Shared/WiFiCredentials.h (never committed) so both this
+// sketch and _FuZzAPP_SmartTV_R4 read the WiFi password from one place.
+// Copy WiFiCredentials.h.example there and fill in real values - see
+// AGENTS.md.
+#include "../_Shared/WiFiCredentials.h"
+#define WIFI_SSID           WIFI_SSID_VALUE
+#define WIFI_PASS           WIFI_PASS_VALUE
 #define OTA_HOSTNAME        "FuZz-Diffuser"
-#define OTA_PASSWORD        "REDACTED-OTA-PASSWORD"
+#define OTA_PASSWORD        OTA_PASSWORD_VALUE
 
 // ── Pins ────────────────────────────────────────────────────
 #define LED_PIN             LED_BUILTIN   // Active-LOW built-in LED

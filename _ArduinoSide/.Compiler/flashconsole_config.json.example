@@ -11,9 +11,9 @@
     "fqbn": "esp8266:esp8266:d1_mini",
     "host": "FuZz-Diffuser.local",
     "ota_port": "8266",
-    "ota_password": "REDACTED-OTA-PASSWORD",
+    "ota_password": "YourOtaPassword",
     "telnet_port": "23",
     "build_dir": "build_diffuser",
-    "espota_path": "C:\\Users\\il3ga\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\3.1.2\\tools\\espota.py"
+    "espota_path": "C:\\Users\\YourUser\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\3.1.2\\tools\\espota.py"
   }
 }

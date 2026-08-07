@@ -1,3 +1,16 @@
+## Security — WiFi/OTA passwords no longer hardcoded in source
+
+**Files changed:** `_FuZzAPP_Diffuser.h`
+
+- `WIFI_SSID`, `WIFI_PASS`, and `OTA_PASSWORD` were previously `#define`d
+  literals committed directly in this header. They now resolve to
+  `WIFI_SSID_VALUE`/`WIFI_PASS_VALUE`/`OTA_PASSWORD_VALUE` from a shared,
+  gitignored `_ArduinoSide/_Shared/WiFiCredentials.h`, `#include`d via a
+  relative path so the real values are never committed. The same file is
+  shared with the SmartTV sketch (WiFi) and read by `FuZzAPP_FlashConsole.pyw`
+  at runtime (OTA password) — one file to edit for all three. See
+  `WiFiCredentials.h.example` and AGENTS.md. No behavioural change.
+
 ## Diffuser firmware — effect set cleanup + Fire repair
 
 **Files changed:** `_FuZzAPP_Diffuser_1_1_icLed.ino`, `_FuZzAPP_Diffuser.h`
