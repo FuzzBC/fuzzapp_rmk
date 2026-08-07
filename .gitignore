@@ -1,3 +1,10 @@
+# =========================
+# Local edit-history backup tooling (.cursor/.devin hooks) - logs raw
+# prompt text, timestamps, and full before/after file snapshots. Local
+# working data, not project source; never commit it.
+# =========================
+.backup/
+
 # Built application files
 *.apk
 *.ap_
