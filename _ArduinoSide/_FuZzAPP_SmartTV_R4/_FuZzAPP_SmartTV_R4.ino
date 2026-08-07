@@ -2669,7 +2669,18 @@ void UDPRAW_SetColor(int r, int g, int b, int br) {
     for (int i = 0; i < LED_LAMP_NUM; i++) setPixel(LAMP(i), r, g, b, brVal, false);
     HB_SetAll(r, g, b, brVal, false);
 
-    Show();
+    // Show() only sets NeedsUpdate=true for the periodic Refresh() task to
+    // pick up - but Refresh() unconditionally bails while UDPRAW is active
+    // (`if (UDPRAW::State.Status) return;`), and this function is only ever
+    // called while streaming (see call sites), so that flag would never be
+    // consumed. UDPRAW::Loop()'s own per-packet g_nonTvDirty check is what
+    // normally flushes these two strips during a stream, but g_nonTvDirty
+    // is a UDPRAW-local static declared later in the file - not reachable
+    // from here. Push both strips immediately instead - this function only
+    // runs on a discrete colour/brightness/lux change, not per packet, so
+    // an immediate blocking show() here is cheap and correct.
+    stripBack.show();
+    stripHB.show();
 
     LED::State.StreamColor.r    = r;
     LED::State.StreamColor.g    = g;
@@ -7314,6 +7325,13 @@ void cmdChangeBrightness(char *buff, int len) {
         #ifdef ENABLE_LOG_APP
             PRNT::_print(PRNT::formatMSG("%32s : UDPRAW active, brightness set [%d]" NL, "ChangeBrightness", br));
         #endif
+		// Push to diffuser now if UDPRAW is its active source - colour is
+		// unchanged (brightness-only command), so pass the current stream
+		// colour through explicitly rather than a NULL derive-from-current-
+		// LEDs, which could read stale state depending on timing.
+		DIF_Colorx colorOverride = { LED::State.StreamColor.r, LED::State.StreamColor.g, LED::State.StreamColor.b,
+		                             LED::State.StreamColor.r, LED::State.StreamColor.g, LED::State.StreamColor.b };
+		DIF::PushLiveIfActive(&colorOverride);
 		return;
 	}
 
@@ -7386,6 +7404,13 @@ void cmdChangeColor(char *buff, int len) {
 	if (isUdpraw) {
 		LED::UDPRAW_SetColor(r, g, b, LED::State.StreamBrightness);
 		updDeltaColors();
+		// Push to diffuser now if UDPRAW is its active source - same as the
+		// normal (non-UDPRAW) path below does. This branch used to return
+		// before ever reaching that call, so a colour change made while
+		// streaming never reached the diffuser until the next unrelated
+		// AutoOn() trigger.
+		DIF_Colorx colorOverride = { r, g, b, r, g, b };
+		DIF::PushLiveIfActive(&colorOverride);
 		return;
 	}
 
