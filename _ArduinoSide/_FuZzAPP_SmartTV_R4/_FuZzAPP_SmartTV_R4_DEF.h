@@ -400,6 +400,18 @@ static void Dispatch();                           /* fwd decl - defined in .ino,
 #define MQTTCRED_MAGIC       0xA5   /* marks the block as "configured"; anything else = never set */
 #define MQTTCRED_BLOCK_SIZE  (1 + (MQTTCRED_USER_MAX + 1) + (MQTTCRED_PASS_MAX + 1))  /* magic + user + pass */
 
+/* --- EEPROM CROSS-BOOT SELF-TEST ----------------------------------------------
+   Anchored the same way as MQTTCRED, just below its block (EEPROM.length() -
+   MQTTCRED_BLOCK_SIZE - EE_TEST_BLOCK_SIZE), so it grows from the same end
+   without colliding. See EE::SelfTest() in the .ino: writes a fresh
+   magic+counter+pattern every boot and verifies the PREVIOUS boot's pattern
+   read back correctly, proving persistence actually survives a real power
+   cycle/reset -- not just an immediate readback within the same boot (which
+   w()'s own verification already covers and would pass even if the
+   underlying write never reached flash). */
+#define EE_TEST_MAGIC        0xE7   /* marks the block as "a pattern was written"; anything else = first boot ever */
+#define EE_TEST_BLOCK_SIZE   6      /* magic + boot counter + 4 pattern bytes */
+
 /* RAM cache of the credential block above -- loaded once at boot by
    MQTTCRED::Load(), and updated only after a candidate pair is verified
    live against the broker (see MQTTCRED::cmdSetCredentials()). valid==false
@@ -1095,6 +1107,7 @@ void        ColorFromCurrentLEDs(bool dual, DIF_Colorx &out);  /* averages LED::
 namespace EE {
 /* --- EEPROM persistence ------------------------------------------------------ */
 void                 Read();   void Write(taskId_t taskId);   void WriteTime();
+void                 SelfTest();   /* cross-boot persistence check - see .ino */
 bool                 w(int index, int value);
 const EE_SettingDef* getDef(uint8_t settingId);
 const EE_SettingDef* getDefByIndex(uint8_t index);

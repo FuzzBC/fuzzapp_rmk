@@ -175,6 +175,7 @@ void setup() {
     BME::Setup();         // I^2C temperature/humidity
     LISENS::Setup();         // analog ambient light sensor
     EE::Read();              // load persisted settings
+    EE::SelfTest();          // verify last boot's EEPROM pattern actually survived
 
     LED::Setup();            // NeoPixel strips + shuffle + refresh task
 
@@ -10459,6 +10460,52 @@ void Read() {
     #ifdef ENABLE_LOG_EEPROM
         PRNT::_print(PRNT::formatMSG("%~32s # Completed EEPROM Read" NL, "EE_Read")); // Log completion - Sync
     #endif
+}
+
+/**
+ * @brief  Cross-boot EEPROM persistence self-test.
+ *
+ * Verifies the pattern written on the PREVIOUS boot actually survived to
+ * this boot (real flash persistence, not just an in-RAM echo) before
+ * writing a fresh pattern for the NEXT boot to check. Always prints its
+ * result on Serial/Telnet, unconditionally - this is a diagnostic, not a
+ * debug-gated log line.
+ *
+ * Call once in setup(), after EE::Read().
+ */
+void SelfTest() {
+    const int addr = EEPROM.length() - MQTTCRED_BLOCK_SIZE - EE_TEST_BLOCK_SIZE;
+
+    uint8_t bootNum;
+    if (EEPROM.read(addr) == EE_TEST_MAGIC) {
+        bootNum = EEPROM.read(addr + 1);
+        const uint8_t expected[4] = {
+            (uint8_t)(bootNum ^ 0x55), (uint8_t)(bootNum + 1),
+            (uint8_t)~bootNum,         (uint8_t)(bootNum * 3)
+        };
+        bool ok = true;
+        for (int i = 0; i < 4; i++) {
+            uint8_t actual = EEPROM.read(addr + 2 + i);
+            if (actual != expected[i]) {
+                ok = false;
+                PRNT::_print(PRNT::formatMSG("%32s ! byte[%d] boot#%d expected[%d] got[%d]" NL,
+                    "EEPROM_TEST", i, bootNum, expected[i], actual));
+            }
+        }
+        PRNT::_print(PRNT::formatMSG("%~32s %s boot #%d pattern %s across reboot" NL,
+            "EEPROM_TEST", ok ? "#" : "!", bootNum, ok ? "PASS - survived" : "FAILED - lost"));
+        bootNum++;
+    } else {
+        PRNT::_print(PRNT::formatMSG("%~32s # first boot ever - no previous pattern to verify" NL, "EEPROM_TEST"));
+        bootNum = 0;
+    }
+
+    bool writeOk = w(addr, EE_TEST_MAGIC) && w(addr + 1, bootNum)
+                && w(addr + 2, bootNum ^ 0x55) && w(addr + 3, bootNum + 1)
+                && w(addr + 4, ~bootNum)       && w(addr + 5, bootNum * 3);
+    if (!writeOk) {
+        PRNT::_print(PRNT::formatMSG("%32s ! failed writing boot #%d pattern for next-boot check" NL, "EEPROM_TEST", bootNum));
+    }
 }
 
 /**
