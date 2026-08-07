@@ -52,7 +52,10 @@ $apkName = "FuZzLED_$tag.apk"
 $releaseNotes = "No changelog entry found for $versionName - see AGENTS.md."
 $changelogPath = Join-Path $root 'CHANGELOG.md'
 if (Test-Path $changelogPath) {
-    $lines = Get-Content $changelogPath
+    # -Encoding UTF8 is required: PS 5.1's Get-Content default (system ANSI
+    # codepage) misreads this UTF-8-no-BOM file's non-ASCII characters (em
+    # dashes, etc.), corrupting them before they ever reach the JSON body.
+    $lines = Get-Content $changelogPath -Encoding UTF8
     $heading = "## $versionName"
     $startIdx = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -101,8 +104,13 @@ $body = @{
     name     = $tag
     body     = $releaseNotes
 } | ConvertTo-Json
+# PowerShell 5.1's Invoke-RestMethod encodes a string -Body using the system
+# codepage, not UTF-8, unless given raw bytes - release notes with non-ASCII
+# characters (em dashes, etc.) get silently mangled into invalid UTF-8,
+# which GitHub's API then rejects with "Problems parsing JSON" (400).
+$bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
 
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/releases" -Headers $headers -Method Post -Body $body -ContentType 'application/json'
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/releases" -Headers $headers -Method Post -Body $bodyBytes -ContentType 'application/json; charset=utf-8'
 Write-Output "Created release id $($release.id)"
 
 $uploadUrl = $release.upload_url -replace '\{\?name,label\}', "?name=$apkName"
