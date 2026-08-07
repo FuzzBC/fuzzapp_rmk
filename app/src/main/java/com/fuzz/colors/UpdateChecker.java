@@ -21,7 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Checks a public "releases-only" GitHub repo for a newer version than the
+ * Checks the public FuzzBC/fuzzapp GitHub repo for a newer version than the
  * one currently installed, and hands back the APK asset URL to download.
  *
  * Release tags on that repo must look like "vNN" where NN is the numeric
@@ -32,7 +32,7 @@ import java.util.concurrent.Executors;
 public class UpdateChecker {
 
     private static final String OWNER = "FuzzBC";
-    private static final String REPO  = "fuzzapp-releases";
+    private static final String REPO  = "fuzzapp";
     private static final String API_URL =
             "https://api.github.com/repos/" + OWNER + "/" + REPO + "/releases/latest";
 

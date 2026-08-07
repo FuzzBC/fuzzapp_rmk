@@ -10,6 +10,17 @@ boards talk over a local UDP protocol on the home network, with an MQTT
 This repository is the full source: the Android app, both Arduino firmwares,
 and the desktop tooling used to build/flash/debug them.
 
+## Download
+
+Prebuilt APKs are published on this repo's
+**[Releases](https://github.com/FuzzBC/fuzzapp/releases)** page (tagged
+`V<version>`, e.g. `V8.007`). Installing requires enabling "install from
+unknown sources" for your browser/file manager, since this isn't
+distributed through the Play Store — the app has its own in-app update
+checker (`UpdateChecker`), so once installed it'll notify you here again
+for future releases. Google Play Protect may flag the APK as unverified
+(the release build isn't Play-Store-signed — see `CHANGELOG.md`).
+
 ## Repository layout
 
 ### Android app (`app/`)
@@ -31,7 +42,7 @@ Key classes (`app/src/main/java/com/fuzz/colors/`):
 | `StatusManager` | System status: TV/motion/climate sensors, connection health. |
 | `FuzzWidgetProvider` / `FuzzWidgetStackProvider` / `WidgetUpdateWorker` / `WidgetStatusFetcher` / `WidgetScheduling` | Home-screen widgets and their background refresh. |
 | `TelnetConsole` / `ConsoleAdapter` | The in-app Term console (telnet client to the boards, chip-based log rendering). |
-| `UpdateChecker` / `UpdateInstaller` / `UpdatePopup` | Checks `FuzzBC/fuzzapp-releases` on GitHub for a newer build and installs it. |
+| `UpdateChecker` / `UpdateInstaller` / `UpdatePopup` | Checks this repo's [GitHub Releases](https://github.com/FuzzBC/fuzzapp/releases) for a newer build and installs it. |
 | `ColorWheelPopup`, `RgbChannelPopup`, `ThemePopup`, `TestModePopup`, `DiffuserUsagePopup`, `BackgroundPopup`, `ButtonGuidePopup` | Feature-specific popups. |
 
 Two vendored/forked libraries live alongside it as their own Gradle modules
@@ -85,10 +96,10 @@ terminal).
 ### Release tooling (repo root)
 
 - **`publish_release.ps1`** — after a release APK is built, publishes it as
-  a GitHub Release on the separate `FuzzBC/fuzzapp-releases` repo (tag
-  `V<versionMajor>.<versionCode>`), pulling the release notes straight out
-  of `CHANGELOG.md`. Needs `github_release.properties` (see
-  `github_release.properties.example`) with a GitHub token scoped to that
+  a [GitHub Release](https://github.com/FuzzBC/fuzzapp/releases) on this
+  repo (tag `V<versionMajor>.<versionCode>`), pulling the release notes
+  straight out of `CHANGELOG.md`. Needs `github_release.properties` (see
+  `github_release.properties.example`) with a GitHub token scoped to this
   repo.
 - **`version.properties`** — the single source of truth for `versionMajor`
   / `versionCode`; `app/build.gradle` reads it, and `bumpVersionForNextBuild`
