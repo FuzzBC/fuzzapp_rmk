@@ -113,7 +113,7 @@ struct CHSV {
     // single animation tick and measurably slows transitions down
     // (confirmed live during this session's LD/Ld investigation).
 
-    #define ENABLE_LOG_EEPROM
+//  #define ENABLE_LOG_EEPROM
 //  #define ENABLE_LOG_EEPROM_VERBOSE
 
 //  #define ENABLE_LOG_MOTION
@@ -393,7 +393,7 @@ static void Dispatch();                           /* fwd decl - defined in .ino,
 #define EE_START_READ_INDEX         5
 #define EE_MEM_X                   50    /* settings array size -- padded to next 10 boundary */
 //#define EE_SAVE_TIME             30000    /* ms -- 30 sec before write */
-#define EE_SAVE_TIME             3000    /* ms -- 30 sec before write */
+#define EE_SAVE_TIME             60000    /* ms -- 1 min debounce before the chunked write begins */
 #define EE_SAVE_DELAY_BETWEEN_CHUNKS 1   /* ms between byte writes */
 
 /* --- EEPROM absolute memory map -----------------------------------------------
