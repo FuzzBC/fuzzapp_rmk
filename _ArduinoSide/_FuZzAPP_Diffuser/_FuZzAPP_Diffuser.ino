@@ -2205,7 +2205,7 @@ static void udpDispatch(char *buf) {
                 return;
             }
 
-            LOG::logMsg ("UDP_R", "turn-on request: mode %s, effect %s", MODE::modeName((uint8_t)mh), STRIP::effectName(p.effect));
+            LOG::logMsg ("UDP_R", "turn-on request: mode %s, effect %s, brightness %u/255", MODE::modeName((uint8_t)mh), STRIP::effectName(p.effect), p.brightness);
             vlogMsg("UDP_R", "turn-on payload: dual=%s rgb1=#%02X%02X%02X rgb2=#%02X%02X%02X br=%u/255 speed=%ums payload=[%s]",
                     p.dual ? "yes" : "no", p.r1, p.g1, p.b1, p.r2, p.g2, p.b2,
                     p.brightness, p.speedMs, pay);

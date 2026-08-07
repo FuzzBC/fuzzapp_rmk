@@ -1,3 +1,16 @@
+## Log: turn-on request now shows brightness
+
+**Files changed:** `_FuZzAPP_Diffuser.ino`
+
+- The always-on `UDP_R "turn-on request"` line (mode + effect only) now also
+  prints the received `BR` value as `brightness %u/255` — the lux-adapted
+  brightness SmartTV computes via `LED::getLuxBrightness(EE_DIF_BRIGHTNESS)`
+  and rescales to the diffuser's full 0-255 range (see `DIF::TurnOn()` in
+  the SmartTV firmware) was already being sent and applied on every
+  turn-on/live-update, just never visible without enabling
+  `DIF_DEBUG_VERBOSE` (which prints the same value in `vlogMsg`'s fuller
+  payload dump). No behavioural change — logging only.
+
 ## Security — WiFi/OTA passwords no longer hardcoded in source
 
 **Files changed:** `_FuZzAPP_Diffuser.h`
