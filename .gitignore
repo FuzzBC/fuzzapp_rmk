@@ -117,12 +117,14 @@ desktop.ini
 /android/
 
 # =========================
-# IDE / tool-local, not project history
+# IDE / AI-tool-local, not project history
 # =========================
 .idea/
 .codex/
 .chatgpt/
 .claude/
+.cursor/
+.devin/
 android.lock
 
 # =========================
