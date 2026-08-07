@@ -1573,10 +1573,10 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
         if (APP::Am.Status) {
             memcpy(LED::State.AmbientBackgroundColor,      LED::State.CurrentColor,      LED_NUM * sizeof(CRGB));
             memcpy(LED::State.AmbientBackgroundBrightness, LED::State.CurrentBrightness, LED_NUM * sizeof(uint8_t));
-            memset(EE_AmbientChanged, true, sizeof(EE_AmbientChanged));              // Track all ambient color changes
+            BIT_SET_ALL(EE_AmbientChanged, sizeof(EE_AmbientChanged));              // Track all ambient color changes
         } else if (!isBrightnessMode) {
             memcpy(LED::State.StoredColor, LED::State.CurrentColor, LED_NUM * sizeof(CRGB));
-            memset(EE_ColorChanged, true, sizeof(EE_ColorChanged));                  // Track all LED color changes
+            BIT_SET_ALL(EE_ColorChanged, sizeof(EE_ColorChanged));                  // Track all LED color changes
             if (LED_NUM > LED_START_I_HB) {
                 CRGB hbColor = LED::State.CurrentColor[LED_NUM - 1];
                 for (int j = 0; j < LED_HB_NUM; j++) LED::State.TargetColor[HB(j)] = hbColor;
@@ -9790,8 +9790,13 @@ void WriteTime() {
 	// Check if ANY data needs writing before even scheduling the task
 	bool hasChanges = false;
 
-	// Check settings changes (any bit set in EE_Changed)
-	for (int i = 0; i < 5; i++) {
+	// Check settings changes (any bit set in EE_Changed) - sizeof(), not a
+	// hardcoded byte count: EE_Changed is (EE_MEM_X+7)/8 = 7 bytes for the
+	// current 50 settings, not 5 - a hardcoded "5" here previously missed
+	// bytes 5-6 (settings 40-49, e.g. every EE_DIF_IDLE_*/EE_DIF_BRIGHTNESS/
+	// EE_DIF_SPEED setting), so changing ONLY one of those never scheduled
+	// a write at all - confirmed live as a real persistence bug.
+	for (unsigned int i = 0; i < sizeof(EE_Changed); i++) {
 		if (EE_Changed[i] != 0) {
 			hasChanges = true;
 			break;
@@ -9857,18 +9862,24 @@ void WriteTime() {
 void Write(taskId_t taskId) {
 
     // --- EARLY EXIT: If nothing changed, skip write entirely ---
-    if (EE::State.Index == 0) {  // Only check on first invocation
+    // Index is reset to EE_START_READ_INDEX (not 0) before this task is
+    // scheduled (see WriteTime()) - comparing against 0 here meant this
+    // whole block was dead code, never actually firing on the real first
+    // invocation.
+    if (EE::State.Index == EE_START_READ_INDEX) {  // Only check on first invocation
         // Check if ANY data needs writing
         bool hasChanges = false;
-        
-        // Check settings changes (any bit set in EE_Changed)
-        for (int i = 0; i < 5; i++) {
+
+        // Check settings changes (any bit set in EE_Changed) - sizeof(),
+        // see the matching fix in WriteTime() for why a hardcoded byte
+        // count is wrong here.
+        for (unsigned int i = 0; i < sizeof(EE_Changed); i++) {
             if (EE_Changed[i] != 0) {
                 hasChanges = true;
                 break;
             }
         }
-        
+
         // Check color changes
         if (!hasChanges) {
             for (int i = 0; i < LED_NUM; i++) {

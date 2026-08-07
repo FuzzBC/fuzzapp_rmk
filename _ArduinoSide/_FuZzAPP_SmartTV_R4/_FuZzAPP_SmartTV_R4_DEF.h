@@ -206,6 +206,15 @@ struct CHSV {
 #define BIT_CLEAR(arr, bit) ((arr)[(bit) / 8] &= ~(1 << ((bit) % 8)))
 #define BIT_TEST(arr, bit)  (((arr)[(bit) / 8] & (1 << ((bit) % 8))) != 0)
 #define BIT_CLEAR_ALL(arr, size) memset((arr), 0, (size))
+/* NOTE: sets every bit in every byte, including any trailing unused bits
+   past the real element count in the last byte (e.g. LED_NUM=61 needs 8
+   bytes = 64 bits, so bits 61-63 also get set) - harmless, since callers
+   only ever iterate the real element count, never the full bit range. Do
+   NOT use memset((arr), true, (size)) for this - true/1 as a fill BYTE
+   only sets bit 0 of every byte (0x01), not all 8 bits; confirmed live as
+   the root cause of ambient/LED colour changes silently not persisting
+   for ~7 of every 8 LEDs. */
+#define BIT_SET_ALL(arr, size)   memset((arr), 0xFF, (size))
 
 /* --- LED MODULE -------------------------------------------------------------- */
 #define LED_PIN_FRONT   10
