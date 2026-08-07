@@ -1159,6 +1159,10 @@ void _Debug(uint8_t d) {
 			break;
 		}
 
+		case _debug_eeprom_backup:
+			EE::DumpBackup();
+		break;
+
 		default:
 			APP::termMsgLog(APP_LOG_ERR, APP_SRC_APP, "PRNT", "_Debug", "Unknown debug target [%d]", d);
 		break;
@@ -1551,11 +1555,21 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
                 // fade-to-0 passes through here once, feeding CurrentColor back into
                 // itself would keep re-storing that black forever, even as brightness
                 // climbs back up afterward. StoredColor[] is untouched by that and
-                // always holds the real colour. Colour mode is unaffected -- it already
-                // uses CurrentColor[idx], which TG_COLOR() just stepped toward the
-                // real TargetColor two lines up.
-                const CRGB &renderColor = isBrightnessMode ? LED::State.StoredColor[ledN] : LED::State.CurrentColor[idx];
+                // always holds the real colour.
+                //
+                // Colour mode: CurrentColor[idx] IS the fade's progress tracker --
+                // TG_COLOR() just stepped it toward TargetColor two lines up. But
+                // setPixel() below forces CurrentColor back to black whenever
+                // CurrentBrightness[idx] is 0 (e.g. an LED that isn't lit yet), which
+                // undoes that very step. Left alone, this is an infinite tug-of-war:
+                // TG_COLOR() nudges the colour forward, setPixel() zeroes it back out,
+                // every tick, forever -- the fade never converges and the colour never
+                // gets persisted. Snapshot the stepped value and restore it after
+                // setPixel() runs so the fade can actually finish.
+                const CRGB &renderColor  = isBrightnessMode ? LED::State.StoredColor[ledN] : LED::State.CurrentColor[idx];
+                const CRGB  steppedColor = LED::State.CurrentColor[idx];
                 setPixel(idx, renderColor.r, renderColor.g, renderColor.b, LED::State.CurrentBrightness[idx], false);
+                if (!isBrightnessMode) LED::State.CurrentColor[idx] = steppedColor;
                 moving = true;
             }
         }
@@ -10549,6 +10563,53 @@ void SelfTest() {
     if (!writeOk) {
         PRNT::_print(PRNT::formatMSG("%32s ! failed writing boot #%d pattern for next-boot check" NL, "EEPROM_TEST", bootNum));
     }
+}
+
+/**
+ * @brief  Single-shot raw EEPROM dump - every used byte, read directly from
+ *         flash (not the RAM copies EE::Read() loaded), in one command.
+ *
+ * Prints one line per record in a fixed, easy-to-parse format:
+ *   SET <index> <value>                        x EE_MEM_X
+ *   LEDCOLOR <n> <r> <g> <b> <brightness>       x LED_NUM
+ *   AMBIENT <n> <r> <g> <b> <brightness>        x LED_NUM
+ *   UDPRAW <r> <g> <b> <brightness>
+ *   MOTION <r> <g> <b>
+ *   MQTTCRED <configured|not-configured>        (never prints the credentials themselves)
+ *
+ * Reads flash directly (EEPROM.read()), so this is the actual persisted
+ * state, not whatever the running firmware currently has live in RAM -
+ * the whole point being a real backup/restore reference, not a status
+ * snapshot. Always prints, not gated behind ENABLE_LOG_EEPROM - this is a
+ * diagnostic dump, not routine chatter. Triggered via the 'K' debug
+ * command, target _debug_eeprom_backup (see _DEF.h's __debug enum).
+ */
+void DumpBackup() {
+    PRNT::_print(PRNT::formatMSG("===== EEPROM_BACKUP_BEGIN =====" NL));
+
+    for (int i = 0; i < EE_MEM_X; i++) {
+        PRNT::_print(PRNT::formatMSG("SET %d %d" NL, i, EEPROM.read(EE_ADDR_SET + i)));
+    }
+    for (int n = 0; n < LED_NUM; n++) {
+        const int base = EE_ADDR_COLOR + (n << 2);
+        PRNT::_print(PRNT::formatMSG("LEDCOLOR %d %d %d %d %d" NL, n,
+            EEPROM.read(base), EEPROM.read(base + 1), EEPROM.read(base + 2), EEPROM.read(base + 3)));
+    }
+    for (int n = 0; n < LED_NUM; n++) {
+        const int base = EE_ADDR_AMBIENT + (n << 2);
+        PRNT::_print(PRNT::formatMSG("AMBIENT %d %d %d %d %d" NL, n,
+            EEPROM.read(base), EEPROM.read(base + 1), EEPROM.read(base + 2), EEPROM.read(base + 3)));
+    }
+    PRNT::_print(PRNT::formatMSG("UDPRAW %d %d %d %d" NL,
+        EEPROM.read(EE_ADDR_UDP), EEPROM.read(EE_ADDR_UDP + 1), EEPROM.read(EE_ADDR_UDP + 2), EEPROM.read(EE_ADDR_UDP + 3)));
+    PRNT::_print(PRNT::formatMSG("MOTION %d %d %d" NL,
+        EEPROM.read(EE_ADDR_MOTION), EEPROM.read(EE_ADDR_MOTION + 1), EEPROM.read(EE_ADDR_MOTION + 2)));
+
+    const int mqttBase = EEPROM.length() - MQTTCRED_BLOCK_SIZE;
+    PRNT::_print(PRNT::formatMSG("MQTTCRED %s" NL,
+        (EEPROM.read(mqttBase) == MQTTCRED_MAGIC) ? "configured" : "not-configured"));
+
+    PRNT::_print(PRNT::formatMSG("===== EEPROM_BACKUP_END =====" NL));
 }
 
 /**

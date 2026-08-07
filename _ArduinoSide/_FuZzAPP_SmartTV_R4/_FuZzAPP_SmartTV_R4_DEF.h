@@ -113,7 +113,7 @@ struct CHSV {
     // single animation tick and measurably slows transitions down
     // (confirmed live during this session's LD/Ld investigation).
 
-//  #define ENABLE_LOG_EEPROM
+    #define ENABLE_LOG_EEPROM
 //  #define ENABLE_LOG_EEPROM_VERBOSE
 
 //  #define ENABLE_LOG_MOTION
@@ -396,6 +396,21 @@ static void Dispatch();                           /* fwd decl - defined in .ino,
 #define EE_SAVE_TIME             3000    /* ms -- 30 sec before write */
 #define EE_SAVE_DELAY_BETWEEN_CHUNKS 1   /* ms between byte writes */
 
+/* --- EEPROM absolute memory map -----------------------------------------------
+   Single source of truth for the layout Write()/Read() walk - mirrors the
+   local ADDR_* consts Write() computes inline. All compile-time from
+   existing defines. Used by EE::DumpBackup() (single-shot raw dump) - kept
+   as plain address arithmetic ONLY, deliberately not paired with any
+   whole-range checksum/scan feature here (a prior attempt at that combined
+   with these defines did hundreds of synchronous EEPROM reads/writes in a
+   single call and hung the board - see git history). */
+#define EE_ADDR_SET      EE_START_READ_INDEX               /* settings block start */
+#define EE_ADDR_COLOR    (EE_ADDR_SET     + EE_MEM_X)       /* LED colour block start */
+#define EE_ADDR_AMBIENT  (EE_ADDR_COLOR   + (LED_NUM << 2)) /* ambient colour block start */
+#define EE_ADDR_UDP      (EE_ADDR_AMBIENT + (LED_NUM << 2)) /* UDPRAW colour block start (4 bytes) */
+#define EE_ADDR_MOTION   (EE_ADDR_UDP     + 4)              /* motion colour block start (3 bytes) */
+#define EE_ADDR_MAX      (EE_ADDR_MOTION  + 3)              /* one past the last used byte */
+
 /* --- MQTT CREDENTIAL STORAGE --------------------------------------------------
    Anchored at the far END of the EEPROM region (EEPROM.length() - MQTTCRED_
    BLOCK_SIZE, computed at runtime - EEPROM.length() isn't a compile-time
@@ -472,6 +487,9 @@ enum __debug {
     _debug_all,       /* one-line summary from every module                     */
     _debug_mqtt,      /* broker link + queued rx cmd -- appended last to keep   */
                        /* every existing item's wire index stable                */
+    _debug_eeprom_backup, /* single-shot raw EEPROM dump (settings/colours/ambient/
+                       UDPRAW/motion), read directly from flash not RAM - see
+                       EE::DumpBackup(). Also appended last, same reason. */
 };
 
 /* Test-mode override selection */
@@ -1117,6 +1135,7 @@ namespace EE {
 /* --- EEPROM persistence ------------------------------------------------------ */
 void                 Read();   void Write(taskId_t taskId);   void WriteTime();
 void                 SelfTest();   /* cross-boot persistence check - see .ino */
+void                 DumpBackup(); /* single-shot raw EEPROM dump to Serial - see .ino */
 bool                 w(int index, int value);
 const EE_SettingDef* getDef(uint8_t settingId);
 const EE_SettingDef* getDefByIndex(uint8_t index);
