@@ -237,6 +237,23 @@
     #define DIF_DEBUG_VERBOSE
 #endif
 
+// ── Fast timing under DIF_TEST_MODE ──────────────────────
+// Same knobs as production, scaled down so a manual test/iteration cycle
+// doesn't need to sit through real-world minutes. Only takes effect when
+// DIF_TEST_MODE is actually uncommented above - every value stays exactly
+// as originally defined (WATER_OUT_TIMEOUT_MS / USAGE_MIN_CYCLE_SEC further
+// up this file) in a normal production build; nothing here changes real
+// device behaviour unless that flag is flipped on and reflashed.
+#ifdef DIF_TEST_MODE
+    #define PARFUM_UNIT_MS          1000UL     // 1 "minute" of Dp = 1 real second (normally 60000)
+    #undef  WATER_OUT_TIMEOUT_MS
+    #define WATER_OUT_TIMEOUT_MS    2000UL     // OOW confirm window (normally 10000)
+    #undef  USAGE_MIN_CYCLE_SEC
+    #define USAGE_MIN_CYCLE_SEC     10UL       // Min cycle length to count in history (normally 300)
+#else
+    #define PARFUM_UNIT_MS          60000UL    // 1 real minute per Dp minute - normal behaviour
+#endif
+
 // ── String tables (ROM) ─────────────────────────────────
 // Indexed 1-4 (MODE_MAX entries)
 static const char* const MODE_NAMES[MODE_MAX] = {

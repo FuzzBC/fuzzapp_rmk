@@ -82,6 +82,18 @@ DIFFUSER_COMMANDS = [
                 "in-progress cycle are never touched, only the rolling average this feeds.",
         'custom_panel': 'diffuser_history',
     },
+    {
+        'id': 'DiagHealth', 'transport': 'udp', 'section': 'UDP :8439',
+        'name': 'Diagnostic - health summary', 'label': '!00',
+        'desc': 'Read-only health check (WiFi, power/water, free heap, EEPROM save age, buzzer, history) - never changes device state',
+        'params': [], 'build': lambda v: '!00',
+    },
+    {
+        'id': 'DiagParfum', 'transport': 'udp', 'section': 'UDP :8439',
+        'name': 'Diagnostic - parfum trace', 'label': '!04',
+        'desc': 'Every parfum-related field in one shot (active/remaining/pending/pre-window snapshot) - read-only',
+        'params': [], 'build': lambda v: '!04',
+    },
 
     # ---------------- Console (Serial + Telnet :23) ----------------
     {

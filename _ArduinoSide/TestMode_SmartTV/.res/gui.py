@@ -109,6 +109,7 @@ CATEGORY_META = {
     'UDP :8472 - settings (S)': ('Settings (S)', ACCENT_GREEN, 'SET', '▣'),
     'UDP :8472 - ambient mode (A)': ('Ambient mode (A)', ACCENT_PURPLE, 'AMB', '◐'),
     'UDP :8472 - debug (K)': ('Debug (K)', TEXT_MUTED, 'DBG', '▧'),
+    'UDP :8472 - diagnostics (!)': ('Diagnostics (!)', ACCENT_GREEN, 'DIAG', '✚'),
     'UDP :8472 - diffuser relay (D)': ('Diffuser relay (D)', ACCENT_AMBER, 'REL', '◆'),
     'UDP :8472 - LED zone (L)': ('LED zone (L)', ACCENT_BLUE, 'LED', '■'),
 }

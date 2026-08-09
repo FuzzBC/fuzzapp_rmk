@@ -145,6 +145,14 @@ SMARTTV_COMMANDS = [
         'build': _build_k_debug,
     },
 
+    # ---------------- UDP :8472 - diagnostics (!) ----------------
+    {
+        'id': 'DiagHealth', 'transport': 'udp', 'section': 'UDP :8472 - diagnostics (!)',
+        'name': 'Diagnostic - health summary', 'label': '!00',
+        'desc': 'Read-only health check (WiFi, free RAM, LEDs, TV, diffuser mirror, EEPROM save state) - never changes device state',
+        'params': [], 'build': lambda v: '!00',
+    },
+
     # ---------------- UDP :8472 - diffuser relay (D) ----------------
     # All six of these are a genuine two-hop round trip (app -> SmartTV ->
     # diffuser -> SmartTV -> app), confirmed live to routinely take several

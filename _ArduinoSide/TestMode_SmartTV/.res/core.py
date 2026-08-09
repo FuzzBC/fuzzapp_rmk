@@ -91,6 +91,14 @@ def describe_reply(text):
     if not text:
         return None
 
+    if text[0] == '!' and len(text) >= 2:
+        # Diffuser DIAG::diagLine() ("!ii" diagnostics) - plain-English text,
+        # marker-prefixed specifically so it can never collide with a bare
+        # single-letter status code below (e.g. an "EEPROM ..." diagnostic
+        # line would otherwise start with the same 'E' this protocol already
+        # uses for the LED-enable reply). Nothing to decode - just unwrap it.
+        return text[1:]
+
     if text[0] == '*' and len(text) >= 6:
         try:
             level = int(text[1], 16)

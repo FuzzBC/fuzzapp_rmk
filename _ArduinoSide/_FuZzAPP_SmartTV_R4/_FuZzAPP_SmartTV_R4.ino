@@ -6913,6 +6913,14 @@ void Loop() {
     }
 }
 
+// Explicit forward declaration - the auto-generated-prototype step (this
+// sketch has no manual prototypes for its other top-level command handlers,
+// e.g. cmdDebug()/cmdConnected(), and relies on that step for all of them)
+// did not pick this one up on its own, for reasons not chased down further -
+// harmless either way since a prototype here is valid regardless of whether
+// the auto step also emits one.
+void cmdDiag(char *buff, int len);
+
 void Exec(char *buff, int len) {
 	// * Wake from suspend -- the app just spoke, so it is alive again. Only clear
 	//   the flag here (TX + keep-alive resume); the resync itself is driven by
@@ -6983,6 +6991,7 @@ void Exec(char *buff, int len) {
 		case 'K': cmdDebug(buff, len);       break; // Debug
         case '@': cmdTestMode(buff, len);      break; // Test Mode
         case '$': MQTTCRED::cmdSetCredentials(buff, len); break; // MQTT credential provisioning (b64 user,pass)
+        case '!': cmdDiag(buff, len);          break; // Diagnostics ("!ii") - read-only, see cmdDiag()
 
 		case 'D': // Diffuser sub-commands -- forwarded to the DIF UDP link
 			switch (buff[1]) {
@@ -7993,6 +8002,44 @@ void cmdDebug(char *buff, int len) {
 		PRNT::_print(PRNT::formatMSG("%32s : debug [%d]" NL, "Debug", item));
 	#endif
 
+}
+
+/**
+ * @brief  Handle '!ii' command -- read-only UDP diagnostics, companion to the
+ *         existing 'K' debug dump. Never changes device state. Reply travels
+ *         over the normal termMsgLog() term-log envelope, so it shows up
+ *         decoded in the Test Mode GUI the same as any other log line.
+ *
+ * @param  buff  Command buffer. buff[1..2] = 2-digit hex diagnostic code.
+ * @param  len   Length of the command (must be 3: '!' + 2 hex digits).
+ *
+ * Recognized: 00 = health summary. Anything else acks UNSUPPORTED rather
+ * than silently doing nothing, so a typo'd code is visible in the ack.
+ */
+void cmdDiag(char *buff, int len) {
+	if (len != 3) {
+		APP::State.LastResult = APP_ACK_REJECTED;
+		PRNT::_print(PRNT::formatMSG("%32s ! invalid length (%d)" NL, "Diag", len));
+		return;
+	}
+	int code = HexByte(&buff[1]);
+
+	if (code == 0x00) {
+		bool wifiOk = (WiFi.status() == WL_CONNECTED);
+		bool ramOk  = (APP::getFreeRam() >= 4000);
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "cmdDiag", "==== HEALTH SUMMARY ====");
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_NET, "APP", "cmdDiag", "WiFi      : %s (%d dBm)", wifiOk ? "OK" : "DOWN", (int)WiFi.RSSI());
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "cmdDiag", "RAM free  : %d of %d B%s", APP::getFreeRam(), ARD_RAM_TOTAL, ramOk ? "" : " [LOW]");
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "cmdDiag", "LEDs      : %s", LED::State.Enabled ? "enabled" : "disabled");
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_TV,  "APP", "cmdDiag", "TV        : %s", TV::State.Status ? "on" : "off");
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_DIF, "APP", "cmdDiag", "Diffuser  : mode %d, parfum %d min", DIF::State.Mode, DIF::State.ParfumMin);
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_EE,  "APP", "cmdDiag", "EEPROM    : %s", (EE::State.tID != TASK_ID_NONE) ? "save pending" : "up to date");
+		APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "cmdDiag", "==== %s ====", (wifiOk && ramOk) ? "ALL OK" : "ISSUES FOUND - see above");
+		return;
+	}
+
+	APP::termMsgLog(APP_LOG_WRN, APP_SRC_SYS, "APP", "cmdDiag", "diagnostic !%02X not implemented yet", code);
+	APP::State.LastResult = APP_ACK_UNSUPPORTED;
 }
 
 /**

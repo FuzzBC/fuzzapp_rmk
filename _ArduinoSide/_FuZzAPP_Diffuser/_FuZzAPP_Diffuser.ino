@@ -29,6 +29,9 @@
 //    Dp0000                      parfum cancel     → (ack only)
 //    DnXXrrggbbBREESP           on, solid         → (ack only)  XX=mode EE=00-08 SP=ms
 //    DnXXrrggbbRRGGBBBREESP     on, dual          → (ack only)
+//    !ii                          diagnostics       → *-prefixed term-log lines, read-only, never changes
+//                                                     state - 00=health summary 04=parfum state trace,
+//                                                     anything else acks UNSUPPORTED (see DIAG namespace)
 //    #SS<cmd>                    ack-wrapped any   → #SSR        R: 0 ok 1 clamp 2 rej 4 lock 5 nowater 6 unsup
 //
 //  UDP :8439   OUT (to SmartTV)
@@ -386,6 +389,10 @@ namespace PARFUM {
     static bool parfumStart(uint16_t minutes, uint8_t mode = PARFUM_DIF_MODE);
     static bool parfumStop(const char *reason, bool naturalExpiry = false);
     static void tickParfum();
+}
+
+namespace DIAG {
+    static void run(uint8_t code);
 }
 
 namespace WIFI {
@@ -1737,7 +1744,7 @@ static bool parfumStart(uint16_t minutes, uint8_t mode) {
 
     g_parfumActive      = true;
     g_parfumSetMin      = minutes;
-    g_parfumEndMs       = millis() + (unsigned long)minutes * 60000UL;
+    g_parfumEndMs       = millis() + (unsigned long)minutes * PARFUM_UNIT_MS;  // real minutes, or seconds under DIF_TEST_MODE
     g_parfumPendingKind = PARFUM_PEND_NONE;    // Fresh window — drop any queue left from a prior one
 
     LOG::logMsg("PARFUM", "started - %u min, mode %s",
@@ -1807,6 +1814,103 @@ static void tickParfum() {
 }
 
 } // namespace PARFUM
+
+/* ============================================================================
+   DIAG
+   UDP-reachable diagnostics ("!ii") - read-only, never changes device state.
+   ============================================================================
+   LOG::logMsg() only ever reaches Serial/Telnet (see dbgWrite() - it's
+   Serial.print()+telnetWrite(), no UDP path at all; the '*'-prefixed term-log
+   envelope that DOES reach UDP is a SmartTV-only mechanism, this device has
+   no equivalent). diagLine() below is what actually gets a diagnostic line
+   back to the UDP caller - a raw line straight to the cached sender IP via
+   PROTO::udpSend(), same fixed-reply-port convention every other reply here
+   uses. Still also calls LOG::logMsg() so the same output is visible over a
+   wired Serial/Telnet session too, for free.
+   Companion to the existing Serial/Telnet-only "D" debug dump and "T" self-
+   test - this is the subset of that information reachable without a wired
+   connection, plus a couple of checks "D" doesn't do (state consistency,
+   not just a raw field dump).
+   ============================================================================ */
+namespace DIAG {
+
+/** @brief  Format one diagnostic line and send it both ways - see namespace
+ *  doc above for why a single LOG::logMsg() call isn't enough on its own.
+ *
+ *  The UDP copy is sent with a leading '!' marker (stripped back off by the
+ *  Test Mode GUI's describe_reply()) - without it, a plain-English line
+ *  starting with a letter this protocol already gives meaning to as a bare
+ *  status code (e.g. "EEPROM ..." starts with 'E', the same first character
+ *  as the single-hex-digit LED-enable reply) gets misread as that code
+ *  instead of shown as text. Confirmed live: "EEPROM : last save 0s ago"
+ *  rendered as "LEDs enabled" before this marker was added. */
+static void diagLine(const char *fmt, ...) {
+    char buf[200];
+    buf[0] = '!';
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf + 1, sizeof(buf) - 1, fmt, ap);
+    va_end(ap);
+    LOG::logMsg("DIAG", "%s", buf + 1);   // Serial/Telnet, tagged - unmarked, already unambiguous there
+    PROTO::udpSend(buf);                  // UDP reply to the requesting client, '!'-marked
+}
+
+/** @brief  "!00" - one-shot health summary across every subsystem. */
+static void health() {
+    bool wifiOk = (WiFi.status() == WL_CONNECTED);
+    bool heapOk = (ESP.getFreeHeap() >= 8000);
+    unsigned long sinceSaveS = (millis() - g_usageLastSaveMs) / 1000UL;
+
+    diagLine("==== HEALTH SUMMARY ====");
+    diagLine("WiFi     : %s (%d dBm)", wifiOk ? "OK" : "DOWN", (int)WiFi.RSSI());
+    diagLine("Power    : %s%s", g_powered ? "ON" : "OFF", g_outOfWater ? " [OUT OF WATER]" : "");
+    diagLine("Mode     : %s", MODE::modeName(g_mode));
+    diagLine("Free heap: %u B%s", (unsigned)ESP.getFreeHeap(), heapOk ? "" : " [LOW]");
+    diagLine("EEPROM   : last save %lus ago", sinceSaveS);
+    diagLine("Parfum   : %s", g_parfumActive ? "ACTIVE" : "inactive");
+    diagLine("Buzzer   : env=%.1f active=%s burst=%u totalBeeps=%lu",
+              g_buzEnv, g_buzToneActive ? "yes" : "no", g_buzBurst, g_buzTotalCount);
+    diagLine("History  : %u/%u cycles, %lu lifetime refills", g_refillHistoryCount, REFILL_HISTORY_SIZE, g_totalRefillCount);
+    diagLine("==== %s ====", (wifiOk && heapOk) ? "ALL OK" : "ISSUES FOUND - see above");
+}
+
+/** @brief  "!04" - every Parfum-related field in one shot, the exact
+ *  cross-section that otherwise takes several separate "D" dump reads to
+ *  piece together (active / queued / pre-window snapshot all print on
+ *  different lines, some only conditionally). */
+static void parfumTrace() {
+    diagLine("==== PARFUM TRACE ====");
+    diagLine("active     : %s", g_parfumActive ? "yes" : "no");
+    if (g_parfumActive) {
+        diagLine("remaining  : %u of %u min set", PARFUM::parfumRemainingMin(), g_parfumSetMin);
+    }
+    const char *pendStr = (g_parfumPendingKind == PARFUM_PEND_ON)  ? "ON queued"  :
+                          (g_parfumPendingKind == PARFUM_PEND_OFF) ? "OFF queued" : "none";
+    diagLine("pending    : %s", pendStr);
+    if (g_parfumHavePrevDn) {
+        diagLine("havePrevDn : yes (reverts to %s on natural expiry, if nothing queued)", MODE::modeName(g_parfumPrevMode));
+    } else {
+        diagLine("havePrevDn : no (expiry shuts down if nothing queued)");
+    }
+    diagLine("haveLastDn : %s (last mode %s)", g_haveLastDn ? "yes" : "no", MODE::modeName(g_lastDnMode));
+}
+
+/** @brief  Dispatch one "!ii" diagnostic code. Unknown codes ack UNSUPPORTED
+ *  (same convention as an unrecognized top-level command) rather than
+ *  silently doing nothing, so a typo'd code is visible in the ack, not
+ *  mistaken for "ran fine, nothing to report". */
+static void run(uint8_t code) {
+    switch (code) {
+        case 0x00: health();     break;
+        case 0x04: parfumTrace(); break;
+        default:
+            LOG::logMsg("DIAG", "diagnostic !%02X not implemented yet", code);
+            g_ackResult = ACK_UNSUPPORTED;
+            break;
+    }
+}
+
+} // namespace DIAG
 
 /* ============================================================================
    WIFI
@@ -2140,6 +2244,16 @@ static void udpAck(uint8_t seq, uint8_t result) {
 static void udpDispatch(char *buf) {
     vlogMsg("UDP_R", "exec [%s]", buf);
     size_t len = strlen(buf);
+    if (buf[0] == '!' && len == 3) {                        // "!ii" - read-only diagnostics, see DIAG namespace
+        unsigned int di = 0;
+        if (sscanf(buf + 1, "%2x", &di) != 1) {
+            LOG::logMsg("DIAG", "bad diagnostic code [%s]", buf);
+            g_ackResult = ACK_REJECTED;
+            return;
+        }
+        DIAG::run((uint8_t)di);
+        return;
+    }
     if (len >= 2 && (buf[0] == 'D' || buf[0] == 'd')) {
         char c1 = buf[1];
         if ((c1 == 's' || c1 == 'S') && len == 2) {
