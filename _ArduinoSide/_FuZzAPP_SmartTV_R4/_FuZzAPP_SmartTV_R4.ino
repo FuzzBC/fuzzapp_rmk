@@ -1518,6 +1518,65 @@ void T_LUX_BR_CHANGE(taskId_t taskId) {
 }
 
 /**
+ * @brief  Dynamic ambient light adjustment task for MOTION lighting -- re-apply
+ *         lux-scaled brightness to the currently-lit COM/BED zone while motion
+ *         is steady (mirrors T_LUX_BR_CHANGE's role for the TV path).
+ *
+ * HB is deliberately left untouched here: HB_GetBaseBr() already reads the
+ * live lux level on every frame of its own always-running idle effect,
+ * independent of which source (TV/Motion/UDPRAW) is driving the main strip.
+ *
+ * Registered (and re-armed) only by LISENS::setLux()'s MOTION branch. Every
+ * motion re-trigger, auto-off, or fresh on-detection already calls
+ * TSK::KillTasksAvoidLocked() itself before scheduling its own next step (see
+ * MOTION::Status() / T_EFFECT_MOTION_ON()) - since that kills every unlocked
+ * task, not just ones it names, any of those motion transitions cancels this
+ * task for free. That is the priority rule: a real motion state change always
+ * wins over an in-progress lux adjustment, with no extra guard needed here.
+ */
+void T_MOTION_LUX_BR_CHANGE(taskId_t taskId) {
+    #ifdef ENABLE_LOG_LED_VERBOSE
+        PRNT::_print(PRNT::formatMSG("%32s : adjusting motion brightness to ambient lux level" NL, "T_MOTION_LUX_BR_CHANGE"));
+    #endif
+
+    bool anyChanged = false;
+    const int brInc      = getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC));            // Raw EE - lux change is NOT speed-adapted, matches T_LUX_BR_CHANGE - Setup
+    const int targetBr   = getLuxBrightness(EE::Get(EE_MOTION_BRIGHTNESS));         // Same base T_EFFECT_MOTION_ON_Default() uses - Setup
+    const bool isBedOnly = (MOTION::State.Status == motBED);                        // Same convention as the motion effects - Setup
+
+    for (int i = 0; i < LED_BED_NUM; i++) {
+        const int led = BED(i);
+        if (TG_BRIGHTNESS(led, targetBr, brInc, false)) {
+            const CRGB steppedColor = LED::State.CurrentColor[led];                 // Re-render same colour at the new brightness - see T_LUX_BR_CHANGE's matching note
+            setPixel(led, steppedColor.r, steppedColor.g, steppedColor.b, LED::State.CurrentBrightness[led], false);
+            LED::State.CurrentColor[led] = steppedColor;
+            anyChanged = true;
+        }
+    }
+    if (!isBedOnly) {
+        for (int i = 0; i < LED_COM_NUM; i++) {
+            const int led = COM(i);
+            if (TG_BRIGHTNESS(led, targetBr, brInc, false)) {
+                const CRGB steppedColor = LED::State.CurrentColor[led];
+                setPixel(led, steppedColor.r, steppedColor.g, steppedColor.b, LED::State.CurrentBrightness[led], false);
+                LED::State.CurrentColor[led] = steppedColor;
+                anyChanged = true;
+            }
+        }
+    }
+
+    if (anyChanged) {
+        Show();
+        APP::updDeltaColors();                                                      // Sync live brightness to the app - Sync
+    } else {
+        #ifdef ENABLE_LOG_LED_VERBOSE
+            PRNT::_print(PRNT::formatMSG("%32s : motion lux adjustment complete" NL, "T_MOTION_LUX_BR_CHANGE"));
+        #endif
+        TSK::KillTasksAvoidLocked("T_MOTION_LUX_BR_CHANGE");
+    }
+}
+
+/**
  * @brief  Versatile smooth transition task -- animate selected LEDs to a new colour or brightness.
  */
 void T_SMOOTH_CHANGE(taskId_t taskId) {
@@ -2929,6 +2988,22 @@ void setLux(int newLux) {
                     PRNT::_print(PRNT::formatMSG("%32s : path TV - T_LUX_BR_CHANGE re-armed" NL, "LUX_Apply"));
                 #endif
             }
+        } else if (MOTION::State.Status == motCOM || MOTION::State.Status == motBED) { // Update MOTION - Action
+            // Deliberately excludes motON/motOFF (nothing lit) and motAUTOOFF
+            // (the auto-off fade is already scheduled the same tick Status()
+            // sets that flag - see MOTION::Status() - so by the time it's
+            // observable here the off-fade already owns the strip). No
+            // Transitioning-style mid-animation guard like the TV branch
+            // above: killing T_EFFECT_MOTION_ON mid-reveal here just ends its
+            // staggered reveal pattern early and converges straight to the
+            // same lux-scaled target brightness the reveal was already
+            // heading toward - same end state, no stuck LEDs, just a rare,
+            // minor cosmetic shortcut on the reveal flourish.
+            TSK::KillTasksAvoidLocked("LISENS_Change_MOTION");
+            TSK::AddTask("LISENS_Change_MOTION", "T_MOTION_LUX_BR_CHANGE", LED::T_MOTION_LUX_BR_CHANGE, TASK_MS, EE::Get(EE_MOTION_BR_CL_DEL), 0, false); // Raw EE - not adapted, matches TV/UDPRAW paths
+            #ifdef ENABLE_LOG_LUX
+                PRNT::_print(PRNT::formatMSG("%32s : path MOTION - T_MOTION_LUX_BR_CHANGE re-armed" NL, "LUX_Apply"));
+            #endif
         }
         // * LOG
         #ifdef ENABLE_LOG_LUX
@@ -7689,6 +7764,7 @@ void cmdSettings(char *buff, int len) {
 	}
 	
 	if ((len -1) % 4 != 0) {
+		APP::State.LastResult = APP_ACK_REJECTED;
 		// * LOG
 		PRNT::_print(PRNT::formatMSG("%32s ! invalid length (%d)" NL, "APP_Settings", len));
 		return;

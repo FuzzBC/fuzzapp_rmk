@@ -2135,7 +2135,11 @@ static void udpDispatch(char *buf) {
             if (mins == 0) {
                 if (len != 6) { LOG::logMsg("UDP_R", "parfum cancel rejected - no mode digit expected [%s]", buf); g_ackResult = ACK_REJECTED; return; }
                 if (g_parfumActive) { if (!PARFUM::parfumStop("cancel command")) g_ackResult = ACK_LOCKED; }
-                else { vlogMsg("PARFUM", "cancel - already inactive"); cmdStatusQuery(); }
+                else {                                                 // Nothing to cancel - don't silently ack OK for
+                    LOG::logMsg("UDP_R", "parfum cancel rejected - already inactive");   // an action that never happened
+                    g_ackResult = ACK_REJECTED;
+                    cmdStatusQuery();
+                }
                 return;
             }
             if (len != 7) {                                         // Starting a run — E is mandatory

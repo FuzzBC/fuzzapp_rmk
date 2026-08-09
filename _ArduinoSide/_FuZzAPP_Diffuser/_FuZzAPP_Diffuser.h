@@ -38,7 +38,10 @@
 #define ACK_HDR             3             // header stripped: '#' + 2 hex seq
 #define ACK_OK              0             // applied as requested
 #define ACK_CLAMPED         1             // applied, but a value was coerced
-#define ACK_REJECTED        2             // malformed / unparseable command
+#define ACK_REJECTED        2             // malformed / unparseable command, or well-formed but
+                                          // had nothing to act on (e.g. Dp0000 cancel with no
+                                          // parfum window running) - never silently ack OK for
+                                          // an action that didn't actually happen
 #define ACK_LOCKED          4             // ignored/queued: a parfum window is active
 // 5 (SmartTV APP_ACK_NOWATER) intentionally has no local equivalent here — the
 // diffuser never emits it itself: out-of-water is asynchronous (detected mid-

@@ -240,7 +240,12 @@ public class DiffuserUsagePopup {
         statsLp.setMargins(0, statsMarginTop, 0, 0);
         statsBox.setLayoutParams(statsLp);
 
-        statsBox.addView(_statRow("Since refill", _fmtDuration(accumMin), titleCol, dp));
+        // "Since refill" is the running-time number (how long it's actually been
+        // working, as opposed to REMAINING above) - tinted with the same accent
+        // as the header/REMAINING line instead of plain titleCol like the other
+        // rows, so it still stands out at a glance without needing a duplicate
+        // headline of its own outside this box.
+        statsBox.addView(_statRow("Since refill", _fmtDuration(accumMin), accent, titleCol, dp));
         statsBox.addView(_statRow("Average cycle", avgMin > 0 ? _fmtDuration(avgMin) : "-", titleCol, dp));
         statsBox.addView(_statRow("History", refillCount + "/10 cycles", titleCol, dp));
         statsBox.addView(_statRow("Lifetime", totalRefills + " refill" + (totalRefills == 1 ? "" : "s"), titleCol, dp));
@@ -868,6 +873,22 @@ public class DiffuserUsagePopup {
      * @param dp        Display density factor.
      */
     private LinearLayout _statRow(String label, String value, int titleCol, float dp) {
+        return _statRow(label, value, titleCol, titleCol, dp);
+    }
+
+    /**
+     * One label/value row inside the stats box, with the value colour
+     * overridable independently of the label - used to tint "Since refill"
+     * with the header's accent colour so the running-time number still
+     * stands out within the box without needing a separate headline outside it.
+     *
+     * @param label     Left-aligned caption.
+     * @param value     Right-aligned value.
+     * @param valueCol  Text colour for the value only.
+     * @param titleCol  Text colour for the label (and the value's fallback).
+     * @param dp        Display density factor.
+     */
+    private LinearLayout _statRow(String label, String value, int valueCol, int titleCol, float dp) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setLayoutParams(new LinearLayout.LayoutParams(
@@ -886,7 +907,7 @@ public class DiffuserUsagePopup {
         valueTv.setText(value);
         valueTv.setTypeface(null, Typeface.BOLD);
         valueTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        valueTv.setTextColor(titleCol);
+        valueTv.setTextColor(valueCol);
         valueTv.setGravity(Gravity.END);
         row.addView(valueTv);
 

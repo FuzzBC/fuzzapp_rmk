@@ -15,10 +15,10 @@ import time
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk, colorchooser
+from tkinter import ttk, colorchooser, messagebox
 
 import net
-from core import hexb, find_ack
+from core import hexb, find_ack, describe_reply
 from commands_diffuser import DIFFUSER_COMMANDS
 from commands_smarttv import SMARTTV_COMMANDS, TV_SETTINGS
 
@@ -63,6 +63,24 @@ CHIP_COLORS = {
     'unknown': ('#282d36', '#82807a'),
 }
 
+# ack/result banner content: kind -> (icon glyph, headline, one-line meaning).
+# Same kind strings as CHIP_COLORS above, so the banner and the small chip
+# next to Send always agree on colour for a given result.
+ACK_INFO = {
+    'ok':          ('✓', 'OK',          'Command accepted.'),
+    'clamped':     ('△', 'CLAMPED',     "Accepted, but the value was out of range and got clamped."),
+    'rejected':    ('✕', 'REJECTED',    'Command was rejected - nothing changed.'),
+    'blocked':     ('⛔', 'BLOCKED',     "Blocked by the device's current state."),
+    'locked':      ('⚿', 'LOCKED',      'That setting is locked.'),
+    'nowater':     ('⚠', 'NO WATER',    'Diffuser reservoir is empty.'),
+    'unsupported': ('–', 'UNSUPPORTED', 'Not supported by this firmware build.'),
+    'timeout':     ('…', 'TIMEOUT',     'No reply within the timeout window.'),
+    'error':       ('✕', 'ERROR',       'The send itself failed.'),
+    'sent':        ('➤', 'SENT',        'Sent - this command has no ack envelope.'),
+    'unknown':     ('?', 'NO ACK',      'No matching ack packet came back.'),
+    'none':        ('–', '-',           ''),
+}
+
 LED_ZONES = [
     ('TV', 0, 30, '#6fa3d8'),
     ('COM', 30, 10, '#7cb87c'),
@@ -79,23 +97,26 @@ SETTINGS_CAT_COLORS = {
 
 DIF_MODE_NAMES = ['OFF', 'CONT', '10 SEC', '2H AFTER SLEEP', '4H AFTER SLEEP']
 
-# sec (raw spec['section'] string) -> (sidebar title, accent colour, 3-char badge)
+# sec (raw spec['section'] string) -> (sidebar title, accent colour, 3-char badge, icon glyph)
+# Icons are plain Unicode geometric shapes (same family as the existing chevrons)
+# rather than an icon font or bundled images - renders everywhere Tkinter runs,
+# no new assets to ship or load.
 CATEGORY_META = {
-    'UDP :8439': ('UDP session & control', ACCENT_BLUE, 'UDP'),
-    'Console (Serial + Telnet :23)': ('Serial / Telnet console', ACCENT_PURPLE, 'TTY'),
-    'UDP :8472 - session': ('Session', ACCENT_BLUE, 'SES'),
-    'UDP :8472 - test mode (@)': ('Test mode (@)', ACCENT_AMBER, 'TST'),
-    'UDP :8472 - settings (S)': ('Settings (S)', ACCENT_GREEN, 'SET'),
-    'UDP :8472 - ambient mode (A)': ('Ambient mode (A)', ACCENT_PURPLE, 'AMB'),
-    'UDP :8472 - debug (K)': ('Debug (K)', TEXT_MUTED, 'DBG'),
-    'UDP :8472 - diffuser relay (D)': ('Diffuser relay (D)', ACCENT_AMBER, 'REL'),
-    'UDP :8472 - LED zone (L)': ('LED zone (L)', ACCENT_BLUE, 'LED'),
+    'UDP :8439': ('UDP session & control', ACCENT_BLUE, 'UDP', '◆'),
+    'Console (Serial + Telnet :23)': ('Serial / Telnet console', ACCENT_PURPLE, 'TTY', '▥'),
+    'UDP :8472 - session': ('Session', ACCENT_BLUE, 'SES', '●'),
+    'UDP :8472 - test mode (@)': ('Test mode (@)', ACCENT_AMBER, 'TST', '▶'),
+    'UDP :8472 - settings (S)': ('Settings (S)', ACCENT_GREEN, 'SET', '▣'),
+    'UDP :8472 - ambient mode (A)': ('Ambient mode (A)', ACCENT_PURPLE, 'AMB', '◐'),
+    'UDP :8472 - debug (K)': ('Debug (K)', TEXT_MUTED, 'DBG', '▧'),
+    'UDP :8472 - diffuser relay (D)': ('Diffuser relay (D)', ACCENT_AMBER, 'REL', '◆'),
+    'UDP :8472 - LED zone (L)': ('LED zone (L)', ACCENT_BLUE, 'LED', '■'),
 }
 
 
 def category_meta(section):
-    """Sidebar (title, colour, badge) for a raw section string, with a safe fallback."""
-    return CATEGORY_META.get(section, (section, TEXT_MUTED, section[:3].upper()))
+    """Sidebar (title, colour, badge, icon) for a raw section string, with a safe fallback."""
+    return CATEGORY_META.get(section, (section, TEXT_MUTED, section[:3].upper(), '▪'))
 
 
 def describe_lk_packet(data):
@@ -448,12 +469,13 @@ class App(object):
         any_match = False
         for sec in sections:
             matches = [s for s in by_section[sec]
-                       if not query or query in s['id'].lower() or query in s['label'].lower()]
+                       if not query or query in s['id'].lower() or query in s['label'].lower()
+                       or query in s.get('name', '').lower()]
             if query and not matches:
                 continue
             any_match = True
             is_open = bool(query) or expanded.get(sec, True)
-            title, color, badge = category_meta(sec)
+            title, color, badge, icon = category_meta(sec)
 
             header = tk.Frame(self.sidebar_inner, bg=BG_SIDEBAR, cursor='hand2')
             header.pack(fill='x', pady=(10, 1))
@@ -465,8 +487,8 @@ class App(object):
             chevron = tk.Label(header, text=('\u25be' if is_open else '\u25b8'), bg=BG_SIDEBAR, fg=TEXT_MUTED,
                                font=('Segoe UI', 8), pady=4)
             chevron.pack(side='left', padx=(10, 2))
-            tk.Label(header, text=badge, bg=color, fg=BG_SIDEBAR, font=('Segoe UI', 7, 'bold'),
-                    padx=5, pady=1).pack(side='left', padx=(0, 6))
+            tk.Label(header, text=icon, bg=BG_SIDEBAR, fg=color, font=('Segoe UI', 11),
+                    padx=0, pady=1).pack(side='left', padx=(0, 6))
             tk.Label(header, text=title, bg=BG_SIDEBAR, fg=color, font=('Segoe UI', 8, 'bold'),
                      anchor='w').pack(side='left', fill='x', expand=True, pady=4)
             tk.Label(header, text=str(len(matches)), bg=BG_SIDEBAR, fg=TEXT_MUTED,
@@ -480,13 +502,20 @@ class App(object):
             for spec in matches:
                 if first_id is None:
                     first_id = spec['id']
-                row = tk.Label(self.sidebar_inner, text=spec['label'], bg=BG_SIDEBAR, fg=TEXT_SECONDARY,
-                               font=('Consolas', 10), anchor='w', padx=24, pady=5, cursor='hand2')
+                row = tk.Frame(self.sidebar_inner, bg=BG_SIDEBAR, cursor='hand2')
                 row.pack(fill='x')
-                row.bind('<Button-1>', lambda e, s=spec: self._select_command(device_key, s))
-                row.bind('<Enter>', lambda e, r=row, dk=device_key, sid=spec['id']: self._sidebar_hover(r, dk, sid, True))
-                row.bind('<Leave>', lambda e, r=row, dk=device_key, sid=spec['id']: self._sidebar_hover(r, dk, sid, False))
-                self.sidebar_rows[device_key][spec['id']] = row
+                name_lbl = tk.Label(row, text=spec.get('name', spec['label']), bg=BG_SIDEBAR, fg=TEXT_SECONDARY,
+                                    font=('Segoe UI', 10), anchor='w', padx=24, pady=5)
+                name_lbl.pack(side='left', fill='x', expand=True)
+                code_lbl = tk.Label(row, text=spec['label'], bg=BG_SIDEBAR, fg=TEXT_MUTED,
+                                    font=('Consolas', 8), anchor='e', padx=10, pady=5)
+                code_lbl.pack(side='right')
+                widgets = (row, name_lbl, code_lbl)
+                for w in widgets:
+                    w.bind('<Button-1>', lambda e, s=spec: self._select_command(device_key, s))
+                    w.bind('<Enter>', lambda e, dk=device_key, sid=spec['id']: self._sidebar_hover(dk, sid, True))
+                    w.bind('<Leave>', lambda e, dk=device_key, sid=spec['id']: self._sidebar_hover(dk, sid, False))
+                self.sidebar_rows[device_key][spec['id']] = widgets
 
         if not any_match:
             tk.Label(self.sidebar_inner, text='no commands match "%s"' % query, bg=BG_SIDEBAR, fg=TEXT_MUTED,
@@ -497,21 +526,28 @@ class App(object):
 
         sel = self.selected_id.get(device_key)
         if sel and sel in self.sidebar_rows[device_key]:
-            self.sidebar_rows[device_key][sel].configure(bg=BG_ROW_SELECTED, fg=ACCENT_BLUE)
+            self._paint_row(device_key, sel, BG_ROW_SELECTED, ACCENT_BLUE)
 
-    def _sidebar_hover(self, row, device_key, spec_id, entering):
+    def _paint_row(self, device_key, spec_id, bg, name_fg):
+        widgets = self.sidebar_rows.get(device_key, {}).get(spec_id)
+        if not widgets:
+            return
+        row, name_lbl, code_lbl = widgets
+        row.configure(bg=bg)
+        name_lbl.configure(bg=bg, fg=name_fg)
+        code_lbl.configure(bg=bg)
+
+    def _sidebar_hover(self, device_key, spec_id, entering):
         if self.selected_id.get(device_key) == spec_id:
             return
-        row.configure(bg=(BG_ROW_HOVER if entering else BG_SIDEBAR))
+        self._paint_row(device_key, spec_id, (BG_ROW_HOVER if entering else BG_SIDEBAR), TEXT_SECONDARY)
 
     def _select_command(self, device_key, spec):
         prev = self.selected_id.get(device_key)
         if prev and prev in self.sidebar_rows.get(device_key, {}):
-            self.sidebar_rows[device_key][prev].configure(bg=BG_SIDEBAR, fg=TEXT_SECONDARY)
+            self._paint_row(device_key, prev, BG_SIDEBAR, TEXT_SECONDARY)
         self.selected_id[device_key] = spec['id']
-        row = self.sidebar_rows[device_key].get(spec['id'])
-        if row:
-            row.configure(bg=BG_ROW_SELECTED, fg=ACCENT_BLUE)
+        self._paint_row(device_key, spec['id'], BG_ROW_SELECTED, ACCENT_BLUE)
         if device_key == self.active_device:
             self._render_detail(spec, device_key)
 
@@ -716,6 +752,30 @@ class App(object):
                 vals[p['key']] = c['var'].get()
         return vals
 
+    def _step_row(self, parent, number, title):
+        """One numbered step: a small filled badge + title, matching the same
+        numbered-flow pattern for every command - zero-parameter commands just
+        end up with fewer steps, rather than a different layout entirely."""
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill='x', pady=(0 if number == 1 else 18, 8))
+        badge = tk.Label(row, text=str(number), bg=ACCENT_BLUE, fg=BG_SIDEBAR, font=('Segoe UI', 9, 'bold'),
+                         width=2, pady=1)
+        badge.pack(side='left', padx=(0, 8))
+        tk.Label(row, text=title, bg=BG, fg=TEXT, font=('Segoe UI', 10, 'bold')).pack(side='left')
+        body = tk.Frame(parent, bg=BG)
+        body.pack(fill='x', padx=(28, 0))
+        return body
+
+    def _confirm_ok(self, spec):
+        """Gate a send behind a Yes/No dialog when the command spec carries a
+        'confirm' message - for actions with real physical consequences
+        (e.g. toggling every LED on the strip) where a stray click shouldn't
+        fire immediately. Returns True to proceed, False to abort the send."""
+        msg = spec.get('confirm')
+        if not msg:
+            return True
+        return messagebox.askyesno(spec.get('name', spec['label']), msg)
+
     def _render_detail(self, spec, device_key):
         for w in self.detail_inner.winfo_children():
             w.destroy()
@@ -723,17 +783,22 @@ class App(object):
         pad = tk.Frame(self.detail_inner, bg=BG)
         pad.pack(fill='both', expand=True, padx=24, pady=20)
 
+        _, cat_color, _, icon = category_meta(spec['section'])
+
         head = tk.Frame(pad, bg=BG)
         head.pack(fill='x')
-        tk.Label(head, text=spec['label'], bg=BG, fg=TEXT, font=('Consolas', 16, 'bold')).pack(side='left')
+        tk.Label(head, text=icon, bg=BG, fg=cat_color, font=('Segoe UI', 15)).pack(side='left', padx=(0, 8))
+        tk.Label(head, text=spec.get('name', spec['label']), bg=BG, fg=TEXT, font=('Segoe UI', 15, 'bold')).pack(side='left')
+        tk.Label(head, text=spec['label'], bg=BG_BTN, fg=TEXT_MUTED, font=('Consolas', 9), padx=7, pady=2).pack(side='left', padx=(10, 0))
         tag_text = 'UDP' if spec['transport'] == 'udp' else 'TCP:23'
-        tk.Label(head, text=tag_text, bg=BG_BTN, fg=TEXT_SECONDARY, font=('Consolas', 9), padx=8, pady=2).pack(side='left', padx=(10, 0))
+        tk.Label(head, text=tag_text, bg=BG_BTN, fg=TEXT_SECONDARY, font=('Consolas', 9), padx=8, pady=2).pack(side='left', padx=(6, 0))
 
-        tk.Label(pad, text=spec['desc'], bg=BG, fg=TEXT_SECONDARY, font=('Segoe UI', 9.5 if False else 9),
-                 justify='left', anchor='w', wraplength=760).pack(fill='x', pady=(6, 14))
+        tk.Label(pad, text=spec['desc'], bg=BG, fg=TEXT_SECONDARY, font=('Segoe UI', 9),
+                 justify='left', anchor='w', wraplength=760).pack(fill='x', pady=(6, 4))
 
         preview_var = tk.StringVar(value='')
         controls = {}
+        step_n = 1
 
         def _update_preview():
             if spec.get('direct_buttons'):
@@ -746,55 +811,91 @@ class App(object):
                 preview_var.set('(invalid parameters)')
 
         if spec.get('params'):
-            divider = tk.Frame(pad, bg=BORDER, height=1)
-            divider.pack(fill='x', pady=(0, 12))
-            pframe, controls = self._build_param_controls(pad, spec, _update_preview)
+            body = self._step_row(pad, step_n, 'Configure')
+            step_n += 1
+            pframe, controls = self._build_param_controls(body, spec, _update_preview)
             pframe.pack(fill='x')
-            divider2 = tk.Frame(pad, bg=BORDER, height=1)
-            divider2.pack(fill='x', pady=(12, 0))
 
-        if not spec.get('direct_buttons'):
-            preview_row = tk.Frame(pad, bg=BG)
-            preview_row.pack(fill='x', pady=(14, 0))
+        if spec.get('direct_buttons'):
+            body = self._step_row(pad, step_n, 'Choose an option')
+            step_n += 1
+            btn_row = tk.Frame(body, bg=BG)
+            btn_row.pack(fill='x')
+            chip = tk.Label(btn_row, text='-', bg=BG_BTN, fg=TEXT_MUTED, font=('Segoe UI', 9, 'bold'), padx=10, pady=3)
+            for val, lbl in spec['direct_buttons']:
+                def _send_option(v=val):
+                    if not self._confirm_ok(spec):
+                        return
+                    self._on_send(spec, device_key, v, chip, resp_area, {})
+                b = tk.Button(btn_row, text=lbl, bg=BG_BTN, fg=TEXT, activebackground=BG_BTN_HOVER,
+                             relief='flat', bd=0, font=('Segoe UI', 9), padx=12, pady=5,
+                             command=_send_option)
+                b.pack(side='left', padx=(0, 6))
+            chip.pack(side='left', padx=(12, 0))
+        else:
+            body = self._step_row(pad, step_n, 'Review and send')
+            step_n += 1
+            preview_row = tk.Frame(body, bg=BG)
+            preview_row.pack(fill='x', pady=(0, 10))
             tk.Label(preview_row, text='payload', bg=BG, fg=TEXT_MUTED, font=('Segoe UI', 8)).pack(side='left', padx=(0, 8))
             tk.Label(preview_row, textvariable=preview_var, bg=BG_CARD, fg=ACCENT_BLUE, font=('Consolas', 10),
                      padx=10, pady=4, anchor='w').pack(side='left', fill='x', expand=True)
             _update_preview()
 
-        footer = tk.Frame(pad, bg=BG)
-        footer.pack(fill='x', pady=(16, 4))
+            send_row = tk.Frame(body, bg=BG)
+            send_row.pack(fill='x')
+            chip = tk.Label(send_row, text='-', bg=BG_BTN, fg=TEXT_MUTED, font=('Segoe UI', 9, 'bold'), padx=10, pady=3)
 
-        chip = tk.Label(footer, text='-', bg=BG_BTN, fg=TEXT_MUTED, font=('Segoe UI', 9, 'bold'), padx=10, pady=3)
-
-        if spec.get('direct_buttons'):
-            for val, lbl in spec['direct_buttons']:
-                b = tk.Button(footer, text=lbl, bg=BG_BTN, fg=TEXT, activebackground=BG_BTN_HOVER,
-                             relief='flat', bd=0, font=('Segoe UI', 9), padx=12, pady=5,
-                             command=lambda v=val: self._on_send(spec, device_key, v, chip, resp_area, {}))
-                b.pack(side='left', padx=(0, 6))
-        else:
             def _do_send():
+                if not self._confirm_ok(spec):
+                    return
                 vals = self._collect_param_values(spec, controls)
                 payload = spec['build'](vals)
                 self._on_send(spec, device_key, payload, chip, resp_area, vals)
-            send_btn = tk.Button(footer, text='Send', bg=BTN_GREEN_BG, fg=BTN_GREEN_FG, activebackground=BTN_GREEN_ACTIVE,
+            send_btn = tk.Button(send_row, text='Send', bg=BTN_GREEN_BG, fg=BTN_GREEN_FG, activebackground=BTN_GREEN_ACTIVE,
                                  relief='flat', bd=0, font=('Segoe UI', 9, 'bold'), padx=16, pady=6, command=_do_send)
             send_btn.pack(side='left')
+            chip.pack(side='left', padx=(12, 0))
 
-        chip.pack(side='left', padx=(12, 0))
-
-        resp_section = tk.Frame(pad, bg=BG)
-        resp_section.pack(fill='x', pady=(16, 0))
-        tk.Label(resp_section, text='RESPONSE', bg=BG, fg=TEXT_MUTED, font=('Segoe UI', 8, 'bold')).pack(anchor='w', pady=(0, 6))
-        resp_area = tk.Frame(resp_section, bg=BG_CARD)
+        resp_body = self._step_row(pad, step_n, 'Result')
+        resp_area = tk.Frame(resp_body, bg=BG_CARD)
         resp_area.pack(fill='x')
         tk.Label(resp_area, text='-', bg=BG_CARD, fg=TEXT_MUTED, font=('Consolas', 9), padx=10, pady=10,
                  anchor='w').pack(fill='x')
 
     # ------------------------------------------------------------- response rendering
-    def _render_response(self, resp_area, spec, raw_text, sent_vals):
+    def _render_ack_banner(self, resp_area, kind):
+        """Big colour-coded strip at the top of the Result step, so whether a
+        command actually succeeded reads at a glance instead of requiring the
+        small chip next to Send to be spotted. Same CHIP_COLORS/kind vocabulary
+        as that chip - this is a louder version of the same signal, not a
+        second one."""
+        bgc, fgc = CHIP_COLORS.get(kind, CHIP_COLORS['none'])
+        icon, headline, meaning = ACK_INFO.get(kind, ACK_INFO['none'])
+        banner = tk.Frame(resp_area, bg=bgc, highlightthickness=1, highlightbackground=fgc)
+        banner.pack(fill='x', padx=10, pady=(10, 0))
+        inner = tk.Frame(banner, bg=bgc)
+        inner.pack(fill='x', padx=12, pady=9)
+        tk.Label(inner, text=icon, bg=bgc, fg=fgc, font=('Segoe UI', 14, 'bold')).pack(side='left', padx=(0, 10))
+        col = tk.Frame(inner, bg=bgc)
+        col.pack(side='left', fill='x', expand=True)
+        tk.Label(col, text=headline, bg=bgc, fg=fgc, font=('Segoe UI', 10, 'bold'), anchor='w').pack(fill='x')
+        if meaning:
+            tk.Label(col, text=meaning, bg=bgc, fg=fgc, font=('Segoe UI', 8), anchor='w').pack(fill='x', pady=(1, 0))
+
+    def _render_response(self, resp_area, spec, raw_text, sent_vals, all_entries=None, ack_kind=None):
         for w in resp_area.winfo_children():
             w.destroy()
+
+        if ack_kind:
+            self._render_ack_banner(resp_area, ack_kind)
+
+        # A single command can draw back several independent packets (the
+        # connect handshake is the clearest example - s/H/E/M/w/f/p/LM/LK/@
+        # can all arrive from one Z). List every one, plain-English, instead
+        # of silently keeping only whichever got picked as "the" reply below.
+        if all_entries and len(all_entries) > 1:
+            self._render_reply_list(resp_area, all_entries)
 
         render = spec.get('render') or {}
         rtype = render.get('type')
@@ -848,8 +949,40 @@ class App(object):
                         bg=BG_CARD, fg=ACCENT_RED, font=('Consolas', 9), padx=10, pady=10, anchor='w').pack(fill='x')
             return
 
+        if all_entries and len(all_entries) > 1:
+            return  # already listed every packet above - no redundant raw-only fallback needed
+
+        # No specific renderer matched (e.g. 'k' keep-alive, or any command
+        # with no 'render' entry) - still try the generic decoder before
+        # falling back to raw text, so a single decodable packet (like an
+        # async 'H' climate push arriving alongside a keep-alive reply)
+        # doesn't show up unexplained just because it was the only packet.
+        summary = describe_reply(raw_text) if raw_text else None
+        if summary:
+            tk.Label(resp_area, text=summary, bg=BG_CARD, fg=TEXT, font=('Segoe UI', 9),
+                     padx=10, pady=10, anchor='w', justify='left', wraplength=700).pack(fill='x')
+            self._render_raw_line(resp_area, raw_text)
+            return
+
         tk.Label(resp_area, text=raw_text or '-', bg=BG_CARD, fg=TEXT_SECONDARY, font=('Consolas', 9),
                  padx=10, pady=10, anchor='w', justify='left', wraplength=700).pack(fill='x')
+
+    def _render_reply_list(self, resp_area, entries):
+        """One row per packet the device sent back this round: the raw code
+        as a small tag, and its plain-English meaning as the primary text.
+        The live log panel keeps the fully raw/coded form unchanged - this is
+        purely the Result step's human-readable view."""
+        wrap = tk.Frame(resp_area, bg=BG_CARD)
+        wrap.pack(fill='x', padx=10, pady=(10, 4))
+        tk.Label(wrap, text='%d PACKET%s RECEIVED' % (len(entries), '' if len(entries) == 1 else 'S'),
+                 bg=BG_CARD, fg=ACCENT_BLUE, font=('Segoe UI', 9, 'bold'), anchor='w').pack(fill='x', pady=(0, 6))
+        for badge, desc in entries:
+            row = tk.Frame(wrap, bg=CELL_BG)
+            row.pack(fill='x', pady=2)
+            tk.Label(row, text=badge, bg=CELL_BG, fg=TEXT_MUTED, font=('Consolas', 8),
+                    anchor='w', padx=8, pady=5, width=10).pack(side='left')
+            tk.Label(row, text=desc or '(unrecognised packet)', bg=CELL_BG, fg=(TEXT if desc else TEXT_MUTED),
+                    font=('Segoe UI', 9), anchor='w', justify='left', wraplength=520, padx=6, pady=5).pack(side='left', fill='x', expand=True)
 
     def _render_hex_breakdown(self, resp_area, prefix, segments):
         """`segments`: list of (hex_text, colour) rendered after `prefix`, one colour per decoded field."""
@@ -994,10 +1127,10 @@ class App(object):
                      anchor='w').pack(fill='x', pady=(8, 2))
             grid = tk.Frame(wrap, bg=BG_CARD)
             grid.pack(fill='x')
+            grid.grid_columnconfigure(0, weight=1)
             for i, (idx, name, val) in enumerate(by_cat[cat]):
                 cell = tk.Frame(grid, bg=CELL_BG, highlightthickness=1, highlightbackground=color)
-                cell.grid(row=i // 2, column=i % 2, sticky='ew', padx=3, pady=2)
-                grid.grid_columnconfigure(i % 2, weight=1)
+                cell.grid(row=i, column=0, sticky='ew', padx=3, pady=2)
 
                 setting_key = name.split(' (')[0]
                 desc = setting_descriptions.get(setting_key, 'EEPROM setting')
@@ -1023,6 +1156,14 @@ class App(object):
         tag = 'DIF' if device_key == 'diffuser' else 'TV'
         transport_label = 'UDP' if spec['transport'] == 'udp' else 'TCP'
         envelope = (spec['transport'] == 'udp') and spec.get('envelope', True)
+        # Per-command override - some commands (the diffuser relay family) are
+        # a genuine two-hop round trip (app -> SmartTV -> diffuser -> SmartTV
+        # -> app), which routinely takes longer than the device's normal
+        # single-hop timeout. Confirmed live: a relayed 'Dh' request took
+        # several seconds to come back even though it succeeded every time -
+        # the 1200ms device default was giving up before the reply ever
+        # arrived, which is what "not received" actually was.
+        timeout_ms = spec.get('timeout_ms', device['timeout_ms'])
 
         seq = -1
         wrapped = payload
@@ -1031,9 +1172,9 @@ class App(object):
                 seq = self.seq
                 self.seq = (self.seq + 1) % 256
                 wrapped = '#' + hexb(seq, 2) + payload
-            result = net.send_udp(device['ip'], device['udp_port'], wrapped, device['timeout_ms'])
+            result = net.send_udp(device['ip'], device['udp_port'], wrapped, timeout_ms)
         else:
-            result = net.send_tcp(device['ip'], device['telnet_port'], payload, device['timeout_ms'] + 300)
+            result = net.send_tcp(device['ip'], device['telnet_port'], payload, timeout_ms + 300)
 
         def _finish():
             self._panel_log(tag, 'log-send', '%s > %s %s' % (transport_label, device['ip'], wrapped))
@@ -1043,64 +1184,72 @@ class App(object):
                 bgc, fgc = CHIP_COLORS.get(kind, CHIP_COLORS['none'])
                 chip.configure(bg=bgc, fg=fgc, text=text)
 
-            def set_resp(text):
+            def set_resp(text, ack_kind=None):
                 for w in resp_area.winfo_children():
                     w.destroy()
+                if ack_kind:
+                    self._render_ack_banner(resp_area, ack_kind)
                 tk.Label(resp_area, text=text, bg=BG_CARD, fg=TEXT_MUTED, font=('Consolas', 9), padx=10, pady=10,
                         anchor='w', wraplength=700, justify='left').pack(fill='x')
 
             if status == 'TIMEOUT':
                 set_chip('timeout', 'timeout')
-                set_resp('no reply')
-                self._panel_log(tag, 'log-err', '%s < timeout (%dms)' % (transport_label, device['timeout_ms']))
+                set_resp('no reply', 'timeout')
+                self._panel_log(tag, 'log-err', '%s < timeout (%dms)' % (transport_label, timeout_ms))
                 return
             if status == 'ERROR':
                 set_chip('error', 'error')
-                set_resp(result.get('message', 'error'))
+                set_resp(result.get('message', 'error'), 'error')
                 self._panel_log(tag, 'log-err', '%s < ERROR: %s' % (transport_label, result.get('message')))
                 return
 
             replies = result['replies']
             reply_bytes = result.get('reply_bytes') or []
             if spec['transport'] == 'udp':
+                # Every packet the device sent back this round, raw text kept
+                # for the live log (unchanged) alongside a plain-English
+                # description for the Result step - a "connect" style command
+                # can draw many independent pushes (s/H/E/M/w/f/p/LM/LK/@ ...),
+                # not just one, and all of them used to get silently dropped
+                # except whichever happened to be picked as "the" data reply.
+                all_entries = []  # (raw reply text, is_lk, badge text, description)
                 for i, r in enumerate(replies):
                     raw = reply_bytes[i] if i < len(reply_bytes) else r.encode('utf-8', errors='replace')
-                    self._panel_log(tag, 'log-recv', '%s < %s' % (transport_label, describe_lk_packet(raw) or r))
+                    # Live log stays 100% raw/coded, exactly what came over the
+                    # wire - the human-readable form only ever appears in the
+                    # Result step below, never here.
+                    self._panel_log(tag, 'log-recv', '%s < %s' % (transport_label, r))
+                    lk_summary = describe_lk_packet(raw)
+                    all_entries.append((r, bool(lk_summary), 'LK' if lk_summary else r, lk_summary or describe_reply(r)))
+
                 ack = find_ack(replies, seq) if envelope else None
                 data_reply = None
-                for i, r in enumerate(replies):
-                    raw = reply_bytes[i] if i < len(reply_bytes) else r.encode('utf-8', errors='replace')
-                    # LK is an asynchronous binary LED update, never the
-                    # command data reply shown in the response panel.
-                    if describe_lk_packet(raw):
-                        continue
-                    if not r.startswith('#'):
+                for r, is_lk, _badge, _desc in all_entries:
+                    if not is_lk and not r.startswith('#'):
                         data_reply = r
                         break
 
                 if ack:
-                    set_chip(ack['name'], ack['name'])
+                    ack_kind = ack['name']
+                    set_chip(ack_kind, ack_kind)
                 elif envelope:
-                    set_chip('unknown', 'no ack')
+                    ack_kind = 'unknown'
+                    set_chip(ack_kind, 'no ack')
                 else:
-                    set_chip('sent', 'sent (no envelope)')
+                    ack_kind = 'sent'
+                    set_chip(ack_kind, 'sent (no envelope)')
 
                 fallback = ''
-                if not data_reply:
-                    for i, r in enumerate(replies):
-                        raw = reply_bytes[i] if i < len(reply_bytes) else r.encode('utf-8', errors='replace')
-                        summary = describe_lk_packet(raw)
-                        if summary:
-                            fallback = summary
-                            break
-                    if not fallback and replies:
-                        fallback = replies[0]
-                self._render_response(resp_area, spec, data_reply or fallback, sent_vals)
+                if not data_reply and all_entries:
+                    fallback = all_entries[0][3] or all_entries[0][2]
+                display_entries = [(badge, desc) for _r, _is_lk, badge, desc in all_entries]
+                self._render_response(resp_area, spec, data_reply or fallback, sent_vals, display_entries, ack_kind=ack_kind)
             else:
                 text = ' / '.join(replies) if replies else ''
                 self._panel_log(tag, 'log-recv', '%s < %s' % (transport_label, text or '(empty)'))
-                set_chip('ok' if replies else 'timeout', 'replied' if replies else 'no reply')
-                set_resp(text or '(empty)')
+                ack_kind = 'ok' if replies else 'timeout'
+                set_chip(ack_kind, 'replied' if replies else 'no reply')
+                set_resp(text or '(empty)', ack_kind)
 
         self.result_queue.put(_finish)
 
