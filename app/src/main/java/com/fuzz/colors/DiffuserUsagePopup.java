@@ -67,7 +67,15 @@ import android.widget.TextView;
  *  Usage (see StatusManager.init()):
  *      new DiffuserUsagePopup(Main).show(anchor, diffuserRefillPercent,
  *              accumMin, avgMin, refillCount, totalRefills,
- *              parfumActive, parfumRemainingMin);
+ *              parfumActive, parfumRemainingMin, isOutOfWater);
+ *
+ *  isOutOfWater short-circuits the whole REMAINING/LEARNING estimate with
+ *  an OUT OF WATER headline instead - the firmware resets its usage
+ *  accumulator the moment OOW is actually detected (see
+ *  USAGE::finalizeRefillCycle() in the diffuser .ino), so accumMin reads
+ *  ~0 right after a real OOW event, which the normal estimate math would
+ *  otherwise misread as "just refilled, plenty of time left" - precisely
+ *  backwards from reality.
  * ============================================================
  */
 public class DiffuserUsagePopup {
@@ -127,9 +135,14 @@ public class DiffuserUsagePopup {
      * @param parfumActive      True while Parfum mode is currently running.
      * @param parfumRemainingMin Live remaining minutes (shown, and used as the
      *                          accordion's initial value while active); ignored when 0.
+     * @param isOutOfWater      True when the diffuser is currently reporting out-of-water
+     *                          (same signal that drives its icon + vibrate alert elsewhere) -
+     *                          overrides the whole REMAINING/LEARNING estimate below, since
+     *                          accumMin reads ~0 right after a real OOW event and would
+     *                          otherwise be misread as "just refilled".
      */
     public void show(View anchor, int percent, int accumMin, int avgMin, int refillCount, int totalRefills,
-                      boolean parfumActive, int parfumRemainingMin) {
+                      boolean parfumActive, int parfumRemainingMin, boolean isOutOfWater) {
         // Guards against WindowManager.BadTokenException if the anchor's
         // activity finished (or the view detached) before this ran - see
         // ColorWheelPopup.show() for the full explanation.
@@ -146,7 +159,9 @@ public class DiffuserUsagePopup {
         int rowFill   = _blend(cardBgCol, 0xFFFFFFFF, 0.07f);
 
         boolean learning = (percent < 0 || refillCount == 0 || avgMin <= 0);
-        int accent = learning
+        int accent = isOutOfWater
+                ? ContextCompat_getColor(R.color.status_off_red)
+                : learning
                 ? ContextCompat_getColor(R.color.text_muted_grey)
                 : (percent > 50) ? ContextCompat_getColor(R.color.status_on_green)
                 : (percent > 20) ? ContextCompat_getColor(R.color.status_ready_yellow)
@@ -184,7 +199,28 @@ public class DiffuserUsagePopup {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding((int) (14 * dp), (int) (14 * dp), (int) (14 * dp), (int) (14 * dp));
 
-        if (learning) {
+        if (isOutOfWater) {
+            TextView big = new TextView(ctx);
+            big.setText("OUT OF WATER");
+            big.setAllCaps(true);
+            big.setLetterSpacing(0.04f);
+            big.setTypeface(null, Typeface.BOLD);
+            big.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+            big.setTextColor(accent);
+            big.setGravity(Gravity.CENTER);
+            big.setPadding(0, 0, 0, (int) (6 * dp));
+            body.addView(big);
+
+            TextView sub = new TextView(ctx);
+            sub.setText("Refill now - the numbers below reset the moment this was detected, "
+                    + "so they reflect the new cycle, not how urgent this is.");
+            sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            sub.setTextColor(titleCol);
+            sub.setAlpha(0.75f);
+            sub.setGravity(Gravity.CENTER);
+            sub.setPadding(0, 0, 0, (int) (12 * dp));
+            body.addView(sub);
+        } else if (learning) {
             TextView big = new TextView(ctx);
             big.setText("LEARNING");
             big.setTypeface(null, Typeface.BOLD);

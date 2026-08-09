@@ -362,7 +362,8 @@ public class StatusManager {
             new DiffuserUsagePopup(Main).show(v, diffuserRefillPercent,
                     diffuserUsageAccumMin, diffuserUsageAvgMin,
                     diffuserUsageRefillCount, diffuserUsageTotalRefills,
-                    currentDiffuser == STS_Diffuser.PARFUM, parfumRemainingMin);
+                    currentDiffuser == STS_Diffuser.PARFUM, parfumRemainingMin,
+                    currentDiffuser == STS_Diffuser.NO_WATER);
             return true;
         });
     }
@@ -788,6 +789,29 @@ public class StatusManager {
 
         int trackWidthPx = Math.round(34 * Main.getResources().getDisplayMetrics().density);
         android.view.ViewGroup.LayoutParams lp = STS_View_DiffuserRefillFill.getLayoutParams();
+
+        // Out of water overrides the math entirely, and must be checked before
+        // anything below. The firmware banks the dry cycle and resets its usage
+        // accumulator the moment OOW is actually detected (see the "wasFast"
+        // confirmed-dry branch -> USAGE::finalizeRefillCycle() in the diffuser
+        // .ino), so the very next 'u' packet after a real OOW event reports
+        // accumMin ~= 0 - which the percent formula below reads as "just
+        // refilled, 100% left" if left unchecked. That's precisely backwards:
+        // the diffuser needs water RIGHT NOW. currentDiffuser is already the
+        // ground-truth OOW signal (drives the diffuser icon + vibrate alert
+        // elsewhere in this class, from the 's' status push) - trust it over
+        // this badge's own accumMin/avgMin math whenever they disagree.
+        if (currentDiffuser == STS_Diffuser.NO_WATER) {
+            diffuserRefillPercent = 0;
+            int red = ContextCompat.getColor(Main, R.color.status_off_red);
+            STS_Text_DiffuserRefillPercent.setText(R.string.status_no_water);
+            STS_Text_DiffuserRefillPercent.setTextColor(red);
+            STS_IMG_DiffuserRefillIcon.setColorFilter(red);
+            STS_View_DiffuserRefillFill.setBackgroundColor(red);
+            lp.width = 0;
+            STS_View_DiffuserRefillFill.setLayoutParams(lp);
+            return;
+        }
 
         if (refillCount == 0 || avgMin <= 0) {
             diffuserRefillPercent = -1;

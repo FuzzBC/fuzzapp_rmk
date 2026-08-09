@@ -115,11 +115,18 @@ final class WidgetScheduling {
     /**
      * Shared by both providers' buildViews(): tints the diffuser icon and
      * sets its accompanying text for the current state - out of water
-     * (blue, percent unchanged) takes priority over a low refill percent
+     * (blue, text forced to "REF") takes priority over a low refill percent
      * (red, text replaced with "REF"), which in turn overrides the normal
      * violet/percent look. setColorFilter is a genuine RemoteViews-safe
      * reflective call (single-int-arg, matches ImageView.setColorFilter(int)) -
      * that's how a static XML android:tint gets overridden at runtime.
+     *
+     * The OOW branch does NOT show the cached percent, even though it's
+     * numerically available: the firmware resets its usage accumulator the
+     * moment OOW is actually detected (see StatusManager.applyDiffuserUsage()'s
+     * matching note), so pct reads as "nearly full" right when the diffuser
+     * most needs a refill - showing it here would read as "100%, plenty of
+     * time" right next to an icon saying the opposite.
      *
      * @param views    The RemoteViews being built.
      * @param iconId   The diffuser ImageView's id (widget_diffuser_icon / widget_stack_diffuser_icon).
@@ -133,7 +140,7 @@ final class WidgetScheduling {
         String text;
         if (noWater) {
             colorRes = R.color.status_no_water_blue;
-            text = (pct == Integer.MIN_VALUE) ? "--%" : pct + "%";
+            text = "REF";
         } else if (pct != Integer.MIN_VALUE && pct <= REFILL_LOW_THRESHOLD) {
             colorRes = R.color.status_off_red;
             text = "REF";

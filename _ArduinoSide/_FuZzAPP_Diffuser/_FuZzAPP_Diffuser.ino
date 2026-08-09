@@ -20,6 +20,10 @@
 //    Dc                          status poll       → DsMMSSTTTT  (silent)
 //    Dh                          full refill history → Dh + count + 10x4hex minutes, oldest-first
 //    Dr                          manual refill     → DsMMSSTTTT  (banks + resets usage now, no ack-only wait)
+//    DyII                        remove one entry   → DsMMSSTTTT  (II=2-hex 1-based index into Dh's
+//                                                     list, oldest=01; everything after it shifts down.
+//                                                     No bulk "clear everything" command on purpose -
+//                                                     remove entries one at a time via this)
 //    Df                          shutdown          → DsMMSSTTTT
 //    DpMMMME                     parfum start      → (ack only)  MMMM=hex min 0001-0168, E=1|2
 //    Dp0000                      parfum cancel     → (ack only)
@@ -374,6 +378,7 @@ namespace USAGE {
     static void loadUsageFromEeprom();
     static void saveUsageToEeprom(bool includeHistory);
     static void tickUsageAccum();
+    static bool removeHistoryEntryAt(uint8_t oneBasedIndex);
 }
 
 namespace PARFUM {
@@ -1382,12 +1387,22 @@ static void buzzerFinalizeBurst() {
 
         if (commanded) {
             LOG::logMsg("MODE", "shutdown confirmed");
+            // Genuinely, intentionally off now - the "last known state" that the
+            // unsolicited-shutdown auto-restart (line ~1396 below) and the Parfum
+            // pre-window revert (PARFUM::parfumStart()'s g_parfumHavePrevDn snapshot)
+            // could fall back to no longer exists. g_haveLastDn otherwise never resets
+            // once true (see its declaration) - without this, either of those two
+            // consumers can restore a stale colour/mode from well before this shutdown,
+            // as if it never happened. NOT cleared on the OOW/pass-through branches
+            // below - those still need g_lastDnMode/Payload for their own retry logic.
+            g_haveLastDn = false;
         } else if (expectedPassThru) {
             // Expected shutdown during mode transition to a non-zero target - continue the transition
             vlogMsg("MODE", "passing through OFF, continuing to %s", MODE::modeName(g_modeTarget));
         } else if (wasModeTarget && targetWasM0) {
             // Target was M0 - transition complete
             LOG::logMsg("MODE", "shutdown complete");
+            g_haveLastDn = false;                       // Same reasoning as the `commanded` branch above.
         } else if (wasFast && !g_shutdownRetried && g_haveLastDn) {
             // First fast unsolicited drop this cycle — one auto-restart before concluding
             // it's dry. g_shutdownRetried stays true through the retry itself (see
@@ -1510,6 +1525,50 @@ static void finalizeRefillCycle() {
     g_usageAccumSec = 0;
     g_usageFracSec  = 0.0f;
     saveUsageToEeprom(true);
+}
+
+/**
+ * @brief  Remove exactly one entry from the refill-history ring buffer and
+ *         shift everything after it down by one - e.g. dropping a single
+ *         stray test refill sandwiched between two genuine cycles, without
+ *         discarding anything older than it. The only history-editing
+ *         command on purpose - a one-shot "clear everything" ("Dx") used to
+ *         exist here too but was removed: too easy to fire by mistake and
+ *         wipe the whole average in one click. Clearing everything is still
+ *         possible, just deliberately tedious now - remove entries one at a
+ *         time via this instead.
+ *
+ * @param  oneBasedIndex  Position to remove, 1..g_refillHistoryCount,
+ *                        oldest-first - same numbering "Dh" already reports
+ *                        (entry 1 is the oldest).
+ * @return true if an entry was removed; false if oneBasedIndex was 0 or
+ *         beyond the current count - caller acks REJECTED in that case.
+ *         Called only from UDP "DyII" - see udpDispatch().
+ */
+static bool removeHistoryEntryAt(uint8_t oneBasedIndex) {
+    if (oneBasedIndex < 1 || oneBasedIndex > g_refillHistoryCount) return false;
+
+    // Read every entry out in oldest-first logical order first (same index
+    // math cmdHistoryQuery() uses) since the compaction below overwrites the
+    // very array these reads come from.
+    uint32_t ordered[REFILL_HISTORY_SIZE] = {0};
+    for (uint8_t i = 0; i < g_refillHistoryCount; i++) {
+        uint8_t srcIdx = (g_refillHistoryCount < REFILL_HISTORY_SIZE)
+                       ? i
+                       : (uint8_t)((g_refillHistoryNext + i) % REFILL_HISTORY_SIZE);
+        ordered[i] = g_refillHistory[srcIdx];
+    }
+
+    uint8_t removeAt = oneBasedIndex - 1;   // 0-based position within `ordered`
+    LOG::logMsg("USAGE", "refill history entry %u/%u removed (%lus) - rest shift down (lifetime count [%lu] and live cycle unaffected)",
+              oneBasedIndex, g_refillHistoryCount, ordered[removeAt], g_totalRefillCount);
+    for (uint8_t i = removeAt; i < g_refillHistoryCount - 1; i++) ordered[i] = ordered[i + 1];
+
+    g_refillHistoryCount--;
+    for (uint8_t i = 0; i < REFILL_HISTORY_SIZE; i++) g_refillHistory[i] = (i < g_refillHistoryCount) ? ordered[i] : 0;
+    g_refillHistoryNext = g_refillHistoryCount % REFILL_HISTORY_SIZE;
+    saveUsageToEeprom(true);
+    return true;
 }
 
 /** @brief  Load all usage-tracking fields from EEPROM (called once from setup()). */
@@ -2104,6 +2163,21 @@ static void udpDispatch(char *buf) {
             g_outOfWater = false;                  // Tank is no longer dry - Logic
             USAGE::finalizeRefillCycle();           // Bank current usage, reset accumulator, persist EEPROM
             cmdStatusQuery();                       // Reply immediately - Ds reflects the fresh usage state
+            return;
+        }
+        if ((c1 == 'y' || c1 == 'Y') && len == 4) {
+            unsigned int iv = 0;
+            if (sscanf(buf + 2, "%2x", &iv) != 1) {
+                LOG::logMsg("UDP_R", "history entry-remove rejected - bad index payload [%s]", buf);
+                g_ackResult = ACK_REJECTED;
+                return;
+            }
+            if (!USAGE::removeHistoryEntryAt((uint8_t)iv)) {
+                LOG::logMsg("UDP_R", "history entry-remove rejected - index %u out of range (1-%u)", iv, g_refillHistoryCount);
+                g_ackResult = ACK_REJECTED;
+                return;
+            }
+            cmdStatusQuery();                       // Reply immediately - Ds reflects the shifted history
             return;
         }
         if ((c1 == 'f' || c1 == 'F') && len == 2) {

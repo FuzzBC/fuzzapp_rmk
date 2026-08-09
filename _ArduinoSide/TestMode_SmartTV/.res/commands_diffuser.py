@@ -73,6 +73,15 @@ DIFFUSER_COMMANDS = [
         'name': 'Get refill history', 'label': 'Dh', 'desc': 'Full refill-cycle history on demand -> Dh + count + up to 10 x 4-hex minute values',
         'params': [], 'build': lambda v: 'Dh',
     },
+    {
+        'id': 'DiffuserHistoryManager', 'transport': 'udp', 'section': 'UDP :8439',
+        'name': 'Manage refill history', 'label': 'Dh / DyII',
+        'desc': "Lists every stored refill cycle with its duration. Press the X next to any one entry "
+                "to remove just that entry - everything after it shifts down to fill the gap (e.g. removing "
+                "#3 makes old #4 the new #3, old #5 the new #4, etc). Lifetime refill count and the live "
+                "in-progress cycle are never touched, only the rolling average this feeds.",
+        'custom_panel': 'diffuser_history',
+    },
 
     # ---------------- Console (Serial + Telnet :23) ----------------
     {

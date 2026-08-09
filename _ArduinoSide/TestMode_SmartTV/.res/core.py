@@ -45,6 +45,23 @@ def decode_ds_reply(text):
             % (mm, mode_name, ss, tttt, uuuu, vvvv, rr, llll))
 
 
+def parse_history_reply(text):
+    """Decode the diffuser's Dh reply: 'Dh' + 2-hex count + up to 10 x 4-hex
+    minutes, oldest-first (unused trailing slots are zero-padded, not
+    omitted). Returns a list of `count` minute values (oldest first, index 0
+    = entry #1 in the on-device 1-based numbering DyII uses), or None if the
+    text doesn't look like a Dh reply at all."""
+    if not text or text[:2] != 'Dh' or len(text) < 4:
+        return None
+    count = int(text[2:4], 16)
+    minutes = []
+    pos = 4
+    while pos + 4 <= len(text):
+        minutes.append(int(text[pos:pos + 4], 16))
+        pos += 4
+    return minutes[:count]
+
+
 # SmartTV device->app push groups (see updStatus() in the .ino) - each is a
 # self-contained one-line status the board pushes on its own, asynchronously,
 # not just as a direct reply to the command that happened to trigger them.

@@ -18,7 +18,7 @@ import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
 
 import net
-from core import hexb, find_ack, describe_reply
+from core import hexb, find_ack, describe_reply, parse_history_reply
 from commands_diffuser import DIFFUSER_COMMANDS
 from commands_smarttv import SMARTTV_COMMANDS, TV_SETTINGS
 
@@ -165,6 +165,16 @@ def describe_lk_packet(data):
 def now_stamp():
     ms = int((time.time() % 1) * 1000)
     return time.strftime('%Y-%m-%d %H:%M:%S') + '.%03d' % ms
+
+
+def fmt_duration_min(total_min):
+    """Minute count -> 'Xh Ym' (or just 'Ym' under an hour) - same shape as
+    the Android app's DiffuserUsagePopup._fmtDuration(), for consistency
+    with what the phone shows."""
+    if total_min < 60:
+        return '%dm' % total_min
+    h, m = divmod(total_min, 60)
+    return '%dh' % h if m == 0 else '%dh %dm' % (h, m)
 
 
 def file_stamp():
@@ -780,6 +790,13 @@ class App(object):
         for w in self.detail_inner.winfo_children():
             w.destroy()
 
+        # Fully bespoke panels (their own fetch/list/action flow, not the
+        # generic params-or-direct_buttons + single Send/Result shape every
+        # other command uses) opt out here instead of trying to force-fit.
+        if spec.get('custom_panel') == 'diffuser_history':
+            self._render_history_manager(spec, device_key)
+            return
+
         pad = tk.Frame(self.detail_inner, bg=BG)
         pad.pack(fill='both', expand=True, padx=24, pady=20)
 
@@ -862,6 +879,111 @@ class App(object):
         resp_area.pack(fill='x')
         tk.Label(resp_area, text='-', bg=BG_CARD, fg=TEXT_MUTED, font=('Consolas', 9), padx=10, pady=10,
                  anchor='w').pack(fill='x')
+
+    # ------------------------------------------------------------- diffuser history manager
+    def _render_history_manager(self, spec, device_key):
+        """Bespoke panel (see _render_detail's custom_panel hook): live list
+        of every stored refill-history cycle, each with its own X to remove
+        just that one entry (device shifts the rest down - see DyII/
+        removeHistoryEntryAt() in the diffuser .ino). Fetches Dh itself on
+        open and again after every delete, entirely independent of the
+        generic params/direct_buttons + single Send/Result flow every other
+        command uses - a per-row list with per-row actions doesn't fit that
+        shape."""
+        pad = tk.Frame(self.detail_inner, bg=BG)
+        pad.pack(fill='both', expand=True, padx=24, pady=20)
+
+        _, cat_color, _, icon = category_meta(spec['section'])
+        head = tk.Frame(pad, bg=BG)
+        head.pack(fill='x')
+        tk.Label(head, text=icon, bg=BG, fg=cat_color, font=('Segoe UI', 15)).pack(side='left', padx=(0, 8))
+        tk.Label(head, text=spec.get('name', spec['label']), bg=BG, fg=TEXT, font=('Segoe UI', 15, 'bold')).pack(side='left')
+        tk.Label(head, text=spec['label'], bg=BG_BTN, fg=TEXT_MUTED, font=('Consolas', 9), padx=7, pady=2).pack(side='left', padx=(10, 0))
+
+        tk.Label(pad, text=spec['desc'], bg=BG, fg=TEXT_SECONDARY, font=('Segoe UI', 9),
+                 justify='left', anchor='w', wraplength=760).pack(fill='x', pady=(6, 4))
+
+        toolbar = tk.Frame(pad, bg=BG)
+        toolbar.pack(fill='x', pady=(10, 4))
+        status_var = tk.StringVar(value='Loading…')
+        tk.Label(toolbar, textvariable=status_var, bg=BG, fg=TEXT_MUTED, font=('Segoe UI', 8)).pack(side='left')
+        refresh_btn = tk.Button(toolbar, text='Refresh', bg=BG_BTN, fg=TEXT, activebackground=BG_BTN_HOVER,
+                                relief='flat', bd=0, font=('Segoe UI', 9), padx=10, pady=4)
+        refresh_btn.pack(side='right')
+
+        list_frame = tk.Frame(pad, bg=BG)
+        list_frame.pack(fill='x', pady=(6, 0))
+
+        device = self.devices[device_key]
+
+        def _fetch(on_reply):
+            """Bare (un-enveloped) 'Dh' on a worker thread, result marshalled
+            back onto the Tk thread via the existing result_queue poll -
+            same pattern _worker_send uses for every other command."""
+            def worker():
+                result = net.send_udp(device['ip'], device['udp_port'], 'Dh', device['timeout_ms'])
+                self.result_queue.put(lambda: on_reply(result))
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _render_rows(minutes):
+            for w in list_frame.winfo_children():
+                w.destroy()
+            if not minutes:
+                tk.Label(list_frame, text='No refill cycles recorded yet.', bg=BG_CARD, fg=TEXT_MUTED,
+                         font=('Consolas', 9), padx=10, pady=14, anchor='w').pack(fill='x')
+                return
+            for i, mins in enumerate(minutes, start=1):
+                row = tk.Frame(list_frame, bg=CELL_BG, highlightthickness=1, highlightbackground=BORDER)
+                row.pack(fill='x', pady=2)
+                tk.Label(row, text='#%d' % i, bg=CELL_BG, fg=TEXT_MUTED, font=('Consolas', 9),
+                         width=4, anchor='w', padx=8, pady=7).pack(side='left')
+                tk.Label(row, text=fmt_duration_min(mins), bg=CELL_BG, fg=TEXT, font=('Segoe UI', 10, 'bold'),
+                         anchor='w').pack(side='left', fill='x', expand=True)
+                tk.Button(row, text='✕', bg=BG_BTN, fg=ACCENT_RED, activebackground=BG_BTN_HOVER,
+                          relief='flat', bd=0, font=('Segoe UI', 10, 'bold'), padx=10, pady=4,
+                          command=lambda idx=i, mins=mins: _delete(idx, mins)).pack(side='right', padx=8, pady=4)
+
+        def _on_history_reply(result):
+            if result['status'] != 'OK' or not result['replies']:
+                status_var.set('Could not read history (%s)' % result.get('status', '?'))
+                return
+            minutes = parse_history_reply(result['replies'][0])
+            if minutes is None:
+                status_var.set('Unexpected reply: %s' % result['replies'][0])
+                return
+            status_var.set('%d of 10 cycles' % len(minutes))
+            _render_rows(minutes)
+
+        def _delete(idx, mins):
+            if not messagebox.askyesno('Remove refill-history entry',
+                    'Remove entry #%d (%s)?\n\nEverything after it shifts down to fill the gap. '
+                    'Lifetime refill count and the current in-progress cycle are not affected.\n\n'
+                    "This can't be undone." % (idx, fmt_duration_min(mins))):
+                return
+            seq = self.seq
+            self.seq = (self.seq + 1) % 256
+            wrapped = '#' + hexb(seq, 2) + 'Dy' + hexb(idx, 2)
+            status_var.set('Removing #%d…' % idx)
+
+            def worker():
+                result = net.send_udp(device['ip'], device['udp_port'], wrapped, device['timeout_ms'])
+
+                def _after():
+                    if result['status'] != 'OK':
+                        status_var.set('Send failed: %s' % result.get('message', result['status']))
+                        return
+                    ack = find_ack(result['replies'], seq)
+                    if ack and ack['name'] != 'ok':
+                        status_var.set('Device said: %s - list unchanged' % ack['name'])
+                    _fetch(_on_history_reply)   # re-fetch either way - shows the true current state
+                self.result_queue.put(_after)
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _do_refresh():
+            status_var.set('Loading…')
+            _fetch(_on_history_reply)
+        refresh_btn.configure(command=_do_refresh)
+        _do_refresh()
 
     # ------------------------------------------------------------- response rendering
     def _render_ack_banner(self, resp_area, kind):

@@ -7,6 +7,7 @@
     <string name="label_lux">LUX</string>
     <string name="status_na">N/A</string>
     <string name="status_learning">LEARN</string>
+    <string name="status_no_water">REFILL</string>
     <string name="label_amb">AMB</string>
     <string name="toast_placeholder">_ TOAST _</string>
     <string name="btn_info">INFO</string>
