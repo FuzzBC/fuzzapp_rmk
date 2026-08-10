@@ -1354,7 +1354,6 @@ char* vformatMSG(const char *format, va_list args) {
 }
 } // namespace PRNT
 
-
 namespace LED {
 /* ------------------------------------------------------------------------ */
 /* LED                                                                        */
@@ -1514,65 +1513,6 @@ void T_LUX_BR_CHANGE(taskId_t taskId) {
         TSK::KillTasksAvoidLocked("T_LUX_BR_CHANGE");
         HB::EndTask();
         HB::StartEffect(true, false, false);
-    }
-}
-
-/**
- * @brief  Dynamic ambient light adjustment task for MOTION lighting -- re-apply
- *         lux-scaled brightness to the currently-lit COM/BED zone while motion
- *         is steady (mirrors T_LUX_BR_CHANGE's role for the TV path).
- *
- * HB is deliberately left untouched here: HB_GetBaseBr() already reads the
- * live lux level on every frame of its own always-running idle effect,
- * independent of which source (TV/Motion/UDPRAW) is driving the main strip.
- *
- * Registered (and re-armed) only by LISENS::setLux()'s MOTION branch. Every
- * motion re-trigger, auto-off, or fresh on-detection already calls
- * TSK::KillTasksAvoidLocked() itself before scheduling its own next step (see
- * MOTION::Status() / T_EFFECT_MOTION_ON()) - since that kills every unlocked
- * task, not just ones it names, any of those motion transitions cancels this
- * task for free. That is the priority rule: a real motion state change always
- * wins over an in-progress lux adjustment, with no extra guard needed here.
- */
-void T_MOTION_LUX_BR_CHANGE(taskId_t taskId) {
-    #ifdef ENABLE_LOG_LED_VERBOSE
-        PRNT::_print(PRNT::formatMSG("%32s : adjusting motion brightness to ambient lux level" NL, "T_MOTION_LUX_BR_CHANGE"));
-    #endif
-
-    bool anyChanged = false;
-    const int brInc      = getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC));            // Raw EE - lux change is NOT speed-adapted, matches T_LUX_BR_CHANGE - Setup
-    const int targetBr   = getLuxBrightness(EE::Get(EE_MOTION_BRIGHTNESS));         // Same base T_EFFECT_MOTION_ON_Default() uses - Setup
-    const bool isBedOnly = (MOTION::State.Status == motBED);                        // Same convention as the motion effects - Setup
-
-    for (int i = 0; i < LED_BED_NUM; i++) {
-        const int led = BED(i);
-        if (TG_BRIGHTNESS(led, targetBr, brInc, false)) {
-            const CRGB steppedColor = LED::State.CurrentColor[led];                 // Re-render same colour at the new brightness - see T_LUX_BR_CHANGE's matching note
-            setPixel(led, steppedColor.r, steppedColor.g, steppedColor.b, LED::State.CurrentBrightness[led], false);
-            LED::State.CurrentColor[led] = steppedColor;
-            anyChanged = true;
-        }
-    }
-    if (!isBedOnly) {
-        for (int i = 0; i < LED_COM_NUM; i++) {
-            const int led = COM(i);
-            if (TG_BRIGHTNESS(led, targetBr, brInc, false)) {
-                const CRGB steppedColor = LED::State.CurrentColor[led];
-                setPixel(led, steppedColor.r, steppedColor.g, steppedColor.b, LED::State.CurrentBrightness[led], false);
-                LED::State.CurrentColor[led] = steppedColor;
-                anyChanged = true;
-            }
-        }
-    }
-
-    if (anyChanged) {
-        Show();
-        APP::updDeltaColors();                                                      // Sync live brightness to the app - Sync
-    } else {
-        #ifdef ENABLE_LOG_LED_VERBOSE
-            PRNT::_print(PRNT::formatMSG("%32s : motion lux adjustment complete" NL, "T_MOTION_LUX_BR_CHANGE"));
-        #endif
-        TSK::KillTasksAvoidLocked("T_MOTION_LUX_BR_CHANGE");
     }
 }
 
@@ -2988,23 +2928,15 @@ void setLux(int newLux) {
                     PRNT::_print(PRNT::formatMSG("%32s : path TV - T_LUX_BR_CHANGE re-armed" NL, "LUX_Apply"));
                 #endif
             }
-        } else if (MOTION::State.Status == motCOM || MOTION::State.Status == motBED) { // Update MOTION - Action
-            // Deliberately excludes motON/motOFF (nothing lit) and motAUTOOFF
-            // (the auto-off fade is already scheduled the same tick Status()
-            // sets that flag - see MOTION::Status() - so by the time it's
-            // observable here the off-fade already owns the strip). No
-            // Transitioning-style mid-animation guard like the TV branch
-            // above: killing T_EFFECT_MOTION_ON mid-reveal here just ends its
-            // staggered reveal pattern early and converges straight to the
-            // same lux-scaled target brightness the reveal was already
-            // heading toward - same end state, no stuck LEDs, just a rare,
-            // minor cosmetic shortcut on the reveal flourish.
-            TSK::KillTasksAvoidLocked("LISENS_Change_MOTION");
-            TSK::AddTask("LISENS_Change_MOTION", "T_MOTION_LUX_BR_CHANGE", LED::T_MOTION_LUX_BR_CHANGE, TASK_MS, EE::Get(EE_MOTION_BR_CL_DEL), 0, false); // Raw EE - not adapted, matches TV/UDPRAW paths
-            #ifdef ENABLE_LOG_LUX
-                PRNT::_print(PRNT::formatMSG("%32s : path MOTION - T_MOTION_LUX_BR_CHANGE re-armed" NL, "LUX_Apply"));
-            #endif
         }
+        // MOTION deliberately has no branch here: lux changes while motion is
+        // active are picked up fresh the next time motion naturally re-renders
+        // (retrigger, on-effect, off-fade) rather than live-adjusting the lit
+        // zone mid-hold. A live-adjust path (T_MOTION_LUX_BR_CHANGE) was tried
+        // and reverted - it collided with motion's own task lifecycle (every
+        // real motion transition calls the global TSK::KillTasksAvoidLocked(),
+        // which doesn't know about this task's tracked id) in ways that caused
+        // both a stuck-on bug and a bad-brightness bug, confirmed live twice.
         // * LOG
         #ifdef ENABLE_LOG_LUX
             else PRNT::_print(PRNT::formatMSG("%32s : path none - no active source to animate" NL, "LUX_Apply"));
@@ -5802,11 +5734,11 @@ void Status() {
                     #ifdef ENABLE_LOG_MOTION
                         PRNT::_print(PRNT::formatMSG("%32s : auto-off timeout triggered" NL, "MOTION_Status"));
                     #endif
-                    TSK::KillTasksAvoidLocked("MOTION_Status"); 
+                    TSK::KillTasksAvoidLocked("MOTION_Status");
                     PRNT::_print(PRNT::formatMSG("%~32s # fade off, inc [%d], delay [%d]" NL, "MOTION_Off", LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
-                    TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), 1, false); 
+                    TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), 1, false);
                 } else {
-                    TSK::KillTasksAvoidLocked("MOTION_Status"); 
+                    TSK::KillTasksAvoidLocked("MOTION_Status");
                     TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), S_TO_MS(EE::Get(EE_MOTION_ON_TIME)), false);
 
                     if (simulatedBed) {
@@ -5852,8 +5784,8 @@ void Status() {
                 MOTION::State.LastChangeColor = TimeNow; 
                 LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE); 
 
-                TASK.Phase = 0; TASK.ParamA = 0; TASK.ParamB = 0; 
-                TSK::KillTasksAvoidLocked("MOTION_Status"); 
+                TASK.Phase = 0; TASK.ParamA = 0; TASK.ParamB = 0;
+                TSK::KillTasksAvoidLocked("MOTION_Status");
                 PRNT::_print(PRNT::formatMSG("%~32s # with effect [%d], inc [%d], delay [%d]" NL, "MOTION_On", EE::Get(EE_MOTION_ON_EFF), LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
                 TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_ON", T_EFFECT_MOTION_ON, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), 1, false); 
 
