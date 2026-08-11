@@ -84,6 +84,69 @@ LOG_SOURCE_NAMES = {
 }
 
 
+def parse_log_line(text):
+    """Decode one '*'-envelope term-log line into its parts, for callers that
+    want to colour/format by level or source instead of just the flattened
+    one-line summary describe_reply() returns.
+
+    Returns None if `text` isn't a '*'-envelope line. Otherwise a dict:
+      level        int (0-5, see LOG_LEVEL_NAMES)
+      level_name   'ERROR' / 'WARN' / 'INFO' / 'DEBUG' / 'SECTION' / 'GAP' / 'L<n>'
+      source_name  'SYS' / 'NET' / ... / 'src <n>'
+      body         message text, with the section '---' markers already
+                   stripped for level==4 (SECTION) so callers can style that
+                   marker themselves instead of getting it baked into the text
+    """
+    if not text or text[0] != '*' or len(text) < 6:
+        return None
+    try:
+        level = int(text[1], 16)
+        source = int(text[2:4], 16)
+        body = text[6:].strip()
+    except Exception:
+        return None
+    return {
+        'level': level,
+        'level_name': LOG_LEVEL_NAMES.get(level, 'L%d' % level),
+        'source_name': LOG_SOURCE_NAMES.get(source, 'src %d' % source),
+        'body': body,
+    }
+
+
+# Bar-count thresholds, exact port of H_RssiBars() in the .ino - the wire
+# value is the raw |RSSI| magnitude in dBm (0 = link down), not a bar count;
+# this is the same bucketing the firmware itself uses to decide when to
+# push a fresh 'w' packet (dirty-gated on the bucket changing, not the raw
+# dBm), so matching it here keeps this display in sync with what actually
+# triggered the packet.
+RSSI_QUALITY_NAMES = {0: 'down', 1: 'weak', 2: 'fair', 3: 'good', 4: 'strong'}
+
+
+def rssi_bars(mag):
+    """|RSSI| dBm magnitude -> bar count 0-4."""
+    if mag == 0:
+        return 0
+    if mag <= 55:
+        return 4
+    if mag <= 65:
+        return 3
+    if mag <= 75:
+        return 2
+    return 1
+
+
+def rssi_bars_display(mag):
+    """One-line signal readout: dBm, a 4-bar glyph (filled bars at rising
+    height, empty bars flat), bar count, and the quality word - e.g.
+    '-69 dBm ▂▄▆▁ 3/4 (good)'."""
+    if mag == 0:
+        return 'link down'
+    bars = rssi_bars(mag)
+    heights = '▂▄▆█'
+    glyph = ''.join(heights[i] if i < bars else '▁' for i in range(4))
+    return '-%d dBm  %s  %d/4 (%s)' % (mag, glyph, bars, RSSI_QUALITY_NAMES[bars])
+
+
 def describe_reply(text):
     """Human-readable one-line summary of one raw SmartTV/diffuser reply
     string. Returns None if the text doesn't match any known packet shape -
@@ -137,7 +200,8 @@ def describe_reply(text):
         if text[:1] == 'M' and len(text) >= 5:
             return 'Ambient light level - %d' % int(text[1:5], 16)
         if text[:1] == 'w' and len(text) >= 5:
-            return 'WiFi signal - %d/4 bars' % int(text[1:3], 16)
+            mag = int(text[1:3], 16)   # |RSSI| in dBm, 0 = link down - see updLink() in the .ino
+            return 'WiFi signal - %s' % rssi_bars_display(mag)
         if text[:1] == 'f' and len(text) >= 5:
             mask = int(text[1:5], 16)
             return 'Fault flags - %s' % ('0x%04X' % mask if mask else 'none')

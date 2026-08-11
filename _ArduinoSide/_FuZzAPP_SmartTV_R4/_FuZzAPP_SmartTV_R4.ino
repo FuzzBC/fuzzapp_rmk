@@ -478,6 +478,36 @@ void setTaskInterval(const char* source, taskId_t tID, taskUnit_t unit, uint32_t
     #endif
     _TASK.setTaskInterval(tID, unit, Interval);                     // Core logic - Action with specified unit
 }
+
+/**
+ * @brief  Is a task with this exact name currently live in the table?
+ *
+ * Name-based, not id-based -- walks the live table (getTaskCount()/
+ * getTaskIdAt()/getTaskName()) comparing strings, so there is nothing to go
+ * stale the way a remembered taskId_t can (ids get recycled; this doesn't
+ * care, it re-checks the real table every call).
+ *
+ * Written for callers that want to "arm a background task only if one isn't
+ * already running" WITHOUT killing anything first -- see LISENS::setLux()'s
+ * motion branch and its own comment for why a blanket
+ * KillTasksAvoidLocked() there was a real bug: it doesn't distinguish "kill
+ * my own previous instance" from "kill whatever else happens to be in the
+ * table right now", and silently destroyed a legitimately-scheduled-but-
+ * not-yet-fired T_EFFECT_MOTION_OFF, confirmed live (motion stuck lit,
+ * status never returned to motON).
+ *
+ * @param  name  Task name to look for (compared by content, not pointer).
+ * @return true if a live task with this name exists.
+ */
+bool IsTaskNameActive(const char* name) {
+    const uint8_t count = _TASK.getTaskCount();
+    for (uint8_t i = 0; i < count; i++) {
+        const taskId_t id = _TASK.getTaskIdAt(i);
+        if (id == TASK_ID_NONE) continue;
+        if (strcmp(_TASK.getTaskName(id), name) == 0) return true;
+    }
+    return false;
+}
 } // namespace TSK
 
 namespace PRNT {
@@ -1543,6 +1573,15 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
         const int  iterations = isHB ? LED_HB_NUM : 1;
         const int  targetBr   = isBrightnessMode ? getLuxBrightness(LED::State.StoredBrightness[ledN]) : 0;
 
+        // HB has no per-pixel persisted colour -- LED_HB_NUM_FAKE collapses all
+        // 178 physical pixels to the single LED_START_I_HB slot in StoredColor[].
+        // A brightness-only change must borrow the same real, persisted colour
+        // references T_EFFECT_H_FadeOn() already uses for the dual split
+        // (StoredColor[UCOM(0)]/[UCOM(1)]), or the LD/Ld dual colour silently
+        // reverts to whatever flat colour was last set by a plain LC command.
+        const bool  hbDual = isHB && isBrightnessMode && EE::Get(EE_HB_DUAL_COLOR);
+        const int   halfPt = LED_HB_NUM >> 1;
+
         for (int i = 0; i < iterations; i++) {
             const int idx       = isHB ? HB(i) : ledN;
             bool      ledChanged = false;
@@ -1574,7 +1613,18 @@ void T_SMOOTH_CHANGE(taskId_t taskId) {
                 // every tick, forever -- the fade never converges and the colour never
                 // gets persisted. Snapshot the stepped value and restore it after
                 // setPixel() runs so the fade can actually finish.
-                const CRGB &renderColor  = isBrightnessMode ? LED::State.StoredColor[ledN] : LED::State.CurrentColor[idx];
+                //
+                // HB dual colour: ledN is HB's single fake slot, so the flat
+                // StoredColor[ledN] is wrong here whenever the dual split (LD/Ld)
+                // is active -- split left/right from the same zone references
+                // T_EFFECT_H_FadeOn() uses instead.
+                CRGB renderColor;
+                if (hbDual) {
+                    const int ref = (i < halfPt) ? UCOM(0) : UCOM(1);
+                    renderColor = LED::State.StoredColor[ref];
+                } else {
+                    renderColor = isBrightnessMode ? LED::State.StoredColor[ledN] : LED::State.CurrentColor[idx];
+                }
                 const CRGB  steppedColor = LED::State.CurrentColor[idx];
                 setPixel(idx, renderColor.r, renderColor.g, renderColor.b, LED::State.CurrentBrightness[idx], false);
                 if (!isBrightnessMode) LED::State.CurrentColor[idx] = steppedColor;
@@ -1882,8 +1932,7 @@ void T_AMBIENT_MODE_ON(taskId_t taskId) { // Low-Power Environmental Lighting Mo
     // Phase 3: Shut down the room after the Ambient timer expires.
     if (phase == 1 || phase == 3) {
         for (int i = 0; i < LED_NUM_TOTAL; i++) {
-            if (LED::TG_BRIGHTNESS(i, 0, inc, false)) {                  // Fade toward zero - Logic
-                LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(i, 0, inc, false)) {                  // Fade toward zero - Logic
                 active = true;                                          // Still dimming - State
             }
         }
@@ -1997,6 +2046,27 @@ uint16_t COM(uint8_t i) {
         return LED_START_I_COM + (LED_COM_NUM - 1);
     }
     return LED_START_I_COM + i;
+}
+
+/**
+ * @brief  Pixel count for a motion zone index (0=BED, 1=COM, 2=HB).
+ *
+ * Every motion-on effect loops the same three zones the same way -- this
+ * was the exact ternary chain, duplicated verbatim, at ~6 call sites before
+ * this extraction (T_EFFECT_MOTION_ON_Default, _2_LineMoving, _3_Random,
+ * _5_TheCollision x3, T_MOTION_LUX_BR_CHANGE). Pure lookup, no state.
+ */
+static inline int MotionZoneCount(int z) {
+    return (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM);
+}
+
+/**
+ * @brief  Absolute LED index for position i within motion zone z (0=BED, 1=COM, 2=HB).
+ *
+ * Companion to MotionZoneCount() -- same duplication, same call sites.
+ */
+static inline uint16_t MotionZonePixel(int z, uint16_t i) {
+    return (z == 0) ? BED((uint8_t)i) : (z == 1 ? COM((uint8_t)i) : HB(i));
 }
 
 /**
@@ -2596,6 +2666,61 @@ bool TG_BRIGHTNESS(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
 }
 
 /**
+ * @brief  Step led's brightness toward targetBr; on change, repaint it at its
+ *         current TargetColor[] entry. Same "still moving?" contract as
+ *         TG_BRIGHTNESS() itself -- including its lisensReset default (see
+ *         the forward declaration in _DEF.h: defaults to true, several call
+ *         sites rely on that default rather than passing it explicitly, so
+ *         this mirrors it rather than hardcoding false).
+ *
+ * This exact if(TG_BRIGHTNESS(...)){ setPixel(idx, State.TargetColor[idx]...) }
+ * pairing was duplicated at ~20 call sites before this extraction -- pure
+ * mechanical collapse, no behaviour change.
+ */
+bool TG_BRIGHTNESS_ToTargetColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
+    if (TG_BRIGHTNESS(led, brVal, inc, lisensReset)) {
+        setPixel(led, LED::State.TargetColor[led].r, LED::State.TargetColor[led].g, LED::State.TargetColor[led].b, LED::State.CurrentBrightness[led], false);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief  Step led's brightness toward targetBr; on change, repaint it at its
+ *         current CurrentColor[] entry (i.e. keep whatever colour it's
+ *         already showing). Same contract as TG_BRIGHTNESS_ToTargetColor(),
+ *         including the lisensReset default.
+ *
+ * Duplicated at ~27 call sites before this extraction, most commonly the
+ * "fade to zero, keep colour memory intact" pattern used by every *_OFF /
+ * fade-to-black effect.
+ */
+bool TG_BRIGHTNESS_ToCurrentColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
+    if (TG_BRIGHTNESS(led, brVal, inc, lisensReset)) {
+        setPixel(led, LED::State.CurrentColor[led].r, LED::State.CurrentColor[led].g, LED::State.CurrentColor[led].b, LED::State.CurrentBrightness[led], false);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief  Step led's brightness toward targetBr; on change, repaint it at its
+ *         StoredColor[] entry (the EEPROM/app-set colour, distinct from
+ *         whatever's live in TargetColor[] mid-effect). Same contract as
+ *         TG_BRIGHTNESS_ToTargetColor(), including the lisensReset default.
+ *
+ * Duplicated at ~9 call sites before this extraction, all in the lux/ambient
+ * brightness-only re-adaptation paths that deliberately don't touch colour.
+ */
+bool TG_BRIGHTNESS_ToStoredColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset) {
+    if (TG_BRIGHTNESS(led, brVal, inc, lisensReset)) {
+        setPixel(led, LED::State.StoredColor[led].r, LED::State.StoredColor[led].g, LED::State.StoredColor[led].b, LED::State.CurrentBrightness[led], false);
+        return true;
+    }
+    return false;
+}
+
+/**
  * @brief  Step LED::State.CurrentColor[led] one increment toward a target RGB in the live colour buffer.
  *
  * Called by: T_SMOOTH_CHANGE(), T_SHAKE_DUAL_COLOR(), T_EFFECT_TV_ON_2_MidToOutSep(),
@@ -2928,15 +3053,42 @@ void setLux(int newLux) {
                     PRNT::_print(PRNT::formatMSG("%32s : path TV - T_LUX_BR_CHANGE re-armed" NL, "LUX_Apply"));
                 #endif
             }
+        } else if (MOTION::State.Status == motCOM || MOTION::State.Status == motBED || MOTION::State.Status == motAUTOOFF) {
+            // MOTION - lit and holding only. A first attempt at this
+            // (T_MOTION_LUX_BR_CHANGE, commit 78f8bfa) tracked its own task id
+            // across motion's kill sites to know whether it was still safe to
+            // run, and that tracking went stale in two different ways
+            // (571f994) -- both real bugs, confirmed live. This version
+            // tracks nothing: it only fires while MOTION::State.Transitioning
+            // is false (i.e. no on/off animation is currently claiming these
+            // pixels), and it re-checks that same flag every tick of its own
+            // and yields the instant a real transition starts, instead of
+            // needing to know *which* kill site caused it. See
+            // T_MOTION_LUX_BR_CHANGE's doc comment for the full reasoning.
+            if (MOTION::State.Transitioning) {
+                #ifdef ENABLE_LOG_LUX
+                    PRNT::_print(PRNT::formatMSG("%32s : path MOTION - re-arm skipped (transition in progress)" NL, "LUX_Apply"));
+                #endif
+            } else if (TSK::IsTaskNameActive("T_MOTION_LUX_BR_CHANGE")) {
+                // Already running -- it re-reads LISENS::State.Lux (already
+                // updated above) fresh every tick, so it picks up this new
+                // value on its own very next step. No need to touch it, and
+                // deliberately NOT calling KillTasksAvoidLocked() here: that
+                // used to run unconditionally on every lux change and would
+                // just as happily kill an unrelated, legitimately-scheduled-
+                // but-not-yet-fired T_EFFECT_MOTION_OFF sitting in the same
+                // table -- confirmed live (motion stuck lit, status never
+                // returned to motON). This path now never kills anything.
+                #ifdef ENABLE_LOG_LUX
+                    PRNT::_print(PRNT::formatMSG("%32s : path MOTION - already running, will pick up new value" NL, "LUX_Apply"));
+                #endif
+            } else {
+                TSK::AddTask("LISENS_Change_MOTION", "T_MOTION_LUX_BR_CHANGE", MOTION::T_MOTION_LUX_BR_CHANGE, TASK_MS, EE::Get(EE_MOTION_BR_CL_DEL), 0, false); // Raw EE - not adapted
+                #ifdef ENABLE_LOG_LUX
+                    PRNT::_print(PRNT::formatMSG("%32s : path MOTION - T_MOTION_LUX_BR_CHANGE armed" NL, "LUX_Apply"));
+                #endif
+            }
         }
-        // MOTION deliberately has no branch here: lux changes while motion is
-        // active are picked up fresh the next time motion naturally re-renders
-        // (retrigger, on-effect, off-fade) rather than live-adjusting the lit
-        // zone mid-hold. A live-adjust path (T_MOTION_LUX_BR_CHANGE) was tried
-        // and reverted - it collided with motion's own task lifecycle (every
-        // real motion transition calls the global TSK::KillTasksAvoidLocked(),
-        // which doesn't know about this task's tracked id) in ways that caused
-        // both a stuck-on bug and a bad-brightness bug, confirmed live twice.
         // * LOG
         #ifdef ENABLE_LOG_LUX
             else PRNT::_print(PRNT::formatMSG("%32s : path none - no active source to animate" NL, "LUX_Apply"));
@@ -3730,10 +3882,7 @@ void T_EFFECT_TV_ON_Default(taskId_t tID) {
 
     for (int i = 0; i < LED_NUM - LED_HB_NUM_FAKE; i++) {               // Loop through main strip LEDs - Logic
         uint8_t targetLux = LED::getLuxBrightness(LED::State.StoredBrightness[i]);  // Get target lux - Logic
-        if (LED::TG_BRIGHTNESS(i, targetLux, inc, false)) {               // Step brightness toward target - Logic
-            LED::setPixel(i,
-                LED::State.StoredColor[i].r, LED::State.StoredColor[i].g, LED::State.StoredColor[i].b,
-                LED::State.CurrentBrightness[i], false);
+        if (LED::TG_BRIGHTNESS_ToStoredColor(i, targetLux, inc, false)) {               // Step brightness toward target - Logic
             LedChanged = true;                                           // At least one pixel still transitioning - State
         }
     }
@@ -3772,8 +3921,7 @@ void T_EFFECT_TV_ON_1_RandomStatic(taskId_t tID) {
             const int targetBr = LED::getLuxBrightness(LED::State.StoredBrightness[l]); // Target brightness - Setup
             bool stillFading = false;                                    // State tracker - State
 
-            if (LED::TG_BRIGHTNESS(l, targetBr, inc, false)) {
-                LED::setPixel(l, LED::State.TargetColor[l].r, LED::State.TargetColor[l].g, LED::State.TargetColor[l].b, LED::State.CurrentBrightness[l], false);
+            if (LED::TG_BRIGHTNESS_ToTargetColor(l, targetBr, inc, false)) {
                 stillFading = true;
             }
 
@@ -3880,8 +4028,7 @@ void T_EFFECT_TV_ON_2_MidToOutSep(taskId_t tID) {
         const int limit = LED_NUM - LED_HB_NUM_FAKE;
 
         for (int i = 0; i < limit; i++) {
-            if (LED::TG_BRIGHTNESS(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
-                LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
                 tvLedsDone = false;
             }
         }
@@ -3933,8 +4080,7 @@ void T_EFFECT_TV_ON_3_MidToOutAll(taskId_t tID) {
                 for (int j = 0; j < 2; j++) {
                     int p = led[j];
                     int tvBloom = (LED::getLuxBrightness(LED::State.StoredBrightness[p]) * 15) / 10;
-                    if (LED::TG_BRIGHTNESS(p, tvBloom, brInc)) {
-                        LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, LED::State.CurrentBrightness[p], false);
+                    if (LED::TG_BRIGHTNESS_ToTargetColor(p, tvBloom, brInc)) {
                         tvActive = true;
                     }
                 }
@@ -4013,8 +4159,7 @@ void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) {
             for (int i = 0; i < 2; i++) {
                 int p = indices[i];
                 int tvBloom = (LED::getLuxBrightness(LED::State.StoredBrightness[p]) * 15) / 10;
-                if (LED::TG_BRIGHTNESS(p, tvBloom, brInc)) {
-                    LED::setPixel(p, LED::State.StoredColor[p].r, LED::State.StoredColor[p].g, LED::State.StoredColor[p].b, LED::State.CurrentBrightness[p], false);
+                if (LED::TG_BRIGHTNESS_ToStoredColor(p, tvBloom, brInc)) {
                     tvActive = true;
                 }
             }
@@ -4032,8 +4177,7 @@ void T_EFFECT_TV_ON_4_5_HalfRun(taskId_t tID) {
         const int limit = LED_NUM - LED_HB_NUM_FAKE;
 
         for (int i = 0; i < limit; i++) {
-            if (LED::TG_BRIGHTNESS(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
-                LED::setPixel(i, LED::State.StoredColor[i].r, LED::State.StoredColor[i].g, LED::State.StoredColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
                 mainMoving = true;
             }
         }
@@ -4087,8 +4231,7 @@ void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) {
                 int p = targets[i];
                 if (p < LED::TV(0) || p > LED::TV(LED_TV_NUM - 1)) continue;
                 int tvBloom = (LED::getLuxBrightness(LED::State.StoredBrightness[p]) * 15) / 10;
-                if (LED::TG_BRIGHTNESS(p, tvBloom, brInc)) {
-                    LED::setPixel(p, LED::State.StoredColor[p].r, LED::State.StoredColor[p].g, LED::State.StoredColor[p].b, LED::State.CurrentBrightness[p], false);
+                if (LED::TG_BRIGHTNESS_ToStoredColor(p, tvBloom, brInc)) {
                     tvActive = true;
                 }
             }
@@ -4107,8 +4250,7 @@ void T_EFFECT_TV_ON_6_7_MidToExt(taskId_t tID) {
 
         for (int i = 0; i < limit; i++) {
             int p = (phase == 2) ? LED::TV(i) : i;
-            if (LED::TG_BRIGHTNESS(p, LED::getLuxBrightness(LED::State.StoredBrightness[p]), brInc)) {
-                LED::setPixel(p, LED::State.StoredColor[p].r, LED::State.StoredColor[p].g, LED::State.StoredColor[p].b, LED::State.CurrentBrightness[p], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(p, LED::getLuxBrightness(LED::State.StoredBrightness[p]), brInc)) {
                 mainMoving = true;
             }
         }
@@ -4150,8 +4292,7 @@ void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) {
 
         for (int i = 0; i < 2; i++) {
             int p = centers[i];
-            if (LED::TG_BRIGHTNESS(p, targetBr, 20)) {
-                LED::setPixel(p, LED::State.StoredColor[p].r, LED::State.StoredColor[p].g, LED::State.StoredColor[p].b, LED::State.CurrentBrightness[p], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(p, targetBr, 20)) {
                 centerBusy = true;
             }
         }
@@ -4201,8 +4342,7 @@ void T_EFFECT_TV_ON_8_ComEffect(taskId_t tID) {
         const int limit = LED_NUM - LED_HB_NUM_FAKE;
 
         for (int i = 0; i < limit; i++) {
-            if (LED::TG_BRIGHTNESS(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
-                LED::setPixel(i, LED::State.StoredColor[i].r, LED::State.StoredColor[i].g, LED::State.StoredColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc)) {
                 mainBusy = true;
             }
         }
@@ -4246,8 +4386,7 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
             for (int i = 0; i < 2; i++) {
                 int p = pixels[i];
                 if (p >= 0 && p < tvCount) {
-                    if (LED::TG_BRIGHTNESS(p, LED::getLuxBrightness(LED::State.StoredBrightness[p]), brInc, false)) {
-                        LED::setPixel(p, LED::State.StoredColor[p].r, LED::State.StoredColor[p].g, LED::State.StoredColor[p].b, LED::State.CurrentBrightness[p], false);
+                    if (LED::TG_BRIGHTNESS_ToStoredColor(p, LED::getLuxBrightness(LED::State.StoredBrightness[p]), brInc, false)) {
                         moving = true;
                     }
                 }
@@ -4269,8 +4408,7 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
     if (phase == 2) {
         bool tvDone = true;
         for (int i = 0; i < tvCount; i++) {
-            if (LED::TG_BRIGHTNESS(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc, false)) {
-                LED::setPixel(i, LED::State.StoredColor[i].r, LED::State.StoredColor[i].g, LED::State.StoredColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc, false)) {
                 tvDone = false;
             }
         }
@@ -4289,8 +4427,7 @@ void T_EFFECT_TV_ON_9_QuadPointHB(taskId_t tID) {
     if (phase == 3) {
         bool roomBusy = false;
         for (int i = tvCount; i < (LED_NUM - LED_HB_NUM_FAKE); i++) {
-            if (LED::TG_BRIGHTNESS(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc, false)) {
-                LED::setPixel(i, LED::State.StoredColor[i].r, LED::State.StoredColor[i].g, LED::State.StoredColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToStoredColor(i, LED::getLuxBrightness(LED::State.StoredBrightness[i]), brInc, false)) {
                 roomBusy = true;
             }
         }
@@ -4620,8 +4757,7 @@ void T_EFFECT_H_CenterBloom(taskId_t tID) {
 
             for (int i = 0; i < 2; i++) {
                 int p = pairs[i];
-                if (LED::TG_BRIGHTNESS(p, bloom, inc, false)) {
-                    LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, LED::State.CurrentBrightness[p], false);
+                if (LED::TG_BRIGHTNESS_ToTargetColor(p, bloom, inc, false)) {
                     active = true;                                      // Pair still fading - State
                 }
             }
@@ -4643,8 +4779,7 @@ void T_EFFECT_H_CenterBloom(taskId_t tID) {
 
         for (int i = 0; i < LED_HB_NUM; i++) {
             int ledIdx = LED::HB(i);
-            if (LED::TG_BRIGHTNESS(ledIdx, target, inc, false)) {
-                LED::setPixel(ledIdx, LED::State.CurrentColor[ledIdx].r, LED::State.CurrentColor[ledIdx].g, LED::State.CurrentColor[ledIdx].b, LED::State.CurrentBrightness[ledIdx], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(ledIdx, target, inc, false)) {
                 busy = true;                                            // Still settling - State
             }
         }
@@ -4682,8 +4817,7 @@ void T_EFFECT_H_LinearSweep(taskId_t tID) {
 
         for (int i = 0; i < HB::State.ParamA; i++) {
             int p = LED::HB(i);
-            if (LED::TG_BRIGHTNESS(p, target, inc, false)) {
-                LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, LED::State.CurrentBrightness[p], false);
+            if (LED::TG_BRIGHTNESS_ToTargetColor(p, target, inc, false)) {
                 active = true;                                          // Pixel still fading - State
             }
         }
@@ -4702,8 +4836,7 @@ void T_EFFECT_H_LinearSweep(taskId_t tID) {
         bool busy = false;
         for (int i = 0; i < LED_HB_NUM; i++) {
             int p = LED::HB(i);
-            if (LED::TG_BRIGHTNESS(p, target, inc, false)) {
-                LED::setPixel(p, LED::State.CurrentColor[p].r, LED::State.CurrentColor[p].g, LED::State.CurrentColor[p].b, LED::State.CurrentBrightness[p], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(p, target, inc, false)) {
                 busy = true;                                            // Still settling - State
             }
         }
@@ -4756,8 +4889,7 @@ void T_EFFECT_H_QuadPoint(taskId_t tID) {
                 int p = pts[i];
                 if (p >= 0 && p < hbTotal) {
                     int realIdx = LED::HB(p);
-                    if (LED::TG_BRIGHTNESS(realIdx, target, inc, false)) {
-                        LED::setPixel(realIdx, LED::State.TargetColor[realIdx].r, LED::State.TargetColor[realIdx].g, LED::State.TargetColor[realIdx].b, LED::State.CurrentBrightness[realIdx], false);
+                    if (LED::TG_BRIGHTNESS_ToTargetColor(realIdx, target, inc, false)) {
                         active = true;                                  // Still fading - State
                     }
                 }
@@ -4779,8 +4911,7 @@ void T_EFFECT_H_QuadPoint(taskId_t tID) {
         bool busy = false;
         for (int i = 0; i < hbTotal; i++) {
             int id = LED::HB(i);
-            if (LED::TG_BRIGHTNESS(id, finalT, inc, false)) {
-                LED::setPixel(id, LED::State.CurrentColor[id].r, LED::State.CurrentColor[id].g, LED::State.CurrentColor[id].b, LED::State.CurrentBrightness[id], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(id, finalT, inc, false)) {
                 busy = true;                                            // Still settling - State
             }
         }
@@ -4856,8 +4987,7 @@ void T_EFFECT_TV_OFF_Default(taskId_t tID) { // Standard Fade-Off Animation
     // 1. Process Main Strip (TV, Com, Bed, etc.)
     // Iterates through all non-heartboard pixels to fade them to black.
     for (int i = 0; i < mainLimit; i++) {
-        if (LED::TG_BRIGHTNESS(i, 0, inc, false)) {                      // Target 0 (Off) - Logic
-            LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false); 
+        if (LED::TG_BRIGHTNESS_ToCurrentColor(i, 0, inc, false)) {                      // Target 0 (Off) - Logic
             moving = true;                                              // Pixel still fading - State
         }
     }
@@ -4866,8 +4996,7 @@ void T_EFFECT_TV_OFF_Default(taskId_t tID) { // Standard Fade-Off Animation
     // Specifically targets heartboard mapping to ensure they turn off in sync.
     for (int i = 0; i < LED_HB_NUM; i++) {
         int idx = LED::HB(i);                                            // Hardware index - Mapping
-        if (LED::TG_BRIGHTNESS(idx, 0, inc, false)) {                    // Target 0 (Off) - Logic
-            LED::setPixel(idx, LED::State.CurrentColor[idx].r, LED::State.CurrentColor[idx].g, LED::State.CurrentColor[idx].b, LED::State.CurrentBrightness[idx], false); 
+        if (LED::TG_BRIGHTNESS_ToCurrentColor(idx, 0, inc, false)) {                    // Target 0 (Off) - Logic
             moving = true;                                              // HB still fading - State
         }
     }
@@ -4910,8 +5039,7 @@ void T_EFFECT_TV_OFF_1_DelayWTvOff(taskId_t tID) { // Delayed Zone Shutdown
         
         for (int i = 0; i < LED_TV_NUM; i++) {
             int l = LED::TV(i);                                          // Hardware index - Mapping
-            if (LED::TG_BRIGHTNESS(l, 0, brInc, false)) {                 // Fade to zero - Logic
-                LED::setPixel(l, LED::State.CurrentColor[l].r, LED::State.CurrentColor[l].g, LED::State.CurrentColor[l].b, LED::State.CurrentBrightness[l], false); 
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(l, 0, brInc, false)) {                 // Fade to zero - Logic
                 tvMoving = true;                                        // TV still active - State
             }
         }
@@ -5010,8 +5138,7 @@ void T_EFFECT_TV_OFF_2_DelayAll(taskId_t tID) { // Sequential "Domino" Shutdown
             
             // 1. Dim the Main LED (TV, Com, Bed, etc.)
             // Follows the user-defined order to turn off pixels one by one.
-            if (LED::TG_BRIGHTNESS(l, 0, brInc, false)) {
-                LED::setPixel(l, LED::State.CurrentColor[l].r, LED::State.CurrentColor[l].g, LED::State.CurrentColor[l].b, LED::State.CurrentBrightness[l], false); 
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(l, 0, brInc, false)) {
                 moving = true;                                          // Main still fading - State
             }
 
@@ -5026,8 +5153,7 @@ void T_EFFECT_TV_OFF_2_DelayAll(taskId_t tID) { // Sequential "Domino" Shutdown
 
             for (int i = hbStart; i < hbEnd; i++) {
                 int hbIdx = LED::HB(LED::State.HeartbeatOrder[i]);                     // HB hardware index - Mapping
-                if (LED::TG_BRIGHTNESS(hbIdx, 0, brInc, false)) {
-                    LED::setPixel(hbIdx, LED::State.CurrentColor[hbIdx].r, LED::State.CurrentColor[hbIdx].g, LED::State.CurrentColor[hbIdx].b, LED::State.CurrentBrightness[hbIdx], false);
+                if (LED::TG_BRIGHTNESS_ToCurrentColor(hbIdx, 0, brInc, false)) {
                     moving = true;                                      // HB block still fading - State
                 }
             }
@@ -5093,8 +5219,7 @@ void T_EFFECT_TV_OFF_3_SlowTvSequential(taskId_t tID) { // Symmetrical Zone Shut
             else if (phase == 4) l = LED::BED(i);
             else                l = LED::LAMP(i);
 
-            if (LED::TG_BRIGHTNESS(l, 0, brInc, false)) {                // Lower toward zero - Logic
-                LED::setPixel(l, LED::State.CurrentColor[l].r, LED::State.CurrentColor[l].g, LED::State.CurrentColor[l].b, LED::State.CurrentBrightness[l], false); 
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(l, 0, brInc, false)) {                // Lower toward zero - Logic
                 moving = true;                                          // Active - State
             }
         }
@@ -5116,8 +5241,7 @@ void T_EFFECT_TV_OFF_3_SlowTvSequential(taskId_t tID) { // Symmetrical Zone Shut
             int pair[2] = {hbL, hbR};                                   // Mirror pair - Setup
             for (int j = 0; j < 2; j++) {
                 int p = pair[j];                                        // Target pixel - Logic
-                if (LED::TG_BRIGHTNESS(p, 0, brInc, false)) {             // Fade toward 0 - Logic
-                    LED::setPixel(p, LED::State.CurrentColor[p].r, LED::State.CurrentColor[p].g, LED::State.CurrentColor[p].b, LED::State.CurrentBrightness[p], false);
+                if (LED::TG_BRIGHTNESS_ToCurrentColor(p, 0, brInc, false)) {             // Fade toward 0 - Logic
                     moving = true;                                      // HB still active - State
                 }
             }
@@ -5234,8 +5358,7 @@ void T_EFFECT_TV_OFF_4_5_Countdown(taskId_t tID) { // Countdown Flicker Off
         bool moving = false;                                            // Activity tracker - State
 
         for (int i = 0; i < maxLeds; i++) {
-            if (LED::TG_BRIGHTNESS(i, 0, brInc, false)) {                // Target 0 (Off) - Logic
-                LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(i, 0, brInc, false)) {                // Target 0 (Off) - Logic
                 moving = true;                                          // Still dimming - State
             }
         }
@@ -5302,8 +5425,7 @@ void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
 
             for (int i = 0; i < 2; i++) {
                 int p = LED::TV(targets[i]);                             // Get hardware index - Mapping
-                if (LED::TG_BRIGHTNESS(p, 0, brInc, false)) {             // Target 0 brightness - Logic
-                    LED::setPixel(p, LED::State.CurrentColor[p].r, LED::State.CurrentColor[p].g, LED::State.CurrentColor[p].b, LED::State.CurrentBrightness[p], false); 
+                if (LED::TG_BRIGHTNESS_ToCurrentColor(p, 0, brInc, false)) {             // Target 0 brightness - Logic
                     moving = true;                                      // Still dimming - State
                 }
             }
@@ -5321,8 +5443,7 @@ void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
                 
                 int pair[2] = {hbL, hbR};
                 for (int j = 0; j < 2; j++) {
-                    if (LED::TG_BRIGHTNESS(pair[j], 0, brInc, false)) {
-                        LED::setPixel(pair[j], LED::State.CurrentColor[pair[j]].r, LED::State.CurrentColor[pair[j]].g, LED::State.CurrentColor[pair[j]].b, LED::State.CurrentBrightness[pair[j]], false);
+                    if (LED::TG_BRIGHTNESS_ToCurrentColor(pair[j], 0, brInc, false)) {
                         moving = true;                                  // HB active - State
                     }
                 }
@@ -5347,8 +5468,7 @@ void T_EFFECT_TV_OFF_6_RandomHalf(taskId_t tID) { // Circular Wipe Shutdown
         const int limit = LED_NUM - LED_HB_NUM_FAKE;                    // Cache global limit - Setup
 
         for (int i = 0; i < limit; i++) {
-            if (LED::TG_BRIGHTNESS(i, 0, brInc, false)) {                // Dim everything - Logic
-                LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false); 
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(i, 0, brInc, false)) {                // Dim everything - Logic
                 moving = true;                                          // Keep loop running - State
             }
         }
@@ -5410,8 +5530,7 @@ void T_EFFECT_TV_OFF_7_QuadPointHB(taskId_t tID) {
         bool moving = false;                                            // Activity flag - State
 
         for (int i = LED_START_I_COM; i < (LED_NUM - LED_HB_NUM_FAKE); i++) {
-            if (LED::TG_BRIGHTNESS(i, 0, brInc, false)) {               // Dim to 0 - Logic
-                LED::setPixel(i, LED::State.CurrentColor[i].r, LED::State.CurrentColor[i].g, LED::State.CurrentColor[i].b, LED::State.CurrentBrightness[i], false);
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(i, 0, brInc, false)) {               // Dim to 0 - Logic
                 moving = true;                                          // Still fading - State
             }
         }
@@ -5447,8 +5566,7 @@ void T_EFFECT_TV_OFF_7_QuadPointHB(taskId_t tID) {
                 int p = pts[i];                                         // Local HB index - Logic
                 if (p >= 0 && p < hbTotal) {                            // Bounds check - Logic
                     int realIdx = LED::HB(p);                            // Hardware map - Mapping
-                    if (LED::TG_BRIGHTNESS(realIdx, 0, brInc, false)) {  // Target 0 - Logic
-                        LED::setPixel(realIdx, LED::State.CurrentColor[realIdx].r, LED::State.CurrentColor[realIdx].g, LED::State.CurrentColor[realIdx].b, LED::State.CurrentBrightness[realIdx], false);
+                    if (LED::TG_BRIGHTNESS_ToCurrentColor(realIdx, 0, brInc, false)) {  // Target 0 - Logic
                         moving = true;                                  // Still fading - State
                     }
                 }
@@ -5484,8 +5602,7 @@ void T_EFFECT_TV_OFF_7_QuadPointHB(taskId_t tID) {
 
             for (int i = 0; i < 2; i++) {
                 int p = pixels[i];                                      // Current hardware pixel index - Logic
-                if (LED::TG_BRIGHTNESS(p, 0, brInc, false)) {            // Target 0 - Logic
-                    LED::setPixel(p, LED::State.CurrentColor[p].r, LED::State.CurrentColor[p].g, LED::State.CurrentColor[p].b, LED::State.CurrentBrightness[p], false);
+                if (LED::TG_BRIGHTNESS_ToCurrentColor(p, 0, brInc, false)) {            // Target 0 - Logic
                     moving = true;                                      // Still dimming - State
                 }
             }
@@ -5737,9 +5854,11 @@ void Status() {
                     TSK::KillTasksAvoidLocked("MOTION_Status");
                     PRNT::_print(PRNT::formatMSG("%~32s # fade off, inc [%d], delay [%d]" NL, "MOTION_Off", LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
                     TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), 1, false);
+                    MOTION::State.Transitioning = true;                    // Off-fade starts almost immediately (1ms) - State
                 } else {
                     TSK::KillTasksAvoidLocked("MOTION_Status");
                     TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), S_TO_MS(EE::Get(EE_MOTION_ON_TIME)), false);
+                    MOTION::State.Transitioning = false;                   // Back to holding -- OFF task is delayed, not fading yet - State
 
                     if (simulatedBed) {
                         if (EE::Get(EE_MOTION_RANDOM_COLOR) && ((MOTION::State.LastChangeColor + S_TO_MS(EE::Get(EE_MOTION_RENEW_COLOR_TIME))) < TimeNow)) {
@@ -5785,6 +5904,7 @@ void Status() {
                 LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE); 
 
                 TASK.Phase = 0; TASK.ParamA = 0; TASK.ParamB = 0;
+                MOTION::State.Transitioning = true;                        // On-effect starts animating now - State
                 TSK::KillTasksAvoidLocked("MOTION_Status");
                 PRNT::_print(PRNT::formatMSG("%~32s # with effect [%d], inc [%d], delay [%d]" NL, "MOTION_On", EE::Get(EE_MOTION_ON_EFF), LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log start, lux-adapted speed - Sync
                 TSK::AddTask("MOTION_Status", "T_EFFECT_MOTION_ON", T_EFFECT_MOTION_ON, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), 1, false); 
@@ -5906,6 +6026,7 @@ void T_EFFECT_MOTION_ON(taskId_t taskId) {
 
     MOTION::State.LastCheck = TimeNow;                                         // Timestamp for motion - State
     LED::Show();                                                         // Update strip - Output
+    LISENS::ResetTime();                                                 // Prevent lux changes during transition - Action
 
     if (TASK.Phase == taskDone) {                                        // COMPLETION - Logic
         #ifdef ENABLE_LOG_MOTION_VERBOSE
@@ -5913,6 +6034,7 @@ void T_EFFECT_MOTION_ON(taskId_t taskId) {
         #endif
         APP::updColors_Force();                                     // Sync UI colors - Sync
         TASK.Phase = 0; TASK.ParamA = 0; TASK.ParamB = 0;                        // Reset local counters - State
+        MOTION::State.Transitioning = false;                        // On-effect done -- now holding lit until OFF's delay elapses - State
         TSK::KillTasksAvoidLocked("T_EFFECT_MOTION_ON");                    // End this task - Action
         PRNT::_print(PRNT::formatMSG("[ANIME] %~24s # fade off scheduled, inc [%d], delay [%d]" NL, "MOTION_Off", LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC)), LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)))); // Log, lux-adapted speed - Sync
         TSK::AddTask("T_EFFECT_MOTION_ON", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, TASK_MS, LED::getLuxAdaptDelay(EE::Get(EE_MOTION_BR_CL_DEL)), S_TO_MS(EE::Get(EE_MOTION_ON_TIME)), false); // Schedule OFF - Action
@@ -5944,16 +6066,13 @@ bool T_EFFECT_MOTION_ON_Default() {
     for (int z = 0; z < 3; z++) {                                       // Loop Bed, Com, HB zones - Setup
         if (z == 1 && MOTION::State.Status == motBED) continue;                // Skip Com if Bed-only mode - Logic
 
-        int totalNum = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM); // Zone count - Mapping
+        int totalNum = LED::MotionZoneCount(z);                          // Zone count - Mapping
         int half = totalNum >> 1;                                       // Center point for mirror - Setup
 
         for (int i = 0; i < half; i++) {
-            int L, R;                                                   // Side indices - Mapping
-            
             // Mirror mapping: expands from the center outward
-            if (z == 0)      { L = LED::BED(half - 1 - i); R = LED::BED(half + i); } // Bed Map - Mapping
-            else if (z == 1) { L = LED::COM(half - 1 - i); R = LED::COM(half + i); } // Com Map - Mapping
-            else             { L = LED::HB(half - 1 - i);  R = LED::HB(half + i);  } // HB Map - Mapping
+            int L = LED::MotionZonePixel(z, half - 1 - i);               // Left side - Mapping
+            int R = LED::MotionZonePixel(z, half + i);                   // Right side - Mapping
 
             int br = baseBr;                                            // Default target brightness - Logic
             if (useDivide) {
@@ -5963,14 +6082,12 @@ bool T_EFFECT_MOTION_ON_Default() {
             }
 
             // Move Left side toward target brightness
-            if (LED::TG_BRIGHTNESS(L, br, brInc, false)) {               // Fade transition - Action
-                LED::setPixel(L, LED::State.TargetColor[L].r, LED::State.TargetColor[L].g, LED::State.TargetColor[L].b, LED::State.CurrentBrightness[L], false); 
+            if (LED::TG_BRIGHTNESS_ToTargetColor(L, br, brInc, false)) {               // Fade transition - Action
                 active = true;                                          // Flag ongoing change - State
             }
             
             // Move Right side toward target brightness
-            if (LED::TG_BRIGHTNESS(R, br, brInc, false)) {               // Fade transition - Action
-                LED::setPixel(R, LED::State.TargetColor[R].r, LED::State.TargetColor[R].g, LED::State.TargetColor[R].b, LED::State.CurrentBrightness[R], false); 
+            if (LED::TG_BRIGHTNESS_ToTargetColor(R, br, brInc, false)) {               // Fade transition - Action
                 active = true;                                          // Flag ongoing change - State
             }
         }
@@ -6022,8 +6139,7 @@ void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
         int idxR = LED::BED(halfBED + step);                             // Right index - Mapping
         int pixels[2] = {idxL, idxR};                                   // Indices to check - Logic
         for (int i = 0; i < 2; i++) {
-            if (LED::TG_BRIGHTNESS(pixels[i], br, brInc, false)) {
-                LED::setPixel(pixels[i], LED::State.TargetColor[pixels[i]].r, LED::State.TargetColor[pixels[i]].g, LED::State.TargetColor[pixels[i]].b, LED::State.CurrentBrightness[pixels[i]], false); 
+            if (LED::TG_BRIGHTNESS_ToTargetColor(pixels[i], br, brInc, false)) {
                 N = true;                                                // Set changed flag - State
             }
         }
@@ -6046,8 +6162,7 @@ void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
         int cIdxR = LED::COM(halfCOM + step);                            // COM Right - Mapping
         int cPixels[2] = {cIdxL, cIdxR};
         for (int i = 0; i < 2; i++) {
-            if (LED::TG_BRIGHTNESS(cPixels[i], br, brInc, false)) {
-                LED::setPixel(cPixels[i], LED::State.TargetColor[cPixels[i]].r, LED::State.TargetColor[cPixels[i]].g, LED::State.TargetColor[cPixels[i]].b, LED::State.CurrentBrightness[cPixels[i]], false); 
+            if (LED::TG_BRIGHTNESS_ToTargetColor(cPixels[i], br, brInc, false)) {
                 N = true;
             }
         }
@@ -6064,8 +6179,7 @@ void T_EFFECT_MOTION_ON_1_FromMiddle(taskId_t tID) { // From Middle
             int hIdxR = LED::HB(halfHB + h);                              // HB Right - Mapping
             int hPixels[2] = {hIdxL, hIdxR};
             for (int i = 0; i < 2; i++) {
-                if (LED::TG_BRIGHTNESS(hPixels[i], br, brInc, false)) {
-                    LED::setPixel(hPixels[i], LED::State.TargetColor[hPixels[i]].r, LED::State.TargetColor[hPixels[i]].g, LED::State.TargetColor[hPixels[i]].b, LED::State.CurrentBrightness[hPixels[i]], false); 
+                if (LED::TG_BRIGHTNESS_ToTargetColor(hPixels[i], br, brInc, false)) {
                     N = true;
                 }
             }
@@ -6185,11 +6299,10 @@ void T_EFFECT_MOTION_ON_2_LineMoving(taskId_t tID) { // Line Moving
         bool N = false;                                                 // Activity flag - State
         for (int z = 0; z < 3; z++) {
             if (z == 1 && isBedOnly) continue;
-            int num = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM); 
+            int num = LED::MotionZoneCount(z);
             for (int i = 0; i < num; i++) {
-                int p = (z == 0) ? LED::BED(i) : (z == 1 ? LED::COM(i) : LED::HB(i)); 
-                if (LED::TG_BRIGHTNESS(p, baseBr, brInc, false)) {       // Fade to 100% - Logic
-                    LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, LED::State.CurrentBrightness[p], false); 
+                int p = LED::MotionZonePixel(z, i);
+                if (LED::TG_BRIGHTNESS_ToTargetColor(p, baseBr, brInc, false)) {       // Fade to 100% - Logic
                     N = true;                                           // Still changing - State
                 }
             }
@@ -6296,8 +6409,7 @@ void T_EFFECT_MOTION_ON_3_Random(taskId_t tID) { // Random
         bool stillFading = false;                                        // Tracking flag for this LED pair - State
 
         // A. Fade the Main LED (Bed or Com)
-        if (LED::TG_BRIGHTNESS(mainLed, targetBr, brInc, false)) {
-            LED::setPixel(mainLed, LED::State.TargetColor[mainLed].r, LED::State.TargetColor[mainLed].g, LED::State.TargetColor[mainLed].b, LED::State.CurrentBrightness[mainLed], false);
+        if (LED::TG_BRIGHTNESS_ToTargetColor(mainLed, targetBr, brInc, false)) {
             stillFading = true;                                          // Still transitioning - State
         }
 
@@ -6309,8 +6421,7 @@ void T_EFFECT_MOTION_ON_3_Random(taskId_t tID) { // Random
 
         for (int h = hbStart; h < hbEnd && h < LED_HB_NUM; h++) {
             int hbLed = LED::HB(h);                                       // Map HB hardware index - Mapping
-            if (LED::TG_BRIGHTNESS(hbLed, targetBr, brInc, false)) {
-                LED::setPixel(hbLed, LED::State.TargetColor[hbLed].r, LED::State.TargetColor[hbLed].g, LED::State.TargetColor[hbLed].b, LED::State.CurrentBrightness[hbLed], false);
+            if (LED::TG_BRIGHTNESS_ToTargetColor(hbLed, targetBr, brInc, false)) {
                 stillFading = true;                                      // HB still transitioning - State
             }
         }
@@ -6369,8 +6480,7 @@ void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
             int pixels[2] = {L, R};
 
             for (int s = 0; s < 2; s++) {
-                if (LED::TG_BRIGHTNESS(pixels[s], baseBr, brInc, false)) { // Fade HB to full - Logic
-                    LED::setPixel(pixels[s], LED::State.TargetColor[pixels[s]].r, LED::State.TargetColor[pixels[s]].g, LED::State.TargetColor[pixels[s]].b, LED::State.CurrentBrightness[pixels[s]], false); 
+                if (LED::TG_BRIGHTNESS_ToTargetColor(pixels[s], baseBr, brInc, false)) { // Fade HB to full - Logic
                     stillMapping = true;                                // Still fading - State
                 }
             }
@@ -6393,13 +6503,13 @@ void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
         for (int z = 0; z < 2; z++) {                                   // Process BED and COM only - Setup
             if (z == 1 && isBedOnly) continue;                           // Skip COM if needed - Logic
 
-            int num = (z == 0) ? LED_BED_NUM : LED_COM_NUM;             // Zone length - Mapping
+            int num = LED::MotionZoneCount(z);                          // Zone length - Mapping (z is 0 or 1 here - BED/COM only)
             int mid = num >> 1;                                         // Center - Mapping
 
             // Bloom out to the current 'ta' distance
             for (int i = 0; i <= ta && i < mid; i++) {
-                int L = (z == 0) ? LED::BED(mid - 1 - i) : LED::COM(mid - 1 - i); 
-                int R = (z == 0) ? LED::BED(mid + i)     : LED::COM(mid + i);
+                int L = LED::MotionZonePixel(z, mid - 1 - i);
+                int R = LED::MotionZonePixel(z, mid + i);
                 
                 int target = baseBr;                                    // Default - Logic
                 if (useDiv) {
@@ -6410,8 +6520,7 @@ void T_EFFECT_MOTION_ON_4_Cascade(taskId_t tID) { // Cascade
 
                 int pix[2] = {L, R};
                 for (int s = 0; s < 2; s++) {
-                    if (LED::TG_BRIGHTNESS(pix[s], target, brInc, false)) { // Transition to target - Logic
-                        LED::setPixel(pix[s], LED::State.TargetColor[pix[s]].r, LED::State.TargetColor[pix[s]].g, LED::State.TargetColor[pix[s]].b, LED::State.CurrentBrightness[pix[s]], false); 
+                    if (LED::TG_BRIGHTNESS_ToTargetColor(pix[s], target, brInc, false)) { // Transition to target - Logic
                         N = true;                                       // Active change - State
                     }
                 }
@@ -6474,12 +6583,12 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
         for (int z = 0; z < 3; z++) { 
             if (z == 1 && isBedOnly) continue;                          // Skip COM - Logic
 
-            int num = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM); // Count - Mapping
+            int num = LED::MotionZoneCount(z);                          // Count - Mapping
             int half = num >> 1;                                        // Center point - Mapping
 
             if (ta < half) {
-                int L = (z == 0) ? LED::BED(ta) : (z == 1 ? LED::COM(ta) : LED::HB(ta)); // Left side - Mapping
-                int R = (z == 0) ? LED::BED(num - 1 - ta) : (z == 1 ? LED::COM(num - 1 - ta) : LED::HB(num - 1 - ta)); // Right side - Mapping
+                int L = LED::MotionZonePixel(z, ta);                     // Left side - Mapping
+                int R = LED::MotionZonePixel(z, num - 1 - ta);           // Right side - Mapping
                 
                 // --- TARGET CALCULATION ---
                 int dist = half - 1 - ta;                               // Distance from center - Logic
@@ -6510,11 +6619,11 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
         bool N = false;                                                 // Change detection - State
         for (int z = 0; z < 3; z++) {
             if (z == 1 && isBedOnly) continue;
-            int num = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM);
+            int num = LED::MotionZoneCount(z);
             int mid = num >> 1;                                         // Center for distance calculation - Mapping
 
             for (int i = 0; i < num; i++) {
-                int p = (z == 0) ? LED::BED(i) : (z == 1 ? LED::COM(i) : LED::HB(i));
+                int p = LED::MotionZonePixel(z, i);
                 int dist = abs(i - mid);                                // Distance from center - Logic
                 
                 int target = baseBr;                                    // Default - Logic
@@ -6526,8 +6635,7 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
                     if (target < 0) target = 0;                         // Clamp - Logic
                 }
 
-                if (LED::TG_BRIGHTNESS(p, target, brInc, false)) {       // Transition pixel state - Logic
-                    LED::setPixel(p, LED::State.TargetColor[p].r, LED::State.TargetColor[p].g, LED::State.TargetColor[p].b, LED::State.CurrentBrightness[p], false); 
+                if (LED::TG_BRIGHTNESS_ToTargetColor(p, target, brInc, false)) {       // Transition pixel state - Logic
                     N = true;                                           // Still changing - State
                 }
             }
@@ -6552,10 +6660,10 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
                 // of stepped, so this phase always terminates.
                 for (int z = 0; z < 3; z++) {
                     if (z == 1 && isBedOnly) continue;
-                    int num = (z == 0) ? LED_BED_NUM : (z == 1 ? LED_COM_NUM : LED_HB_NUM);
+                    int num = LED::MotionZoneCount(z);
                     int mid = num >> 1;
                     for (int i = 0; i < num; i++) {
-                        int p = (z == 0) ? LED::BED(i) : (z == 1 ? LED::COM(i) : LED::HB(i));
+                        int p = LED::MotionZonePixel(z, i);
                         int dist = abs(i - mid);
                         int target = baseBr;
                         if (useDiv) {
@@ -6601,6 +6709,12 @@ void T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID) {
  */
 void T_EFFECT_MOTION_OFF(taskId_t taskId) {
     if (TASK.Phase != taskDone) {
+        // Reasserted every tick this task is actually running (as opposed to
+        // still waiting out its offsetStart hold delay, during which the
+        // scheduler never calls this function at all) -- tells
+        // T_MOTION_LUX_BR_CHANGE / LISENS::setLux() a real fade is in
+        // progress on these exact pixels right now. - State
+        MOTION::State.Transitioning = true;
         // We use TASK.Phase as our sequencer: 0 = HB, 1 = COM, 2 = BED, 3 = Finalizing
         const int brInc = LED::getLuxAdaptInc(EE::Get(EE_MOTION_BR_CL_INC));                   // Cache increment - Setup
         bool zoneStillActive = false;                                    // Track if current zone is dimming - Logic
@@ -6649,8 +6763,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
             else if (TASK.Phase == 1) targetLed = LED::COM(i);             // Map COM - Mapping
             else                     targetLed = LED::BED(i);             // Map BED - Mapping
 
-            if (LED::TG_BRIGHTNESS(targetLed, 0, brInc, false)) {         // Try to dim - Action
-                LED::setPixel(targetLed, LED::State.CurrentColor[targetLed].r, LED::State.CurrentColor[targetLed].g, LED::State.CurrentColor[targetLed].b, LED::State.CurrentBrightness[targetLed], false); // Update LED - Update
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(targetLed, 0, brInc, false)) {         // Try to dim - Action
                 zoneStillActive = true;                                  // Zone is not finished - State
             }
         }
@@ -6678,6 +6791,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
     }
     
     LED::Show();                                                          // Update hardware - Output
+    LISENS::ResetTime();                                                  // Prevent lux changes during transition - Action
 
     if (TASK.Phase == taskDone) {                                         // Final Cleanup - Logic
         #ifdef ENABLE_LOG_MOTION_VERBOSE
@@ -6685,6 +6799,7 @@ void T_EFFECT_MOTION_OFF(taskId_t taskId) {
         #endif
         APP::updStatus("LED::T_EFFECT_MOTION_OFF");                                             // Sync - Sync
         APP::updDeltaColors();                                        // Sync - Sync
+        MOTION::State.Transitioning = false;                          // Fade-off finished - State
         DIF::AutoOff();                                                   // Diffuser off if all sources idle - Action
         TSK::KillTasksAvoidLocked("T_EFFECT_MOTION_OFF");                // Kill task - State
     }
@@ -6742,6 +6857,129 @@ void T_MOTION_CHANGE_COLOR(taskId_t taskId) {
 
         // Update App Color state once transition is finalized
         APP::updDeltaColors();                                       // Send only changed LEDs (delta) - Sync
+    }
+}
+
+/**
+ * @brief  Live lux-adaptation nudge for motion's currently-lit zone (HB/COM/BED).
+ *
+ * Re-targets each lit pixel's brightness toward the fresh
+ * getLuxBrightness(EE_MOTION_BRIGHTNESS) ceiling so an ambient-light change
+ * is reflected while motion is holding, instead of only on the next natural
+ * re-render. Only ever armed by LISENS::setLux() while
+ * MOTION::State.Transitioning is false (see that struct field's comment) --
+ * i.e. only during the "lit and holding" gap between the on-effect finishing
+ * and the off-fade actually starting.
+ *
+ * SAFETY: unlike the reverted T_MOTION_LUX_BR_CHANGE (see commit 571f994),
+ * this task tracks no id and is never referenced from outside its own
+ * callback by id -- it is pure fire-and-forget, exactly like
+ * LED::T_LUX_BR_CHANGE's TV equivalent. Cross-task coordination is two
+ * separate, deliberately narrow checks, neither of which ever calls
+ * KillTasksAvoidLocked() on this task's behalf:
+ *   1. Transitioning, re-checked every tick of THIS task: if a real motion
+ *      transition claims the pixels while this is still running, it backs
+ *      off immediately instead of fighting the on/off effect for the same
+ *      LEDs. Covers the window a boolean flag alone can't close by
+ *      construction -- T_EFFECT_MOTION_OFF starts running (scheduler-
+ *      invoked, once its own offsetStart hold elapses) with no call to this
+ *      task's own kill site first, so this task must be the one to notice
+ *      and yield.
+ *   2. IsTaskNameActive(), checked once by LISENS::setLux() before arming:
+ *      if one is already running, setLux() leaves it alone instead of
+ *      killing-and-re-adding -- the running instance re-reads the fresh lux
+ *      value on its own next tick anyway. An earlier version of this arming
+ *      site DID call KillTasksAvoidLocked() unconditionally on every lux
+ *      change, on the reasoning that it only needed to replace its own
+ *      prior instance -- but that call kills the whole table, and a real
+ *      motion cycle can have a legitimately-scheduled-but-not-yet-fired
+ *      T_EFFECT_MOTION_OFF sitting in it (armed with an offsetStart delay,
+ *      not yet ticking, so MOTION::State.Transitioning is still false).
+ *      Confirmed live: a lux change landing in that gap silently deleted
+ *      the pending off-fade, leaving motion stuck lit with
+ *      MOTION::State.Status never returning to motON. Not touching the
+ *      table at all from this site removes the collision outright.
+ *
+ * Approximation: EE_MOTION_DIVIDE_BRIGHTNESS's per-position falloff is not
+ * reconstructed (that would need remembering which on-effect and position
+ * rendered each pixel) -- every currently-lit pixel is re-targeted flat to
+ * the same newBaseBr ceiling, same as LED::T_LUX_BR_CHANGE already does for
+ * TV's HB zone. The falloff shape is picked back up on the next real
+ * on-effect/off-fade re-render, same as before this feature existed for
+ * every OTHER aspect of motion's lit zone.
+ *
+ * A first version of this rescaled each pixel proportionally to its own
+ * CurrentBrightness (i.e. treated CurrentBrightness/255 as the pixel's
+ * "share" of the new ceiling) instead of using a flat target. That's wrong
+ * whenever the real ceiling is well under 255 -- which it normally is for a
+ * dim, night-light-style motion setting -- because it silently double-
+ * counts the smallness: a pixel already correctly lit at, say, 37 (a
+ * reasonable ceiling for EE_MOTION_BRIGHTNESS=7) got recomputed as
+ * 37*37/255 = 5, collapsing toward black on every lux change instead of
+ * tracking the new ceiling. Confirmed live: motion held lit, lux changed,
+ * strip went dark while MOTION::State.Status stayed COM/BED the whole time
+ * (this function never touches that flag) -- "status says triggered, LEDs
+ * are off". Flat targeting removes the bug outright, not just the symptom.
+ *
+ * @param  taskId  Task handle supplied by the scheduler (used only to
+ *                 self-kill -- never stored or read back from elsewhere).
+ */
+void T_MOTION_LUX_BR_CHANGE(taskId_t taskId) {
+    if (MOTION::State.Transitioning) {
+        // A real motion transition took ownership of these pixels while we
+        // were still running -- yield instead of racing it for the strip.
+        #ifdef ENABLE_LOG_MOTION_VERBOSE
+            PRNT::_print(PRNT::formatMSG("%32s : yielding -- real transition took over" NL, "T_MOTION_LUX_BR_CHANGE"));
+        #endif
+        TSK::KillID(taskId, "T_MOTION_LUX_BR_CHANGE");
+        return;
+    }
+
+    #ifdef ENABLE_LOG_LED_VERBOSE
+        PRNT::_print(PRNT::formatMSG("%32s : adjusting motion brightness to ambient lux level" NL, "T_MOTION_LUX_BR_CHANGE"));
+    #endif
+
+    const int  brInc    = EE::Get(EE_MOTION_BR_CL_INC);              // Raw EE step - lux change is NOT speed-adapted - Setup
+    const int  newBaseBr = LED::getLuxBrightness(EE::Get(EE_MOTION_BRIGHTNESS)); // Fresh lux-adjusted ceiling - Setup
+    const bool isBedOnly = (MOTION::State.Status == motBED);          // Skip COM if Bed-only mode - Setup
+    bool anyChanged = false;
+
+    for (int z = 0; z < 3; z++) {                                    // 0=BED, 1=COM, 2=HB - Setup
+        if (z == 1 && isBedOnly) continue;                           // Skip Com if Bed-only mode - Logic
+        const int totalNum = LED::MotionZoneCount(z);
+
+        for (int i = 0; i < totalNum; i++) {
+            const int p = LED::MotionZonePixel(z, i);
+            if (LED::State.CurrentBrightness[p] == 0) continue;      // Only nudge pixels actually lit - Logic
+
+            // Flat target -- see @note above for why this replaced a
+            // proportional-rescale attempt that collapsed toward black.
+            if (LED::TG_BRIGHTNESS_ToCurrentColor(p, newBaseBr, brInc, false)) {
+                anyChanged = true;
+            }
+        }
+    }
+
+    if (anyChanged) {
+        LED::Show();
+    } else {
+        #ifdef ENABLE_LOG_LED_VERBOSE
+            PRNT::_print(PRNT::formatMSG("%32s : lux adjustment complete" NL, "T_MOTION_LUX_BR_CHANGE"));
+        #endif
+        // Scoped self-kill, NOT KillTasksAvoidLocked() -- this used to be a
+        // blanket kill (mirroring LED::T_LUX_BR_CHANGE's TV equivalent,
+        // which does the same on its own completion). That's harmless for
+        // TV: nothing schedules a delayed "auto-off after N seconds" task
+        // while TV sits steady-on. Motion does exactly that (the off-fade
+        // waits out its own offsetStart hold in the table) -- so this task
+        // completing normally, mid-hold, was blanket-killing that pending
+        // T_EFFECT_MOTION_OFF the same way the arming site used to.
+        // Confirmed live: lux change while motion holding -> motion stuck
+        // lit indefinitely, only escaping via a fresh unrelated retrigger.
+        // This is always a self-kill (the task ending itself), so KillID on
+        // its own id is correct and sufficient -- same as the yield branch
+        // above.
+        TSK::KillID(taskId, "T_MOTION_LUX_BR_CHANGE");
     }
 }
 
@@ -6928,6 +7166,17 @@ void Exec(char *buff, int len) {
 		case 'D': // Diffuser sub-commands -- forwarded to the DIF UDP link
 			switch (buff[1]) {
 				case 's': DIF::RequestStatus();
+				          // Force 's' (core status, incl. the diffuser summary byte) and 'u'
+				          // (diffuser usage/refill stats) to resend on the updStatus() call
+				          // already coming right after this switch (line ~7177), regardless
+				          // of whether they actually changed. RequestStatus() only fires the
+				          // request AT the diffuser - the real answer is async and arrives
+				          // later via ParseStatus(), which itself only re-pushes 's' if the
+				          // compact ds byte changed. Without this, an explicit "check status"
+				          // ask could run its whole request/response round trip and the app
+				          // would see nothing but the bare ack - which is what was happening.
+				          _txS_tv=_txS_mo=_txS_ur=_txS_am=_txS_ds=-1;
+				          _txU_accum=_txU_avg=_txU_cnt=_txU_tot=-1;
 				          if (DIF::State.ParfumMin > 0) termMsgSend(PRNT::formatMSG("p%4X", DIF::State.ParfumMin)); // Parfum popup asked - answer time left
 				          break; // Ask diffuser for status
 				case 'h': DIF::RequestHistory(); break; // Ask diffuser for full refill history - relayed straight through on reply
@@ -7679,11 +7928,16 @@ void cmdSetLed(char *buff, int len) {
 }
 
 /**
- * @brief  Handle 'S' / 'SiiVV...' command -- read or write EEPROM settings.
+ * @brief  Handle 'S' / 'Sii' / 'SiiVV...' command -- read all, read one, or write EEPROM settings.
  *
- * @param  buff  Command buffer. len==1: send all settings back.
- *               len > 1: series of 4-char groups (2-digit index + 2-digit value, hex).
- * @param  len   1 = request; multiple of 4 + 1 = write one or more settings.
+ * @param  buff  Command buffer. len==1: send all settings back ('S' + 50x(idx+val)).
+ *               len==3: read one setting ('Sii' -> replies 'Siivv', same idx+val
+ *               shape a write uses, just sent as a reply instead of a request --
+ *               added so tooling that only needs one value (e.g. TestMode's
+ *               settings-write panel showing "current on device") doesn't have
+ *               to pull the full 50-setting dump just to display it.
+ *               len > 3: series of 4-char groups (2-digit index + 2-digit value, hex) -- write.
+ * @param  len   1 = read-all request; 3 = read-one request; multiple of 4 + 1 = write one or more settings.
  *
  * After writing, enables EE_HB_DUAL_COLOR if EE_TV_RANDOM_COLOR_START is set to 2.
  * If EE_DIF_EFFECT or any EE_DIF_MODE_* setting was written and a source is currently
@@ -7703,7 +7957,24 @@ void cmdSettings(char *buff, int len) {
 
 		return;
 	}
-	
+
+	if (len == 3) {
+		// Read ONE setting: 'Sii' -> 'Siivv'. Previously just fell through to
+		// the "invalid length" rejection below (3 is not 1 mod 4) - claiming
+		// it here doesn't change behaviour for anything that used to work.
+		uint8_t item = HexByte(&buff[1]);
+		if (item >= EE_MEM_X) {
+			APP::State.LastResult = APP_ACK_REJECTED;
+			// * LOG
+			PRNT::_print(PRNT::formatMSG("%32s ! invalid item index (%d)" NL, "APP_Settings", item));
+			return;
+		}
+		char reply[6];
+		snprintf(reply, sizeof(reply), "S%02X%02X", item, EE::Get(item));
+		termMsgSend(reply);
+		return;
+	}
+
 	if ((len -1) % 4 != 0) {
 		APP::State.LastResult = APP_ACK_REJECTED;
 		// * LOG
@@ -7879,6 +8150,23 @@ void cmdAmbientMode(char *buff, int len) {
 				PRNT::_print(PRNT::formatMSG("%~32s # motion active, command ignored [motion:%d bed:%l]" NL, "APP_AmbientMode", MOTION::State.Status, MOTION::PinStatus(MOTION_PIN_BED)));
 			}
 		} else { // turn off ambient mode
+			if (!APP::Am.Status) {
+				// Nothing to turn off. Without this guard the block below ran
+				// unconditionally on every "A0", regardless of whether ambient
+				// mode was actually on - which meant it could blanket-kill
+				// whatever unrelated task IS legitimately running right now
+				// (TV::State.Transitioning has no bearing here, this isn't
+				// gated on it), force TV::State.Status false even if the TV
+				// is genuinely on, and blank every LED - all from a no-op
+				// command arriving at the wrong moment. Same "refused by a
+				// source guard" semantics/ack code as the ON branch's own
+				// three guards just above.
+				APP::State.LastResult = APP_ACK_BLOCKED;
+				// * LOG
+				PRNT::_print(PRNT::formatMSG("%~32s # already off, command ignored" NL, "APP_AmbientMode"));
+				return;
+			}
+
 			// AM Status
 			APP::Am.Status = false;
 
@@ -10807,13 +11095,18 @@ void Setup() {
 }
 
 /**
- * @brief  Receive and apply one ambilight UDP packet per loop iteration.
+ * @brief  Drain every queued ambilight UDP packet and apply only the newest one.
  *
- * Checks for a packet of exactly (LED_TV_NUM x 3) bytes on port 5568.
- * Maps each RGB triplet directly to the corresponding TV LED via LED::H_writeStripPixel()
- * using Lux-adjusted brightness (fast bit-shift scaling).
- * Calls Init() on the first packet after idle, and End() if
- * no packet is received for UDPRAW_CHECK_TIME ms.
+ * Checks for packets of exactly (LED_TV_NUM x 3) bytes on port 5568. If more
+ * than one is already queued when Loop() runs (sender outpacing us, or a
+ * slow iteration upstream in loop() such as an EEPROM write or APP/DIF/MQTT
+ * work), every older one is discarded unread rather than displayed - a
+ * backlogged frame is stale by the time it would show, so draining to the
+ * freshest keeps perceived latency constant instead of letting it grow with
+ * the queue. Maps each RGB triplet of the kept frame directly to the
+ * corresponding TV LED via LED::H_writeStripPixel() using Lux-adjusted
+ * brightness (fast bit-shift scaling). Calls Init() on the first frame after
+ * idle, and End() if no frame is received for UDPRAW_CHECK_TIME ms.
  *
  * TestMode _testmode_udpraw simulates a full-white packet for testing.
  *
@@ -10822,44 +11115,66 @@ void Setup() {
 void Loop() {
     // 1. WiFi status: use the shared cache updated once per loop() cycle
     bool isConnected = NET::Connected_Cached();                          // Read shared cache - Logic
-    
+
     if (!isConnected && TestMode != _testmode_udpraw) return;           // Skip if offline - Logic
 
-    // 2. UDPRAW stays unthrottled - ambilight stream needs fast response
-    int packetSize = UDPRAW_UDP.parsePacket();                          // Hardware check - Action
+    // 2. UDPRAW stays unthrottled - ambilight stream needs fast response.
+    // Drain the whole socket queue this iteration and keep only the newest
+    // valid frame - older queued packets are discarded, never mapped/shown.
     bool isSimulated = (TestMode == _testmode_udpraw);                  // Flag - State
+    int  packetSize  = 0;                                               // Size of the frame we're keeping - State
+    bool gotFrame    = false;                                           // Found at least one valid frame - State
+    #ifdef ENABLE_LOG_UDPRAW
+        uint16_t droppedStale = 0;                                     // Older queued frames discarded - Debug
+    #endif
 
-    if (isSimulated) packetSize = (LED_TV_NUM * 3);                     // Override for test - Setup
+    if (isSimulated) {
+        packetSize = (LED_TV_NUM * 3);                                 // Override for test - Setup
+        gotFrame   = true;
+    } else {
+        int pending;
+        while ((pending = UDPRAW_UDP.parsePacket()) > 0) {              // Keep draining while queue is non-empty - Action
+            if (pending != (LED_TV_NUM * 3)) {                         // Strict check - Logic
+                #ifdef ENABLE_LOG_UDPRAW
+                    PRNT::_print(PRNT::formatMSG("%32s : invalid packet size [%d] expected [%d]" NL, "UDPRAW_Loop", pending, (LED_TV_NUM * 3)));
+                #endif
+                UDPRAW_UDP.flush();                                    // Discard this one, keep draining - Action
+                continue;                                              // Logic
+            }
+            #ifdef ENABLE_LOG_UDPRAW
+                if (gotFrame) droppedStale++;                          // Previous kept frame was stale - Debug
+            #endif
+            UDPRAW_UDP.read(UDPRAW_Buffer, pending);                    // Bulk read, overwrites buffer - Action
+            packetSize = pending;                                      // State
+            gotFrame   = true;                                         // Newest valid frame so far - State
+        }
+    }
 
-    if (!packetSize) {                                                  // No new data - Logic
-        if (UDPRAW::State.Status && (TimeNow - UDPRAW::State.LastCheck > UDPRAW_CHECK_TIME)) { 
+    if (!gotFrame) {                                                    // No new data - Logic
+        if (UDPRAW::State.Status && (TimeNow - UDPRAW::State.LastCheck > UDPRAW_CHECK_TIME)) {
             End();                                               // Timeout - Action
         }
         return;                                                         // Immediate Exit (Saves time) - Logic
     }
 
-    // 3. Validation
-    if (packetSize != (LED_TV_NUM * 3)) {                               // Strict check - Logic
-        #ifdef ENABLE_LOG_UDPRAW
-            PRNT::_print(PRNT::formatMSG("%32s : invalid packet size [%d] expected [%d]" NL, "UDPRAW_Loop", packetSize, (LED_TV_NUM * 3)));
-        #endif
-        UDPRAW_UDP.flush();                                             // Clear buffer - Action
-        return;                                                         // Exit - Logic
-    }
+    #ifdef ENABLE_LOG_UDPRAW
+        if (droppedStale) {
+            PRNT::_print(PRNT::formatMSG("%32s : dropped [%d] stale queued frame(s)" NL, "UDPRAW_Loop", droppedStale));
+        }
+    #endif
 
-    // 4. Ingestion
+    // 3. Ingestion (real frame already read into UDPRAW_Buffer above)
     if (isSimulated) {
         memset(UDPRAW_Buffer, 255, packetSize);                         // Fast fill (Faster than loop) - Action
-    } else {
-        UDPRAW_UDP.read(UDPRAW_Buffer, packetSize);                     // Bulk read - Action
     }
-    
+
     UDPRAW::State.LastCheck = TimeNow;                                         // Reset watchdog - State
     if (!UDPRAW::State.Status) Init();                                  // Start mode - Action
 
-    // FPS tracking - recomputed once per ~1s rolling window, exposed via
-    // UDPRAW::State.Fps for the debug dump (see _debug_udpraw). Counts every
-    // valid frame reaching this point, real or test-simulated.
+    // 4. FPS tracking - recomputed once per ~1s rolling window, exposed via
+    // UDPRAW::State.Fps for the debug dump (see _debug_udpraw). Counts the
+    // rendered frame kept after draining, real or test-simulated - this is
+    // display rate, not raw received-packet rate.
     g_fpsFrameCount++;
     if (TimeNow - g_fpsWindowStart >= 1000) {
         UDPRAW::State.Fps = (g_fpsWindowStart == 0) ? 0.0f

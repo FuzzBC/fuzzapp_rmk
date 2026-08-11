@@ -478,6 +478,12 @@ public class StatusManager {
         // while capturing - firmware disables the HB effect entirely during this.
         if (LED != null) LED.notifyAmbilightChanged(currentAmbilight == STS_Ambilight.ON);
 
+        // Let LED show a locally-generated random HB pattern while motion is
+        // triggered (COM/BED) with RANDOM COLOR on - the wire protocol can't
+        // carry the firmware's real per-pixel random draws back (see HBFx).
+        if (LED != null) LED.notifyMotionChanged(currentMotion == STS_Motion.COM
+                || currentMotion == STS_Motion.BED);
+
         // ── TV icon ──────────────────────────────────────────
         // Green = ON, Red = OFF
         STS_IMG_Tv.setColorFilter(currentTv == STS_Tv.ON

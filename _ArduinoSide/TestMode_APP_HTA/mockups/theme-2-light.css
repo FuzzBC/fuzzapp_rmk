@@ -1,0 +1,59 @@
+/* Theme 2 - Light Studio
+ * Clean light SaaS-dashboard look: white/near-white surfaces, soft grey
+ * borders, one confident blue accent, gentle card shadows instead of
+ * dark-mode glow. Good fit if this tool is ever used in a bright lab / on
+ * a projector.
+ */
+:root {
+  --bg: #f5f6f8;
+  --bg-sidebar: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --bg-field: #ffffff;
+  --bg-btn: #eef0f3;
+  --bg-btn-hover: #e3e6eb;
+  --border: #e2e5ea;
+  --border-strong: #cbd0d8;
+  --text: #1c2128;
+  --text-secondary: #4b5563;
+  --text-muted: #8992a1;
+  --white: #ffffff;
+
+  --accent-blue: #2f6fed;
+  --accent-green: #1f9d5a;
+  --accent-red: #d13b3b;
+  --accent-amber: #b8790a;
+  --accent-amber2: #a15b23;
+  --accent-purple: #7c5cd6;
+  --accent-pink: #c23b7a;
+  --accent-muted: #8992a1;
+  --accent-blue-bg: #e8f0ff;
+
+  --chip-on-bg: #e5f7ec; --chip-on-fg: #14803d;
+  --chip-off-bg: #fbe9e9; --chip-off-fg: #c22c2c;
+  --chip-warn-bg: #fdf3e0; --chip-warn-fg: #96650a;
+
+  --btn-green-bg: #16a34a; --btn-green-fg: #ffffff; --btn-green-active: #128a3e;
+  --row-selected-bg: #e8f0ff; --row-hover-bg: #f2f4f7;
+
+  --radius: 10px; --radius-sm: 6px;
+  --font-ui: 'Segoe UI', -apple-system, sans-serif;
+  --font-mono: 'Consolas', 'SFMono-Regular', monospace;
+}
+
+body { background: var(--bg); }
+.topbar, .tabsbar { background: #ffffff; }
+.connbar { background: #fbfbfc; }
+.sidebar { border-right: 1px solid var(--border); }
+.tab.active { background: #fff; box-shadow: inset 0 -2px 0 var(--accent-blue); }
+.cmd-row.selected { box-shadow: inset 2px 0 0 var(--accent-blue); }
+.result-card, .status-cell, .reply-box, .current-card, .history-row, .settings-row {
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.08);
+  border: 1px solid var(--border);
+}
+.btn { border: 1px solid var(--border-strong); }
+.btn-green { border: none; }
+.preview-payload { border: 1px solid var(--border); }
+.chip { border: 1px solid var(--border); }
+input[type=range] { accent-color: var(--accent-blue); }
+::-webkit-scrollbar-thumb { background: #d7dbe1; }

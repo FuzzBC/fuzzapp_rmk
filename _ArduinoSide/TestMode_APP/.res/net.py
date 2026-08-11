@@ -10,10 +10,21 @@ import socket
 import time
 
 
-def send_udp(ip, port, payload, timeout_ms=1200):
+def send_udp(ip, port, payload, timeout_ms=1200, max_timeout_ms=None):
     """Send one UDP datagram, then collect every reply that arrives before
-    timeout_ms elapses (an enveloped "#SS<cmd>" can draw two packets: the
-    command's own reply, then the "#SSR" ack).
+    the wait window elapses (an enveloped "#SS<cmd>" can draw two packets:
+    the command's own reply, then the "#SSR" ack).
+
+    timeout_ms is an IDLE window, not a fixed total budget: every time a
+    reply packet actually arrives, the window resets for another
+    timeout_ms of waiting - so a slow multi-packet exchange (the diffuser
+    relay commands routinely draw an ack, then a second hop's real reply
+    from the diffuser itself, sometimes seconds apart) keeps getting more
+    time as long as something keeps showing up, instead of being cut off
+    by a deadline fixed before the first byte was even sent. A hard
+    ceiling (max_timeout_ms, default 4x timeout_ms floored at 6000ms)
+    still applies so a device that just keeps talking can't hang the
+    caller forever - once that's hit, whatever arrived so far is returned.
 
     Both firmwares reply to a FIXED port (the same port they listen on),
     never to the actual source port of the incoming request (no
@@ -24,6 +35,9 @@ def send_udp(ip, port, payload, timeout_ms=1200):
     local port nothing is listening on and is silently dropped - which
     looks exactly like every command timing out, even though the device
     received and processed everything fine."""
+    if max_timeout_ms is None:
+        max_timeout_ms = max(timeout_ms * 4, 6000)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -38,9 +52,11 @@ def send_udp(ip, port, payload, timeout_ms=1200):
 
     replies = []
     reply_bytes = []
-    deadline = time.time() + timeout_ms / 1000.0
+    now = time.time()
+    hard_deadline = now + max_timeout_ms / 1000.0
+    idle_deadline = now + timeout_ms / 1000.0
     while True:
-        remain = deadline - time.time()
+        remain = min(idle_deadline, hard_deadline) - time.time()
         if remain <= 0:
             break
         sock.settimeout(remain)
@@ -48,6 +64,7 @@ def send_udp(ip, port, payload, timeout_ms=1200):
             data, _addr = sock.recvfrom(4096)
             reply_bytes.append(data)
             replies.append(data.decode('utf-8', errors='replace'))
+            idle_deadline = time.time() + timeout_ms / 1000.0  # more may still be coming - extend
         except socket.timeout:
             break
         except Exception:

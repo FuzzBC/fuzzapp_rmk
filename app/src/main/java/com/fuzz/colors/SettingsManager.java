@@ -116,6 +116,16 @@ public class SettingsManager {
     public final int SET_HB_Dual   = 31;
 
     /**
+     * Arduino EEPROM id of Motion's "RANDOM COLOR" on/off setting (category
+     * MOTION). Used by HBEffectSimulator to know when to show a locally-
+     * generated random pattern on HB instead of the single flat colour the
+     * wire protocol reports - the firmware assigns an independent random
+     * colour to every one of the 178 physical HB pixels while motion+random
+     * is active, which the single-slot wire protocol can't carry back.
+     */
+    public final int SET_MotionRandomColor = 10;
+
+    /**
      * Arduino EEPROM ids of the HB effect settings, read by
      * HBEffectSimulator to locally replay the firmware's HB animation.
      */
@@ -1813,6 +1823,18 @@ public class SettingsManager {
      */
     public int getHBDualValue() {
         return _byId(SET_HB_Dual).currentValue();
+    }
+
+    /**
+     * Read the current value of Motion's RANDOM COLOR setting (id 10).
+     * 0 = off, non-zero = on.
+     * Called by HBEffectSimulator to decide whether an active motion trigger
+     * should show a locally-simulated random HB pattern.
+     *
+     * @return currentValue of the setting whose id is SET_MotionRandomColor
+     */
+    public int getMotionRandomColorValue() {
+        return _byId(SET_MotionRandomColor).currentValue();
     }
 
     /** Currently configured idle HB effect id (0=static, 1-14=animated). */

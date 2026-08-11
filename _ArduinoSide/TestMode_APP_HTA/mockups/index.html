@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FuZz TestMode — HTA mockups</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#0e0f12;color:#eceae4;font-family:-apple-system,'Segoe UI',sans-serif;padding:36px 28px 60px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:#9a978f;font-size:13px;margin:0 0 26px;max-width:760px;line-height:1.6}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;max-width:1180px}
+  .card{border:1px solid #2a2c31;border-radius:12px;overflow:hidden;background:#16171b;text-decoration:none;color:inherit;display:block;transition:transform .12s,border-color .12s}
+  .card:hover{transform:translateY(-2px);border-color:#454850}
+  .swatch{height:96px;display:flex}
+  .swatch div{flex:1}
+  .body{padding:14px 16px 16px}
+  .num{font-size:10px;font-weight:700;letter-spacing:.08em;color:#7d7b76}
+  .name{font-size:15px;font-weight:700;margin:3px 0 4px}
+  .tag{font-size:12px;color:#a6a6a3;line-height:1.5}
+  .note{max-width:760px;margin-top:34px;padding:14px 16px;border:1px solid #2a2c31;border-radius:10px;background:#141519;font-size:12px;color:#9a978f;line-height:1.7}
+  .note b{color:#d7d5cc}
+  code{background:#1e2127;padding:1px 6px;border-radius:4px;font-family:Consolas,monospace}
+</style>
+</head>
+<body>
+  <a href="index2.html" style="display:inline-block;margin-bottom:14px;color:#8fc0ff;font-size:12.5px;text-decoration:none">round 2: five different UX layouts →</a>
+  <h1>FuZz TestMode — HTA visual mockups</h1>
+  <p class="sub">Same command console, same command set (Diffuser + SmartTV, every category from the real app), five different
+  looks. Each one is fully clickable — pick a device, select a command, adjust params, hit Send, watch the log — against a
+  small in-memory fake device, not a real socket. Pick whichever reads best and I'll build the real, fully-wired .hta on it.</p>
+
+  <div class="grid">
+    <a class="card" href="mockup-1-refined-graphite.html">
+      <div class="swatch" style="background:#14161b">
+        <div style="background:#7cb2ea"></div><div style="background:#86c98a"></div>
+        <div style="background:#e0bd7e"></div><div style="background:#b3a0e6"></div>
+      </div>
+      <div class="body"><div class="num">MOCKUP 1</div><div class="name">Refined Graphite</div>
+      <div class="tag">The current dark theme, evolved: deeper layered backgrounds, quiet glow on the selected row/button, subtle card shadows. Lowest-risk pick — closest to what's already there.</div></div>
+    </a>
+    <a class="card" href="mockup-2-light-studio.html">
+      <div class="swatch" style="background:#ffffff">
+        <div style="background:#2f6fed"></div><div style="background:#1f9d5a"></div>
+        <div style="background:#b8790a"></div><div style="background:#7c5cd6"></div>
+      </div>
+      <div class="body"><div class="num">MOCKUP 2</div><div class="name">Light Studio</div>
+      <div class="tag">Clean white SaaS-dashboard look — soft grey panels, one confident blue accent, gentle shadows. Easiest to read on a bright bench or a projector.</div></div>
+    </a>
+    <a class="card" href="mockup-3-neon-terminal.html">
+      <div class="swatch" style="background:#060a08">
+        <div style="background:#39ff88"></div><div style="background:#4fe0e0"></div>
+        <div style="background:#ffcc4d"></div><div style="background:#d17bff"></div>
+      </div>
+      <div class="body"><div class="num">MOCKUP 3</div><div class="name">Neon Terminal</div>
+      <div class="tag">Retro hacker / CRT test-rig — near-black, monospace everywhere, neon green primary, faint scanline overlay. Leans into "this is a diagnostic tool."</div></div>
+    </a>
+    <a class="card" href="mockup-4-glass-aurora.html">
+      <div class="swatch" style="background:linear-gradient(135deg,#7c8cff,#ff8cd2,#78f0c8)">
+        <div></div>
+      </div>
+      <div class="body"><div class="num">MOCKUP 4</div><div class="name">Glass Aurora</div>
+      <div class="tag">Frosted-glass panels floating over a soft gradient background. Most striking of the five — see the note below on how the blur degrades in the real .hta build.</div></div>
+    </a>
+    <a class="card" href="mockup-5-mono-card.html">
+      <div class="swatch" style="background:#0b0b0c">
+        <div style="background:#7a7dff"></div><div style="background:#f2f2f0"></div>
+        <div style="background:#6b6b6d"></div><div style="background:#333336"></div>
+      </div>
+      <div class="body"><div class="num">MOCKUP 5</div><div class="name">Mono Card</div>
+      <div class="tag">Near-monochrome, flat, editorial (Linear/Vercel-adjacent) — one accent colour, generous whitespace, almost no shadow.</div></div>
+    </a>
+  </div>
+
+  <div class="note">
+    <b>What these are:</b> visual/interaction mockups only — every Send hits a small in-memory fake device (see
+    <code>shared/app.js</code>) so the UI feels alive, but nothing touches a real UDP/TCP socket yet.<br><br>
+    <b>Why not real networking yet:</b> a browser tab (and classic HTA/<code>mshta.exe</code>) can't open a raw socket from
+    script — the old <code>TestMode.hta</code> in this repo's history worked around that by shelling out to
+    <code>udp_send.ps1</code>/<code>tcp_send.ps1</code> on every send. The real build here will do the same.<br><br>
+    <b>One honest caveat:</b> <code>mshta.exe</code> renders with Trident/MSHTML (IE11), not Chrome — so once you pick a
+    look, the real .hta will keep the same layout, colours and spacing, but glass/blur effects (mockup 4) and CSS variables
+    won't render the same way there; I'll translate those to solid, pre-computed colours per theme so the final app still
+    looks right, just without live blur. Flat themes (1, 2, 3, 5) carry over close to 1:1.
+  </div>
+</body>
+</html>

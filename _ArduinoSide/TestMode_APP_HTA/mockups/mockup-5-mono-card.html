@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>FuZz TestMode — Mono Card mockup</title>
+<link rel="stylesheet" href="theme-5-mono.css">
+<link rel="stylesheet" href="shared/app-common.css">
+<style>
+  .pickbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:10px;
+    padding:6px 14px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px;
+    background:#000;color:#fff;border-bottom:1px solid rgba(255,255,255,.15)}
+  .pickbar a{color:#9cf;text-decoration:none}
+  .pickbar a:hover{text-decoration:underline}
+  .pickbar .num{font-weight:700;background:rgba(255,255,255,.15);border-radius:4px;padding:1px 7px}
+  .pickbar .sp{flex:1}
+  .pickbar .note{opacity:.65}
+</style>
+</head>
+<body class="theme-mono">
+<div class="pickbar">
+  <span class="num">MOCKUP 5 / 5</span>
+  <strong>Mono Card</strong>
+  <span class="note">— flat, editorial, ultra-minimal</span>
+  <span class="sp"></span>
+  <span class="note">visual mockup · simulated device, no real network I/O</span>
+  <a href="index.html">← all 5</a>
+</div>
+
+<div class="topbar">
+  <span class="topbar-title">FuZz TestMode</span>
+  <span class="topbar-sub">every send is logged live in this window — click SaveLog to write it to disk</span>
+  <span class="topbar-spacer"></span>
+  <span id="keepalive-dot" class="dot">●</span>
+  <span id="keepalive-label" class="keepalive-label">Keep-alive: off</span>
+  <button id="keepalive-btn" class="btn">Start keep-alive</button>
+  <button id="savelog-btn" class="btn">SaveLog</button>
+  <button id="livelog-btn" class="btn">Live log: off</button>
+</div>
+
+<div class="tabsbar">
+  <div id="tab-diffuser" class="tab active">Diffuser</div>
+  <div id="tab-smarttv" class="tab">SmartTV</div>
+</div>
+
+<div class="connbar">
+  <div class="conn-field"><label>IP</label><input id="conn-ip" class="ip" type="text"></div>
+  <div class="conn-field"><label>UDP port</label><input id="conn-udp" class="narrow" type="text"></div>
+  <div id="conn-telnet-wrap" class="conn-field"><label>Telnet port</label><input id="conn-telnet" class="narrow" type="text"></div>
+  <div class="conn-field"><label>Timeout ms</label><input id="conn-timeout" class="narrow" type="text"></div>
+  <span id="conn-note" class="conn-note"></span>
+</div>
+
+<div class="body">
+  <div class="sidebar">
+    <div class="sidebar-filter">
+      <label>Filter</label>
+      <input id="sidebar-filter-input" type="text" placeholder="type to filter commands…">
+    </div>
+    <div id="sidebar-scroll" class="sidebar-scroll"></div>
+  </div>
+
+  <div id="detail" class="detail"></div>
+
+  <div id="quicktest" class="quicktest hidden">
+    <div class="quicktest-title">Quick test</div>
+    <div id="quicktest-scroll" class="quicktest-scroll"></div>
+    <div class="quicktest-status">
+      <div id="quicktest-chip" class="quicktest-chip">-</div>
+      <div id="quicktest-line" class="quicktest-line"></div>
+    </div>
+  </div>
+</div>
+
+<div class="rawbox">
+  <label>Raw command</label>
+  <select id="raw-transport"></select>
+  <input id="raw-payload" type="text" placeholder="raw payload, e.g. Ds">
+  <span class="env-check"><input id="raw-envelope" type="checkbox" checked> wrap with #SS ack envelope</span>
+  <button id="raw-send-btn" class="btn btn-green">Send raw</button>
+</div>
+
+<div id="logpanel" class="logpanel">
+  <div class="logpanel-head">
+    <span class="logpanel-title">Live log</span>
+    <button id="logclear-btn" class="btn btn-sm">Clear panel</button>
+  </div>
+  <div class="logpanel-divider"></div>
+  <div id="logbox" class="logbox"></div>
+</div>
+
+<script src="shared/data.js"></script>
+<script src="shared/app.js"></script>
+</body>
+</html>

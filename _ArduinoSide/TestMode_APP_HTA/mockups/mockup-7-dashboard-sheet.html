@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>FuZz TestMode — Dashboard + Sheet mockup</title>
+<link rel="stylesheet" href="shared/base.css">
+<link rel="stylesheet" href="mockup-7-dashboard-sheet.css">
+</head>
+<body>
+<div class="pickbar">
+  <span class="num">UX 2 / 5</span><strong>Dashboard + Bottom Sheet</strong>
+  <span class="note">— smart-home app style: hero status, tile categories, sliding sheets</span>
+  <span class="sp"></span><a href="index2.html">← all 5 (round 2)</a>
+</div>
+
+<div class="topbar">
+  <div class="brand">FuZz TestMode</div>
+  <div class="devswitch">
+    <button id="dev-diffuser" class="on">Diffuser</button>
+    <button id="dev-smarttv">SmartTV</button>
+  </div>
+  <div class="topbar-right">
+    <span id="conn-ip" class="conn-ip"></span>
+    <button id="keepalive-btn" class="pill-btn">Keep-alive: off</button>
+  </div>
+</div>
+
+<div class="page">
+  <div id="hero" class="hero"></div>
+
+  <div id="quicktest-row" class="quicktest-row"></div>
+
+  <div class="section-title">Categories</div>
+  <div id="tile-grid" class="tile-grid"></div>
+</div>
+
+<button id="activity-fab" class="fab">☰<span id="activity-badge" class="fab-badge hidden">0</span></button>
+
+<div id="sheet-scrim" class="scrim hidden"></div>
+<div id="sheet" class="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <div id="sheet-title" class="sheet-title"></div>
+    <button id="sheet-close" class="icon-btn">✕</button>
+  </div>
+  <div id="sheet-body" class="sheet-body"></div>
+</div>
+
+<div id="activity-panel" class="activity-panel">
+  <div class="sheet-head">
+    <div class="sheet-title">Activity</div>
+    <div class="sheet-head-actions">
+      <button id="activity-savelog" class="pill-btn small">SaveLog</button>
+      <button id="activity-close" class="icon-btn">✕</button>
+    </div>
+  </div>
+  <div id="activity-log" class="activity-log"></div>
+</div>
+
+<script src="shared/data.js"></script>
+<script src="shared/engine.js"></script>
+<script src="shared/controls.js"></script>
+<script src="shared/result-view.js"></script>
+<script src="mockup-7-dashboard-sheet.js"></script>
+</body>
+</html>

@@ -294,7 +294,16 @@ extern const uint8_t LED_FPS_TABLE[LED_FPS_OPTIONS_TOTAL] PROGMEM; /* refresh pe
 /* --- APP MODULE -------------------------------------------------------------- */
 #define APP_BRIGHT              LED_BRIGHTNESS_MAX
 #define APP_UDP_PORT            8472
-#define APP_UDP_MAX_BUFFER_SIZE 512
+// Shared size for _binTxBuffer (LK colour-sync packet, see flushColorSync())
+// and _sharedTxBuffer (settings dump / log-line staging, see updSettings()).
+// Both consumers already handle a buffer smaller than their theoretical
+// worst case safely: flushColorSync() carries over whatever LED data didn't
+// fit to the next frame via its per-LED dirty bits (no data loss, just more
+// chunks), and updSettings() breaks out cleanly on the bounds check it
+// already had. Real worst-case need today: ~201 bytes (50 settings x 4 hex
+// chars + 'S'), well under 256. Was 512 - halved after confirming both call
+// sites bounds-check against this constant rather than a hardcoded size.
+#define APP_UDP_MAX_BUFFER_SIZE 256
 #define APP_UDP_TIMEOUT         100   /* ms - was 5ms, same fix as DIF_UDP_TIMEOUT below: too
                                           tight for a peer without steady traffic already
                                           keeping ARP warm (e.g. a test tool vs. the phone app) */
@@ -720,6 +729,16 @@ typedef struct MOTIONx {
     uint32_t LastChangeColor;
     uint32_t AutoOffTime;
     CRGB        Color;
+    /* True while T_EFFECT_MOTION_ON or T_EFFECT_MOTION_OFF is actively
+       animating a zone -- mirrors TVx::Transitioning (see its comment).
+       False while motion is lit-and-holding (waiting on its auto-off delay)
+       or fully off. LISENS::setLux() checks this before touching motion's
+       zone, and T_MOTION_LUX_BR_CHANGE re-checks it every tick and backs off
+       the moment a real transition starts -- so the lux nudge never fights
+       an actual motion animation for the same pixels, and it never needs to
+       track a task id across motion's kill sites to know that (that tracked-
+       id approach is what caused the two live bugs behind commit 571f994). */
+    bool        Transitioning = false;
     MOTION_LOGx LOG[MOTION_LOG_INDEX_MAX];
 } MOTIONx;
 
@@ -949,6 +968,9 @@ void     Select(int l, bool state);   bool IsSelected(int l);   bool IsHB(int l)
 bool     LED_TG_Step(uint8_t &current, uint8_t target, uint8_t inc);
 bool     TG_Step(uint8_t &current, uint8_t target, uint8_t inc);      /* fwd decl - defined in .ino, file-local (LED::TG_Step) */
 bool     TG_BRIGHTNESS(int led, uint8_t brVal, uint8_t inc, bool lisensReset = true);
+bool     TG_BRIGHTNESS_ToTargetColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset = true);
+bool     TG_BRIGHTNESS_ToCurrentColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset = true);
+bool     TG_BRIGHTNESS_ToStoredColor(int led, uint8_t brVal, uint8_t inc, bool lisensReset = true);
 bool     TG_COLOR(int led, int r, int g, int b, int inc, bool lisensReset = true);
 bool     TG_TEMPCOLOR(int led, int r, int g, int b, int inc, bool lisensReset = true);
 void     setRandomColor(bool z);
@@ -1030,6 +1052,7 @@ void    T_EFFECT_MOTION_ON_3_Random(taskId_t tID);       void T_EFFECT_MOTION_ON
 void    T_EFFECT_MOTION_ON_5_TheCollision(taskId_t tID);
 void    T_EFFECT_MOTION_ON_6_RightToLeft(taskId_t tID);
 void    T_EFFECT_MOTION_OFF(taskId_t taskId);   void T_MOTION_CHANGE_COLOR(taskId_t taskId);
+void    T_MOTION_LUX_BR_CHANGE(taskId_t taskId);
 } // namespace MOTION
 
 namespace APP {

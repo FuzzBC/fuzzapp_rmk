@@ -1172,6 +1172,7 @@ public class DataReceive {
                     if (id == SET.SET_HB_Effect || id == SET.SET_HB_EffectSpeed || id == SET.SET_TvOnHBEffect) {
                         LED.notifyHBSettingChanged(id);
                     }
+                    if (id == SET.SET_MotionRandomColor) LED.notifyMotionRandomSettingChanged();
                     validLog.append("[").append(id).append(":")
                             .append(value).append("] ");
                 } else {

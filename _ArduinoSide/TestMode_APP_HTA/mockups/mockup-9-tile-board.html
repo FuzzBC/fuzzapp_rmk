@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>FuZz TestMode — Tile Board mockup</title>
+<link rel="stylesheet" href="shared/base.css">
+<link rel="stylesheet" href="mockup-9-tile-board.css">
+</head>
+<body>
+<div class="pickbar">
+  <span class="num">UX 4 / 5</span><strong>Tile Board</strong>
+  <span class="note">— control-panel grid (macOS Settings-style): tiles expand in place</span>
+  <span class="sp"></span><a href="index2.html">← all 5 (round 2)</a>
+</div>
+
+<div class="app">
+  <div class="rail">
+    <button id="dev-diffuser" class="rail-btn on" title="Diffuser">D</button>
+    <button id="dev-smarttv" class="rail-btn" title="SmartTV">TV</button>
+    <div class="rail-spacer"></div>
+    <button id="keepalive-btn" class="rail-btn small" title="Keep-alive">⟳</button>
+  </div>
+
+  <div class="main">
+    <div class="mainhead">
+      <div id="mainhead-title" class="mainhead-title"></div>
+      <input id="filter-input" type="text" placeholder="Filter commands…">
+      <span id="conn-ip" class="conn-ip"></span>
+    </div>
+    <div id="board" class="board"></div>
+  </div>
+
+  <div class="activity-col">
+    <div class="activity-col-title">Activity</div>
+    <div id="activity-feed" class="activity-feed"></div>
+    <div class="activity-col-foot"><button id="savelog-btn" class="pill-btn">SaveLog</button></div>
+  </div>
+</div>
+
+<script src="shared/data.js"></script>
+<script src="shared/engine.js"></script>
+<script src="shared/controls.js"></script>
+<script src="shared/result-view.js"></script>
+<script src="mockup-9-tile-board.js"></script>
+</body>
+</html>

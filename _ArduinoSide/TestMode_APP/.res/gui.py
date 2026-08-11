@@ -11,6 +11,7 @@ main thread via a queue polled on a timer, so the UI never blocks.
 """
 
 import os
+import re
 import time
 import queue
 import threading
@@ -18,9 +19,9 @@ import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
 
 import net
-from core import hexb, find_ack, describe_reply, parse_history_reply
+from core import hexb, find_ack, describe_reply, parse_history_reply, parse_log_line
 from commands_diffuser import DIFFUSER_COMMANDS
-from commands_smarttv import SMARTTV_COMMANDS, TV_SETTINGS
+from commands_smarttv import SMARTTV_COMMANDS, TV_SETTINGS, EE_SETTINGS_TABLE
 
 # ---- theme: dark graphite, professional & low-glare ----
 BG = '#1b1e24'
@@ -200,9 +201,7 @@ def parse_status_fields(text):
 
 
 def parse_settings_reply(text):
-    print(f"DEBUG: parse_settings_reply called with text: {text[:50] if text else 'None'}...")
     if not text or text[:1] != 'S' or len(text) < 1 + 50 * 4:
-        print(f"DEBUG: Parse failed - text start: {text[:1] if text else 'None'}, length: {len(text) if text else 0}")
         return None
     idx_to_name = dict(TV_SETTINGS)
     rows = []
@@ -211,11 +210,9 @@ def parse_settings_reply(text):
         try:
             idx = int(text[base:base + 2], 16)
             val = int(text[base + 2:base + 4], 16)
-        except Exception as e:
-            print(f"DEBUG: Exception parsing index {i}: {e}")
+        except Exception:
             continue
         rows.append((idx, idx_to_name.get(idx, 'idx %d' % idx), val))
-    print(f"DEBUG: Parsed {len(rows)} settings successfully")
     return rows
 
 
@@ -282,6 +279,19 @@ class App(object):
         self.log_text.configure(state='normal')
         self.log_text.delete('1.0', 'end')
         self.log_text.configure(state='disabled')
+
+    def _toggle_livelog(self):
+        """Show/hide the LIVE LOG panel to free up vertical space - logging
+        to self.log_buffer (what SaveLog writes) keeps running underneath
+        regardless, so hiding the panel never loses anything, it just stops
+        rendering new lines into a widget nobody's looking at right now."""
+        self.livelog_enabled = not self.livelog_enabled
+        if self.livelog_enabled:
+            self.log_frame.pack(side='bottom', fill='x')
+            self.livelog_btn.configure(text='Live log: on', fg=ACCENT_GREEN)
+        else:
+            self.log_frame.pack_forget()
+            self.livelog_btn.configure(text='Live log: off', fg=TEXT_MUTED)
 
     def _save_log_file(self):
         if not self.log_buffer:
@@ -350,6 +360,11 @@ class App(object):
         self.keepalive_btn.pack(side='right', padx=10, pady=6)
         tk.Button(topbar, text='SaveLog', bg=BG_BTN, fg=TEXT, activebackground=BG_BTN_HOVER, relief='flat', bd=0,
                   font=('Segoe UI', 9), padx=9, pady=3, command=self._save_log_file).pack(side='right', padx=(10, 0), pady=6)
+        self.livelog_enabled = False
+        self.livelog_btn = tk.Button(topbar, text='Live log: off', bg=BG_BTN, fg=TEXT_MUTED,
+                                     activebackground=BG_BTN_HOVER, relief='flat', bd=0, font=('Segoe UI', 9),
+                                     padx=9, pady=3, command=self._toggle_livelog)
+        self.livelog_btn.pack(side='right', padx=(10, 0), pady=6)
 
         tabsbar = tk.Frame(self.root, bg=BG_SIDEBAR)
         tabsbar.pack(fill='x')
@@ -365,17 +380,25 @@ class App(object):
         self.connbar.pack(fill='x')
         self._build_connbar_fields()
 
-        body = tk.Frame(self.root, bg=BG)
+        # Horizontal PanedWindow instead of a plain packed Frame - gives the
+        # sidebar/detail split a draggable sash (same sashwidth/sashrelief
+        # convention FlashConsole's own PanedWindow already uses) so the
+        # sidebar can be widened on the fly, not just at this wider-than-
+        # before default (340px, was a fixed 300px with no way to change it).
+        body = tk.PanedWindow(self.root, orient=tk.HORIZONTAL, bg=BG,
+                              sashwidth=4, sashrelief=tk.FLAT, sashpad=0, bd=0)
 
         self.log_frame = self._build_logpanel(self.root)
-        self.log_frame.pack(side='bottom', fill='x')
+        # Live log starts collapsed (off by default) - only pack it if the
+        # user toggles it on via the topbar button.
+        if self.livelog_enabled:
+            self.log_frame.pack(side='bottom', fill='x')
         self.raw_frame = self._build_rawbox(self.root)
         self.raw_frame.pack(side='bottom', fill='x')
         body.pack(fill='both', expand=True)
 
-        sidebar_outer = tk.Frame(body, bg=BG_SIDEBAR, width=300)
-        sidebar_outer.pack(side='left', fill='y')
-        sidebar_outer.pack_propagate(False)
+        sidebar_outer = tk.Frame(body, bg=BG_SIDEBAR)
+        body.add(sidebar_outer, width=340, minsize=220, stretch='never')
 
         filter_row = tk.Frame(sidebar_outer, bg=BG_SIDEBAR)
         filter_row.pack(fill='x', padx=10, pady=(10, 6))
@@ -390,9 +413,15 @@ class App(object):
         sb_canvas.pack(fill='both', expand=True)
 
         detail_outer = tk.Frame(body, bg=BG)
-        detail_outer.pack(side='left', fill='both', expand=True)
-        dt_canvas, self.detail_inner = self._build_scrollable(detail_outer, bg=BG)
-        dt_canvas.pack(fill='both', expand=True)
+        body.add(detail_outer, minsize=400, stretch='always')
+        self.detail_canvas, self.detail_inner = self._build_scrollable(detail_outer, bg=BG)
+        self.detail_canvas.pack(fill='both', expand=True)
+
+        self.body = body
+        self.quicktest_outer = tk.Frame(body, bg=BG_SIDEBAR)
+        body.add(self.quicktest_outer, width=250, minsize=200, stretch='never')
+        self.quicktest_visible = True
+        self._build_quicktest_panel(self.quicktest_outer)
 
     def _build_connbar_fields(self):
         self.conn_ip_var = tk.StringVar()
@@ -471,6 +500,8 @@ class App(object):
         by_section = {}
         for spec in command_list:
             sec = spec['section']
+            if 'test mode' in sec.lower():
+                continue  # lives in the QUICK TEST panel on the right now, not the sidebar tree
             if sec not in by_section:
                 by_section[sec] = []
                 sections.append(sec)
@@ -618,17 +649,31 @@ class App(object):
             elif ptype == 'checkbox':
                 var = tk.BooleanVar(value=bool(p['default']))
                 state_text = tk.StringVar()
+                # Same muted dark-theme chip pair both ways - darkish green
+                # for ON (_CHIP_ON), darkish red for OFF (_CHIP_OFF) - instead
+                # of a plain grey OFF state next to a coloured ON one, which
+                # still read oddly once both were on screen together.
+                on_bg, on_fg = self._CHIP_ON
+                off_bg, off_fg = self._CHIP_OFF
                 chk = tk.Checkbutton(row, variable=var, textvariable=state_text, indicatoron=0,
                                      width=5, padx=7, pady=3, relief='flat', bd=0,
-                                     activebackground=ACCENT_GREEN, activeforeground=WHITE,
+                                     activebackground=on_bg, activeforeground=on_fg,
+                                     # Tk quirk: with indicatoron=0, a checked
+                                     # Checkbutton paints its background from
+                                     # selectcolor, NOT bg/.configure(bg=...) -
+                                     # left at its default (white on Windows)
+                                     # this is exactly why the ON state kept
+                                     # showing white no matter what bg got set to.
+                                     selectcolor=on_bg,
                                      highlightthickness=1, highlightbackground=BORDER,
                                      font=('Consolas', 9, 'bold'))
 
-                def _sync_checkbox(*_a, v=var, button=chk, text=state_text):
+                def _sync_checkbox(*_a, v=var, button=chk, text=state_text,
+                                   on_bg=on_bg, on_fg=on_fg, off_bg=off_bg, off_fg=off_fg):
                     enabled = bool(v.get())
                     text.set('ON' if enabled else 'OFF')
-                    button.configure(bg=(ACCENT_GREEN if enabled else BG_BTN),
-                                     fg=(WHITE if enabled else TEXT_MUTED))
+                    button.configure(bg=(on_bg if enabled else off_bg),
+                                     fg=(on_fg if enabled else off_fg))
                     on_change()
 
                 var.trace_add('write', _sync_checkbox)
@@ -777,6 +822,210 @@ class App(object):
         body.pack(fill='x', padx=(28, 0))
         return body
 
+    def _render_settings_write(self, spec, device_key):
+        """'Write one setting', in one panel: pick a setting, and the value
+        control below it switches to whatever that setting actually is -
+        checkbox / named dropdown / real-range slider (EE_SETTINGS_TABLE,
+        ported from the Android app's SettingsManager.java) - instead of a
+        single generic 0-255 slider for all 45 of them. Reuses the same
+        _build_param_controls()/_collect_param_values() every other command
+        uses for its one 'vv' control, just rebuilt on every setting change."""
+        pad = tk.Frame(self.detail_inner, bg=BG)
+        pad.pack(fill='both', expand=True, padx=24, pady=20)
+
+        _, cat_color, _, icon = category_meta(spec['section'])
+        head = tk.Frame(pad, bg=BG)
+        head.pack(fill='x')
+        tk.Label(head, text=icon, bg=BG, fg=cat_color, font=('Segoe UI', 15)).pack(side='left', padx=(0, 8))
+        tk.Label(head, text=spec.get('name', spec['label']), bg=BG, fg=TEXT, font=('Segoe UI', 15, 'bold')).pack(side='left')
+        tk.Label(head, text=spec['label'], bg=BG_BTN, fg=TEXT_MUTED, font=('Consolas', 9), padx=7, pady=2).pack(side='left', padx=(10, 0))
+        tk.Label(head, text='UDP', bg=BG_BTN, fg=TEXT_SECONDARY, font=('Consolas', 9), padx=8, pady=2).pack(side='left', padx=(6, 0))
+
+        tk.Label(pad, text=spec['desc'], bg=BG, fg=TEXT_SECONDARY, font=('Segoe UI', 9),
+                 justify='left', anchor='w', wraplength=760).pack(fill='x', pady=(6, 4))
+
+        by_idx = {row[0]: row for row in EE_SETTINGS_TABLE}
+        setting_options = [(str(idx), '%02X  %s: %s' % (idx, row[1].title(), row[6])) for idx, row in by_idx.items()]
+        label_to_idx = dict((lbl, val) for val, lbl in setting_options)
+
+        # Current-on-device readout, fetched fresh with a single-setting read
+        # ('Sii' -> 'Siivv', firmware-side addition) for whichever setting is
+        # selected - not the full 50-setting dump - as soon as this panel
+        # opens and again on every setting change, so "what is it right now"
+        # is answered up front instead of only ever seeing the NEW value
+        # you're about to send.
+        current_frame = tk.Frame(pad, bg=BG_CARD, highlightthickness=1, highlightbackground=BORDER)
+        current_frame.pack(fill='x', pady=(4, 4))
+        current_inner = tk.Frame(current_frame, bg=BG_CARD)
+        current_inner.pack(fill='x', padx=12, pady=8)
+        tk.Label(current_inner, text='CURRENT ON DEVICE', bg=BG_CARD, fg=TEXT_MUTED,
+                 font=('Segoe UI', 8, 'bold')).pack(side='left')
+        current_var = tk.StringVar(value='reading...')
+        tk.Label(current_inner, textvariable=current_var, bg=BG_CARD, fg=ACCENT_AMBER,
+                 font=('Consolas', 10, 'bold')).pack(side='left', padx=(10, 0))
+        refresh_btn = tk.Button(current_inner, text='Refresh', bg=BG_BTN, fg=TEXT_SECONDARY,
+                                activebackground=BG_BTN_HOVER, relief='flat', bd=0, font=('Segoe UI', 8),
+                                padx=8, pady=2)
+        refresh_btn.pack(side='right')
+
+        body1 = self._step_row(pad, 1, 'Choose a setting')
+        row1 = tk.Frame(body1, bg=BG)
+        row1.pack(fill='x', pady=5)
+        tk.Label(row1, text='Setting', bg=BG, fg=TEXT_SECONDARY, font=('Segoe UI', 9), width=16, anchor='w').pack(side='left')
+        setting_var = tk.StringVar(value=setting_options[0][1])
+        setting_cb = ttk.Combobox(row1, state='readonly', values=[o[1] for o in setting_options],
+                                  textvariable=setting_var, width=40)
+        setting_cb.pack(side='left')
+
+        value_holder = tk.Frame(pad, bg=BG)
+        value_holder.pack(fill='x')
+
+        preview_var = tk.StringVar()
+        state = {'controls': {}, 'pspec': None, 'device_values': None}
+
+        def _current_idx():
+            return int(label_to_idx[setting_var.get()])
+
+        def _format_current(idx):
+            values = state['device_values']
+            if values is None:
+                return 'reading...'
+            if idx not in values:
+                return 'unknown (not in last read)'
+            raw = values[idx]
+            _, cat, kind, default, lo, hi, label, options = by_idx[idx]
+            if kind == 'switch':
+                return 'ON' if raw else 'OFF'
+            if kind == 'select':
+                return '%d  %s' % (raw, options[raw]) if 0 <= raw < len(options) else str(raw)
+            return str(raw)
+
+        def _update_current_display(*_a):
+            current_var.set(_format_current(_current_idx()))
+
+        def _apply_fetched_value(idx, val):
+            """Reflect the freshly-read device value into the actual editable
+            control in step 2 (not just the read-only CURRENT ON DEVICE text)
+            - so the checkbox/dropdown/slider opens already showing what's
+            really on the device, instead of always starting from Android's
+            static default and only telling you it's wrong off to the side."""
+            if idx != _current_idx() or not state['controls']:
+                return
+            ctrl = state['controls'].get('vv')
+            if not ctrl:
+                return
+            kind = ctrl['kind']
+            if kind == 'checkbox':
+                ctrl['var'].set(bool(val))
+            elif kind == 'enum':
+                _, _cat, _kind2, _default, _lo, _hi, _label, options = by_idx[idx]
+                ctrl['var'].set('%d  %s' % (val, options[val]) if 0 <= val < len(options) else str(val))
+            elif kind == 'range':
+                ctrl['var'].set(val)
+            _update_preview()
+
+        def _fetch_current(*_a):
+            idx = _current_idx()
+            current_var.set('reading...')
+            device = self.devices[device_key]
+
+            def _worker():
+                payload = 'S' + hexb(idx, 2)
+                result = net.send_udp(device['ip'], device['udp_port'], payload, device['timeout_ms'])
+                def _apply():
+                    if result['status'] != 'OK':
+                        current_var.set('read failed (%s)' % result['status'].lower())
+                        return
+                    # Single-setting reply is exactly 'Siivv' (5 chars) - the
+                    # len check keeps this from matching the full 201-char
+                    # dump or an unrelated 'S...' line if one ever showed up.
+                    reply = next((r for r in result['replies'] if r[:1] == 'S' and len(r) == 5), None)
+                    if not reply:
+                        current_var.set('read failed (no settings reply)')
+                        return
+                    try:
+                        r_idx = int(reply[1:3], 16)
+                        r_val = int(reply[3:5], 16)
+                    except ValueError:
+                        current_var.set('read failed (bad reply)')
+                        return
+                    if r_idx != idx:
+                        current_var.set('read failed (index mismatch)')
+                        return
+                    state['device_values'] = {r_idx: r_val}
+                    self._log_sys('settings write: read current value (idx %02X = %d)' % (r_idx, r_val))
+                    _update_current_display()
+                    _apply_fetched_value(r_idx, r_val)
+                self.result_queue.put(_apply)
+            threading.Thread(target=_worker, daemon=True).start()
+
+        refresh_btn.configure(command=_fetch_current)
+
+        def _update_preview():
+            try:
+                idx = _current_idx()
+                vals = self._collect_param_values({'params': state['pspec']}, state['controls'])
+                preview_var.set('S%s%s' % (hexb(idx, 2), hexb(int(vals['vv']), 2)))
+            except Exception:
+                preview_var.set('(invalid)')
+
+        def _rebuild_value(*_a):
+            for w in value_holder.winfo_children():
+                w.destroy()
+            idx, cat, kind, default, lo, hi, label, options = by_idx[_current_idx()]
+            # Old value belongs to whatever setting was selected before -
+            # don't show it against the new one while the fresh read is in
+            # flight, just show "reading..." until _fetch_current() lands.
+            current_var.set('reading...')
+            body2 = self._step_row(value_holder, 2, 'Value - %s' % label)
+            if kind == 'switch':
+                pspec = [{'key': 'vv', 'type': 'checkbox', 'label': 'Value', 'default': bool(default)}]
+            elif kind == 'select':
+                opts = [(str(i), '%d  %s' % (i, name)) for i, name in enumerate(options)]
+                pspec = [{'key': 'vv', 'type': 'enum', 'label': 'Value', 'options': opts, 'default': str(default)}]
+            else:
+                pspec = [{'key': 'vv', 'type': 'range', 'label': 'Value', 'min': lo, 'max': hi, 'default': default}]
+            pframe, controls = self._build_param_controls(body2, {'params': pspec}, _update_preview)
+            pframe.pack(fill='x')
+            state['controls'] = controls
+            state['pspec'] = pspec
+            _update_preview()
+            _fetch_current()
+
+        setting_cb.bind('<<ComboboxSelected>>', _rebuild_value)
+        _rebuild_value()
+
+        body3 = self._step_row(pad, 3, 'Review and send')
+        preview_row = tk.Frame(body3, bg=BG)
+        preview_row.pack(fill='x', pady=(0, 10))
+        tk.Label(preview_row, text='payload', bg=BG, fg=TEXT_MUTED, font=('Segoe UI', 8)).pack(side='left', padx=(0, 8))
+        tk.Label(preview_row, textvariable=preview_var, bg=BG_CARD, fg=ACCENT_BLUE, font=('Consolas', 10),
+                 padx=10, pady=4, anchor='w').pack(side='left', fill='x', expand=True)
+
+        send_row = tk.Frame(body3, bg=BG)
+        send_row.pack(fill='x')
+        chip = tk.Label(send_row, text='-', bg=BG_BTN, fg=TEXT_MUTED, font=('Segoe UI', 9, 'bold'), padx=10, pady=3)
+        resp_area = tk.Frame(pad, bg=BG_CARD)
+
+        def _do_send():
+            if not self._confirm_ok(spec):
+                return
+            idx = _current_idx()
+            vals = self._collect_param_values({'params': state['pspec']}, state['controls'])
+            payload = 'S' + hexb(idx, 2) + hexb(int(vals['vv']), 2)
+            self._on_send(spec, device_key, payload, chip, resp_area, vals)
+            # Re-read so "CURRENT ON DEVICE" reflects the write instead of
+            # going stale - _on_send() is fire-and-forget from here (no
+            # completion callback to hook), so this just gives the write's
+            # own round trip a moment to land first rather than racing it.
+            self.root.after(800, _fetch_current)
+        send_btn = tk.Button(send_row, text='Send', bg=BTN_GREEN_BG, fg=BTN_GREEN_FG, activebackground=BTN_GREEN_ACTIVE,
+                             relief='flat', bd=0, font=('Segoe UI', 9, 'bold'), padx=16, pady=6, command=_do_send)
+        send_btn.pack(side='left')
+        chip.pack(side='left', padx=(12, 0))
+
+        resp_area.pack(fill='both', expand=True, pady=(14, 0))
+
     def _confirm_ok(self, spec):
         """Gate a send behind a Yes/No dialog when the command spec carries a
         'confirm' message - for actions with real physical consequences
@@ -790,12 +1039,23 @@ class App(object):
     def _render_detail(self, spec, device_key):
         for w in self.detail_inner.winfo_children():
             w.destroy()
+        # Picking a new command from the left panel always jumps the middle
+        # panel back to the top - otherwise it kept whatever scroll position
+        # the previous (often longer) command's detail left it at, so a
+        # short command could open already scrolled past its own content.
+        # after_idle so this fires once the new content below has actually
+        # been packed and the canvas' scrollregion recomputed - doing it
+        # immediately raced the <Configure> handler that sets scrollregion.
+        self.root.after_idle(lambda: self.detail_canvas.yview_moveto(0))
 
         # Fully bespoke panels (their own fetch/list/action flow, not the
         # generic params-or-direct_buttons + single Send/Result shape every
         # other command uses) opt out here instead of trying to force-fit.
         if spec.get('custom_panel') == 'diffuser_history':
             self._render_history_manager(spec, device_key)
+            return
+        if spec.get('custom_panel') == 'settings_write':
+            self._render_settings_write(spec, device_key)
             return
 
         pad = tk.Frame(self.detail_inner, bg=BG)
@@ -1090,22 +1350,118 @@ class App(object):
         tk.Label(resp_area, text=raw_text or '-', bg=BG_CARD, fg=TEXT_SECONDARY, font=('Consolas', 9),
                  padx=10, pady=10, anchor='w', justify='left', wraplength=700).pack(fill='x')
 
+    # Level -> (text colour, whether the line gets bold/section styling)
+    _LOG_LEVEL_STYLE = {
+        0: (ACCENT_RED,    False),   # ERROR
+        1: (ACCENT_AMBER,  False),   # WARN
+        2: (TEXT,          False),   # INFO
+        3: (TEXT_MUTED,    False),   # DEBUG
+        4: (ACCENT_BLUE,   True),    # SECTION - divider header
+    }
+
+    # Value-chip palette, ported from ConsoleAdapter.java's CHIP_NUM/CHIP_ON/
+    # CHIP_OFF/CHIP_TEXT (same {background, foreground} pairs the Android app
+    # already uses for [bracketed] values in its own console) - kept
+    # identical so a value reads the same colour in both places.
+    _CHIP_NUM  = ('#412402', '#fac775')   # 42, 3.5, -7
+    _CHIP_ON   = ('#173404', '#c0dd97')   # ON, True, OK, ACTIVE
+    _CHIP_OFF  = ('#501313', '#f7c1c1')   # OFF, False, none, ERROR, FAIL
+    _CHIP_TEXT = ('#04342c', '#9fe1cb')   # STATIC, IPs, times - anything else
+
+    _CHIP_ON_WORDS  = {'on', 'true', 'ok', 'active'}
+    _CHIP_OFF_WORDS = {'off', 'false', 'none', 'unknown', 'no_response',
+                       'not found', 'error', 'fail', 'lost', 'invalid'}
+
+    @classmethod
+    def _chip_colors(cls, value):
+        """Classify one bracketed value's text -> (bg, fg), mirroring
+        ConsoleAdapter._chipColors()'s rules exactly."""
+        v = value.strip()
+        try:
+            float(v)
+            return cls._CHIP_NUM
+        except ValueError:
+            pass
+        low = v.lower()
+        if low in cls._CHIP_ON_WORDS:
+            return cls._CHIP_ON
+        if low in cls._CHIP_OFF_WORDS:
+            return cls._CHIP_OFF
+        return cls._CHIP_TEXT
+
+    _CHIP_TOKEN_RE = re.compile(r'\[[^\[\]]+\]|\{[^{}]+\}')
+
+    def _insert_with_chips(self, box, text, base_tag):
+        """Insert `text` into `box` under `base_tag`, except [bracketed] or
+        {braced} value tokens - those get their own background+foreground
+        chip tag instead, classified by _chip_colors(). Same convention the
+        Android app's console already renders ("[tokens] render as value
+        chips"), ported here so K-dump values are easy to spot instead of
+        blending into the level colour."""
+        pos = 0
+        for m in self._CHIP_TOKEN_RE.finditer(text):
+            if m.start() > pos:
+                box.insert('end', text[pos:m.start()], base_tag)
+            token = m.group(0)
+            bg, fg = self._chip_colors(token[1:-1])
+            tag = 'chip_%s' % bg.lstrip('#')
+            box.tag_configure(tag, background=bg, foreground=fg)
+            box.insert('end', token, tag)
+            pos = m.end()
+        if pos < len(text):
+            box.insert('end', text[pos:], base_tag)
+
     def _render_reply_list(self, resp_area, entries):
-        """One row per packet the device sent back this round: the raw code
-        as a small tag, and its plain-English meaning as the primary text.
-        The live log panel keeps the fully raw/coded form unchanged - this is
-        purely the Result step's human-readable view."""
+        """Every packet the device sent back this round, in one selectable/
+        copyable Text widget instead of a Label per row - colour-coded by
+        the term-log envelope's level when the packet is one (ERROR/WARN
+        stand out, SECTION headers act as dividers, DEBUG is de-emphasised),
+        plain text otherwise (LK summaries, unrecognised packets, ...).
+        The live log panel keeps the fully raw/coded form unchanged - this
+        is purely the Result step's human-readable view."""
         wrap = tk.Frame(resp_area, bg=BG_CARD)
-        wrap.pack(fill='x', padx=10, pady=(10, 4))
-        tk.Label(wrap, text='%d PACKET%s RECEIVED' % (len(entries), '' if len(entries) == 1 else 'S'),
-                 bg=BG_CARD, fg=ACCENT_BLUE, font=('Segoe UI', 9, 'bold'), anchor='w').pack(fill='x', pady=(0, 6))
-        for badge, desc in entries:
-            row = tk.Frame(wrap, bg=CELL_BG)
-            row.pack(fill='x', pady=2)
-            tk.Label(row, text=badge, bg=CELL_BG, fg=TEXT_MUTED, font=('Consolas', 8),
-                    anchor='w', padx=8, pady=5, width=10).pack(side='left')
-            tk.Label(row, text=desc or '(unrecognised packet)', bg=CELL_BG, fg=(TEXT if desc else TEXT_MUTED),
-                    font=('Segoe UI', 9), anchor='w', justify='left', wraplength=520, padx=6, pady=5).pack(side='left', fill='x', expand=True)
+        wrap.pack(fill='both', expand=True, padx=10, pady=(10, 4))
+
+        head = tk.Frame(wrap, bg=BG_CARD)
+        head.pack(fill='x', pady=(0, 6))
+        tk.Label(head, text='%d PACKET%s RECEIVED' % (len(entries), '' if len(entries) == 1 else 'S'),
+                 bg=BG_CARD, fg=ACCENT_BLUE, font=('Segoe UI', 9, 'bold'), anchor='w').pack(side='left')
+
+        box = tk.Text(wrap, bg=CELL_BG, fg=TEXT, font=('Consolas', 9), wrap='word', bd=0,
+                      highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER_STRONG,
+                      padx=10, pady=8, height=min(max(len(entries), 3), 16),
+                      selectbackground=BG_ROW_SELECTED, selectforeground=TEXT)
+        box.tag_configure('src', foreground=TEXT_MUTED)
+        for level, (color, bold) in self._LOG_LEVEL_STYLE.items():
+            box.tag_configure('lvl%d' % level, foreground=color,
+                              font=('Consolas', 9, 'bold' if bold else 'normal'))
+        box.tag_configure('plain', foreground=TEXT_SECONDARY)
+        box.tag_configure('empty', foreground=TEXT_MUTED)
+
+        def _copy_all():
+            self.clipboard_clear()
+            self.clipboard_append(box.get('1.0', 'end-1c'))
+        tk.Button(head, text='Copy all', bg=BG_BTN, fg=TEXT_SECONDARY, relief='flat', bd=0,
+                 font=('Segoe UI', 8), padx=8, pady=2, command=_copy_all).pack(side='right')
+
+        for badge, desc, raw in entries:
+            parsed = parse_log_line(raw) if raw else None
+            if parsed:
+                if parsed['level'] == 5:  # GAP - blank spacer, nothing worth a line for
+                    continue
+                tag = 'lvl%d' % parsed['level'] if parsed['level'] in self._LOG_LEVEL_STYLE else 'plain'
+                box.insert('end', '[%-7s]' % parsed['source_name'], 'src')
+                box.insert('end', ' %-7s ' % parsed['level_name'], tag)
+                self._insert_with_chips(box, (parsed['body'] or '(empty)'), tag)
+                box.insert('end', '\n', tag)
+            else:
+                text = desc or badge or '(unrecognised packet)'
+                self._insert_with_chips(box, text, 'plain' if desc else 'empty')
+                box.insert('end', '\n', 'plain' if desc else 'empty')
+
+        box.configure(state='disabled')
+        self._attach_copy_menu(box)
+        box.pack(fill='both', expand=True)
 
     def _render_hex_breakdown(self, resp_area, prefix, segments):
         """`segments`: list of (hex_text, colour) rendered after `prefix`, one colour per decoded field."""
@@ -1365,7 +1721,15 @@ class App(object):
                 fallback = ''
                 if not data_reply and all_entries:
                     fallback = all_entries[0][3] or all_entries[0][2]
-                display_entries = [(badge, desc) for _r, _is_lk, badge, desc in all_entries]
+                # The '#SSR' ack packet is already shown as its own coloured
+                # banner up top (_render_ack_banner, driven by the same
+                # find_ack() a few lines up) - repeating it as a plain
+                # "Command acknowledged: ok" row in the packet list below is
+                # pure duplication. Still counted in all_entries (find_ack /
+                # data_reply / the live log above all saw it unfiltered) -
+                # this only trims what the packet LIST displays.
+                display_entries = [(badge, desc, _r) for _r, _is_lk, badge, desc in all_entries
+                                   if not _r.startswith('#')]
                 self._render_response(resp_area, spec, data_reply or fallback, sent_vals, display_entries, ack_kind=ack_kind)
             else:
                 text = ' / '.join(replies) if replies else ''
@@ -1526,7 +1890,191 @@ class App(object):
         self.log_text.tag_configure('log-recv', foreground=TEXT_SECONDARY)
         self.log_text.tag_configure('log-err', foreground=ACCENT_RED)
         self.log_text.tag_configure('sys', foreground=TEXT_MUTED)
+        self._attach_copy_menu(self.log_text)
         return frame
+
+    def _attach_copy_menu(self, text_widget):
+        """Right-click context menu (Copy selection / Select all / Copy all)
+        for a read-only Text widget. Selection + Ctrl+C already work on a
+        disabled Text widget in Tk, but that's not obvious without a menu -
+        this makes it discoverable."""
+        menu = tk.Menu(text_widget, tearoff=0, bg=BG_BTN, fg=TEXT, activebackground=BG_ROW_SELECTED,
+                       activeforeground=TEXT, bd=0)
+
+        def _copy_selection():
+            try:
+                text_widget.clipboard_clear()
+                text_widget.clipboard_append(text_widget.get('sel.first', 'sel.last'))
+            except tk.TclError:
+                pass  # nothing selected
+
+        def _select_all():
+            text_widget.tag_add('sel', '1.0', 'end')
+
+        def _copy_all():
+            text_widget.clipboard_clear()
+            text_widget.clipboard_append(text_widget.get('1.0', 'end-1c'))
+
+        menu.add_command(label='Copy', command=_copy_selection)
+        menu.add_command(label='Select all', command=_select_all)
+        menu.add_command(label='Copy all', command=_copy_all)
+
+        def _popup(event):
+            menu.tk_popup(event.x_root, event.y_root)
+        text_widget.bind('<Button-3>', _popup)
+
+    # ------------------------------------------------------------- quick test panel
+    def _build_quicktest_panel(self, parent):
+        """One-click access to every test-mode action (simulate TV/motion/
+        UDPRAW, force lux, diffuser test actions, ...), always visible on
+        the right instead of needing sidebar navigation + a dropdown +
+        Send for each one - exactly the kind of rapid-fire clicking a real
+        test pass does over and over. Grouped by the command it came from
+        (its own sub-header), rebuilt on every device switch since only
+        SmartTV currently has a 'test mode' section - it's simply empty on
+        Diffuser rather than hardcoded to one device."""
+        tk.Label(parent, text='QUICK TEST', bg=BG_SIDEBAR, fg=TEXT_MUTED,
+                 font=('Segoe UI', 8, 'bold')).pack(anchor='w', padx=12, pady=(10, 4))
+
+        # Anchored (side='bottom') widgets are packed BEFORE the fill+expand
+        # canvas below - packing them after it left them starved for space
+        # in practice (the status strip effectively lost the layout fight to
+        # the expanding canvas), which is what made a Quick Test response
+        # look like it "didn't show on the right".
+        status = tk.Frame(parent, bg=BG_SIDEBAR)
+        status.pack(fill='x', side='bottom')
+        divider = tk.Frame(status, bg=BORDER, height=1)
+        divider.pack(fill='x')
+        self.quicktest_chip = tk.Label(status, text='-', bg=BG_BTN, fg=TEXT_MUTED,
+                                       font=('Segoe UI', 8, 'bold'), padx=8, pady=3, anchor='w')
+        self.quicktest_chip.pack(fill='x', padx=10, pady=(6, 4))
+        self.quicktest_resp = tk.Frame(status, bg=BG_SIDEBAR)
+        self.quicktest_resp.pack(fill='x', padx=10, pady=(0, 8))
+
+        qt_canvas, self.quicktest_inner = self._build_scrollable(parent, bg=BG_SIDEBAR)
+        qt_canvas.pack(fill='both', expand=True)
+
+    def _render_quicktest(self, device_key, command_list):
+        for w in self.quicktest_inner.winfo_children():
+            w.destroy()
+        for w in self.quicktest_resp.winfo_children():
+            w.destroy()
+
+        specs = [s for s in command_list if 'test mode' in s['section'].lower()]
+        if not specs:
+            tk.Label(self.quicktest_inner, text='(no test-mode actions on this device)',
+                     bg=BG_SIDEBAR, fg=TEXT_MUTED, font=('Segoe UI', 8, 'italic'),
+                     wraplength=210, justify='left').pack(anchor='w', padx=12, pady=6)
+            return
+
+        for spec in specs:
+            # One-click options either come straight from direct_buttons, or -
+            # for a single-enum-param command like "simulate a source" - get
+            # synthesised from that enum's own option list, one button per
+            # choice, each pre-built through the command's real build().
+            if spec.get('direct_buttons'):
+                options = spec['direct_buttons']
+            elif len(spec.get('params') or []) == 1 and spec['params'][0]['type'] == 'enum':
+                p = spec['params'][0]
+                options = [(spec['build']({p['key']: val}), lbl) for val, lbl in p['options']]
+            else:
+                continue  # needs more than one click's worth of input - not a fit here
+
+            _, cat_color, _, _ = category_meta(spec['section'])
+            tk.Label(self.quicktest_inner, text=spec.get('name', spec['label']), bg=BG_SIDEBAR, fg=cat_color,
+                     font=('Segoe UI', 8, 'bold'), anchor='w', wraplength=210, justify='left').pack(
+                     fill='x', padx=12, pady=(10, 3))
+
+            grid = tk.Frame(self.quicktest_inner, bg=BG_SIDEBAR)
+            grid.pack(fill='x', padx=10)
+            for payload, label in options:
+                def _fire(v=payload, sp=spec, dk=device_key):
+                    if not self._confirm_ok(sp):
+                        return
+                    self._quicktest_fire(sp, dk, v)
+                tk.Button(grid, text=label, bg=BG_BTN, fg=TEXT, activebackground=BG_BTN_HOVER,
+                         relief='flat', bd=0, font=('Segoe UI', 8), padx=8, pady=4, anchor='w',
+                         command=_fire).pack(fill='x', pady=1)
+
+    def _quicktest_fire(self, spec, device_key, payload):
+        """Send + show the result entirely within the narrow Quick Test
+        column - deliberately NOT the same _on_send()/_render_response()
+        pipeline the wide middle detail panel uses. That renderer assumes
+        ~700px (wraplength=700, multi-line Text widgets sized for a full
+        packet list) - stuffed into this 250px sidebar column it forced the
+        pane wider than its configured width, which is what actually made a
+        Quick Test click look like its response 'appeared in the middle'
+        instead of on the right. This path only ever shows one compact,
+        narrow-wrapped line + the status chip; open the same command from
+        the sidebar (or check the Live Log panel) for the full breakdown."""
+        self.quicktest_chip.configure(bg='#20344a', fg=ACCENT_BLUE, text='sending')
+        for w in self.quicktest_resp.winfo_children():
+            w.destroy()
+        tk.Label(self.quicktest_resp, text='...', bg=BG_SIDEBAR, fg=TEXT_MUTED,
+                font=('Consolas', 8)).pack(anchor='w')
+        device = self.devices[device_key]
+        threading.Thread(target=self._quicktest_worker, args=(spec, device_key, device, payload),
+                         daemon=True).start()
+
+    def _quicktest_worker(self, spec, device_key, device, payload):
+        tag = 'DIF' if device_key == 'diffuser' else 'TV'
+        transport_label = 'UDP' if spec['transport'] == 'udp' else 'TCP'
+        envelope = (spec['transport'] == 'udp') and spec.get('envelope', True)
+        timeout_ms = spec.get('timeout_ms', device['timeout_ms'])
+
+        seq = -1
+        wrapped = payload
+        if spec['transport'] == 'udp':
+            if envelope:
+                seq = self.seq
+                self.seq = (self.seq + 1) % 256
+                wrapped = '#' + hexb(seq, 2) + payload
+            result = net.send_udp(device['ip'], device['udp_port'], wrapped, timeout_ms)
+        else:
+            result = net.send_tcp(device['ip'], device['telnet_port'], payload, timeout_ms + 300)
+
+        def _finish():
+            self._panel_log(tag, 'log-send', '%s > %s %s' % (transport_label, device['ip'], wrapped))
+
+            def set_chip(kind, text):
+                bgc, fgc = CHIP_COLORS.get(kind, CHIP_COLORS['none'])
+                self.quicktest_chip.configure(bg=bgc, fg=fgc, text=text)
+
+            def set_line(text, muted=False):
+                for w in self.quicktest_resp.winfo_children():
+                    w.destroy()
+                tk.Label(self.quicktest_resp, text=text, bg=BG_SIDEBAR,
+                        fg=(TEXT_MUTED if muted else TEXT_SECONDARY), font=('Segoe UI', 8),
+                        wraplength=210, justify='left', anchor='w').pack(fill='x')
+
+            status = result['status']
+            if status == 'TIMEOUT':
+                set_chip('timeout', 'timeout')
+                set_line('no reply (%dms)' % timeout_ms, muted=True)
+                self._panel_log(tag, 'log-err', '%s < timeout (%dms)' % (transport_label, timeout_ms))
+                return
+            if status == 'ERROR':
+                set_chip('error', 'error')
+                set_line(result.get('message', 'error'), muted=True)
+                self._panel_log(tag, 'log-err', '%s < ERROR: %s' % (transport_label, result.get('message')))
+                return
+
+            replies = result['replies']
+            for r in replies:
+                self._panel_log(tag, 'log-recv', '%s < %s' % (transport_label, r))
+
+            if spec['transport'] == 'udp':
+                ack = find_ack(replies, seq) if envelope else None
+                ack_kind = ack['name'] if ack else ('unknown' if envelope else 'sent')
+                set_chip(ack_kind, ack_kind)
+                first_desc = next((describe_reply(r) for r in replies if not r.startswith('#')), None)
+                set_line(first_desc or (replies[0] if replies else '(no reply body)'))
+            else:
+                text = ' / '.join(replies) if replies else '(empty)'
+                set_chip('ok' if replies else 'timeout', 'replied' if replies else 'no reply')
+                set_line(text)
+
+        self.result_queue.put(_finish)
 
     # ------------------------------------------------------------- device switch
     def switch_device(self, key):
@@ -1540,6 +2088,21 @@ class App(object):
         table = self.command_tables[key]
         self.filter_var.set('')
         self._render_sidebar(key, table)
+
+        # Quick Test only ever has content on SmartTV (it's built from that
+        # device's 'test mode' section - Diffuser has none) - rather than
+        # leave the pane sitting there just to show "(no test-mode actions
+        # on this device)", drop it from the PanedWindow entirely so
+        # Diffuser gets that width back for the sidebar/detail split.
+        if key == 'diffuser':
+            if self.quicktest_visible:
+                self.body.forget(self.quicktest_outer)
+                self.quicktest_visible = False
+        else:
+            self._render_quicktest(key, table)
+            if not self.quicktest_visible:
+                self.body.add(self.quicktest_outer, width=250, minsize=200, stretch='never')
+                self.quicktest_visible = True
 
         device = self.devices[key]
         self.conn_ip_var.set(device['ip'])

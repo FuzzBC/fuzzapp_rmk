@@ -26,7 +26,6 @@ TV_SETTINGS = [
     (41, 'DIF_IDLE_ON_MIN'), (42, 'DIF_IDLE_MODE'), (43, 'DIF_BRIGHTNESS (0-120)'), (44, 'DIF_SPEED'),
     (45, 'RESERVED_45'), (46, 'RESERVED_46'), (47, 'RESERVED_47'), (48, 'RESERVED_48'), (49, 'RESERVED_49'),
 ]
-TV_SETTINGS_OPTIONS = [(str(idx), '%s %s' % (hexb(idx, 2), name)) for idx, name in TV_SETTINGS]
 
 TV_DEBUG_NAMES = [
     'led_info', 'led_selected', 'led_order', 'led_color', 'led_tempcolor', 'motion', 'tv', 'ee',
@@ -40,13 +39,79 @@ TV_DIF_MODE_OPTIONS = [('1', '1 CONT'), ('2', '2 10 SEC'), ('3', '3 2H after sle
 TV_DIF_EFFECT_NAMES = ['STATIC', 'FADE', 'PULSE', 'RANDOM', 'RAINBOW', 'SPARKLE', 'FIRE', 'BOUNCE', 'CONFETTI']
 TV_DIF_EFFECT_OPTIONS = [(str(i), '%s %s' % (hexb(i, 2), name)) for i, name in enumerate(TV_DIF_EFFECT_NAMES)]
 
+# Every real EE setting (0-44; 45-49 are reserved padding, see TV_SETTINGS
+# above), ported 1:1 from the Android app's SettingsManager.java
+# (_populateSettings() -> SET_Info, and the TYPE_SWITCH / TYPE_SELECTABLE /
+# TYPE_TIME* / TYPE_BRIGHTNESS / TYPE_INCREMENTAL dispatch in
+# _buildSettingsRows()) so each setting gets the same control here as on the
+# phone - switch, named choices, or a ranged slider with the real min/max
+# instead of a generic 0-255. (idx, category, kind, default, min, max, label,
+# options-or-None). kind is 'switch' / 'select' / 'bar'.
+DIF_MODE_CHOICES = ['off', 'continuous', '10 sec', '2h after sleep', '4h after sleep']
+EE_SETTINGS_TABLE = [
+    (0,  'TV', 'select', 0, 0, 0, 'ON EFFECT', ['default', 'random + static', 'mid to out (sep)',
+        'mid to out (all)', 'half run', 'half run random', '4-anchor expand', '2-anchor expand',
+        'COM scanner', 'TV center sweep', 'liquid fill', 'pixel boot']),
+    (1,  'TV', 'select', 0, 0, 0, 'OFF EFFECT', ['default', 'delay (w tv off)', 'delay (all)',
+        'Slow TV ~ C ~ UC ~ B ~ L', 'countdown', 'bomb countdown', 'random half', 'TV center sweep']),
+    (2,  'TV', 'bar', 0, 0, 180, 'OFF EFFECT TIME (s)', None),
+    (17, 'TV', 'bar', 7, 0, 120, 'BRIGHTNESS TV', None),
+    (3,  'TV', 'bar', 7, 0, 120, 'BRIGHTNESS COM', None),
+    (4,  'TV', 'bar', 40, 0, 120, 'BRIGHTNESS uCOM', None),
+    (5,  'TV', 'bar', 40, 0, 120, 'BRIGHTNESS BED', None),
+    (6,  'TV', 'bar', 5, 0, 120, 'BRIGHTNESS LAMP', None),
+    (15, 'TV', 'select', 0, 0, 0, 'RANDOM COLOR START', ['off', 'random colors', 'random dual']),
+    (23, 'TV', 'bar', 15, 1, 150, 'ON BR/CL DELAY (ms)', None),
+    (24, 'TV', 'bar', 4, 1, 10, 'ON BR/CL INCREMENT', None),
+    (25, 'TV', 'bar', 8, 1, 150, 'OFF BR/CL DELAY (ms)', None),
+    (26, 'TV', 'bar', 3, 1, 10, 'OFF BR/CL INCREMENT', None),
+
+    (20, 'MOTION', 'select', 0, 0, 0, 'ON EFFECT', ['default', 'from middle', 'line moving', 'random',
+        'cascade', 'the collision', 'right slide']),
+    (7,  'MOTION', 'bar', 40, 0, 120, 'BRIGHTNESS', None),
+    (8,  'MOTION', 'bar', 120, 0, 180, 'ON TIME (s)', None),
+    (10, 'MOTION', 'switch', 0, 0, 1, 'RANDOM COLOR', None),
+    (16, 'MOTION', 'switch', 0, 0, 1, 'DIVIDE BRIGHTNESS', None),
+    (18, 'MOTION', 'bar', 60, 1, 180, 'RENEW COLOR TIME (s)', None),
+    (19, 'MOTION', 'bar', 30, 1, 180, 'AUTO OFF TIME (min)', None),
+    (27, 'MOTION', 'bar', 2, 1, 150, 'BR/CL DELAY (ms)', None),
+    (28, 'MOTION', 'bar', 4, 1, 10, 'BR/CL INCREMENT', None),
+
+    (31, 'HB', 'switch', 0, 0, 1, 'DUAL COLOR', None),
+    (32, 'HB', 'select', 0, 0, 0, 'EFFECT', ['static', 'white move', 'heartbeat', 'random fade',
+        'traveling shadow', 'expanding raindrops', 'colors', 'shooting star random',
+        'random sparkling pop', 'gliding aurora', 'the glitch matrix', 'stochastic plasma',
+        'digital rain', 'dual pulse sinusoidal', 'rainbow wave pulse']),
+    (33, 'HB', 'bar', 8, 1, 150, 'EFFECT SPEED (ms)', None),
+    (34, 'HB', 'select', 0, 0, 0, 'TV ON HB EFFECT', ['fade on', 'center bloom', 'linear sweep', 'quad point']),
+
+    (9,  'AMBILIGHT', 'bar', 60, 0, 120, 'BRIGHTNESS', None),
+    (29, 'AMBILIGHT', 'bar', 60, 1, 150, 'BR/CL DELAY (ms)', None),
+    (30, 'AMBILIGHT', 'bar', 1, 1, 10, 'BR/CL INCREMENT', None),
+
+    (35, 'DIFFUSER', 'select', 0, 0, 0, 'EFFECT', ['Static', 'Fade', 'Pulse', 'Random', 'Rainbow',
+        'Sparkle', 'Fire', 'Bounce', 'Confetti']),
+    (43, 'DIFFUSER', 'bar', 40, 0, 120, 'BRIGHTNESS', None),
+    (44, 'DIFFUSER', 'bar', 30, 1, 150, 'EFFECT SPEED (ms)', None),
+    (36, 'DIFFUSER', 'select', 0, 0, 0, 'MODE TV', DIF_MODE_CHOICES),
+    (37, 'DIFFUSER', 'select', 0, 0, 0, 'MODE MOTION', DIF_MODE_CHOICES),
+    (38, 'DIFFUSER', 'select', 0, 0, 0, 'MODE UDPRAW', DIF_MODE_CHOICES),
+    (39, 'DIFFUSER', 'select', 0, 0, 0, 'MODE AMBIENT', DIF_MODE_CHOICES),
+    (40, 'DIFFUSER', 'bar', 30, 1, 180, 'IDLE WAIT (min)', None),
+    (41, 'DIFFUSER', 'bar', 10, 1, 180, 'IDLE ON (min)', None),
+    (42, 'DIFFUSER', 'select', 0, 0, 0, 'MODE IDLE', DIF_MODE_CHOICES),
+
+    (11, 'OTHER', 'bar', 3, 1, 150, 'BR/CL DELAY (ms)', None),
+    (12, 'OTHER', 'bar', 3, 1, 10, 'BR/CL INCREMENT', None),
+    (13, 'OTHER', 'bar', 150, 1, 150, 'BRIGHTNESS LUX INCREASE', None),
+    (14, 'OTHER', 'bar', 30, 0, 180, 'TO OFF TIME (s)', None),
+    (21, 'OTHER', 'bar', 30, 1, 180, 'AMBIENT MODE TIME (min)', None),
+    (22, 'OTHER', 'select', 5, 0, 0, 'LED FPS', ['15', '25', '30', '60', '90', '120', '150', '200', '240']),
+]
+
 
 def _build_at_enum(v):
     return '@' + hexb(int(v['ii']), 2)
-
-
-def _build_s_write(v):
-    return 'S' + hexb(int(v['ii']), 2) + hexb(v['vv'], 2)
 
 
 def _build_k_debug(v):
@@ -122,12 +187,11 @@ SMARTTV_COMMANDS = [
     },
     {
         'id': 'SWrite', 'transport': 'udp', 'section': 'UDP :8472 - settings (S)',
-        'name': 'Write one setting', 'label': 'S ii vv', 'desc': "Write one setting - Sii vv (hex idx + hex value 0-255). Any rejected pair fails the whole packet's ack - re-read with S after",
-        'params': [
-            {'key': 'ii', 'type': 'enum', 'label': 'Setting', 'options': TV_SETTINGS_OPTIONS, 'default': '0'},
-            {'key': 'vv', 'type': 'range', 'label': 'Value', 'min': 0, 'max': 255, 'default': 0},
-        ],
-        'build': _build_s_write,
+        'name': 'Write one setting', 'label': 'S ii vv',
+        'desc': "Pick a setting, then the value control below switches to match it - "
+                "a switch, a named dropdown, or a slider clamped to the real range - "
+                "same as the Android app shows for that same setting. Sii vv on the wire either way.",
+        'custom_panel': 'settings_write',
     },
 
     # ---------------- UDP :8472 - ambient mode ----------------

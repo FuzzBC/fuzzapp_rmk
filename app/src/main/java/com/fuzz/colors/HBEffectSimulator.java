@@ -38,6 +38,19 @@ package com.fuzz.colors;
  *  effect's real cadence, but the 18-segment view is only repainted
  *  every 5 ticks or 300ms elapsed (whichever first), so LED-by-LED
  *  effects don't repaint the view on every single simulated pixel step.
+ *
+ *  Motion + RANDOM COLOR: a special case, not one of the mirrored firmware
+ *  effects above. T_EFFECT_MOTION_ON's phase-0 prep (_FuZzAPP_SmartTV_R4.ino)
+ *  assigns an *independent* random colour to every one of the 178 physical
+ *  HB pixels - genuinely random per-pixel, not one colour repeated - and the
+ *  single-slot wire protocol only ever reports one of those 178 draws back.
+ *  There is no real colour data to mirror here, so onMotionChanged() doesn't
+ *  try: it just paints each of the 18 preview segments its own fresh local
+ *  random colour once, when motion is triggered (COM/BED) with the RANDOM
+ *  COLOR setting on, and leaves that pattern static (no ongoing re-randomize
+ *  loop) until motion ends - purely so the app visibly reflects "HB is
+ *  random right now" instead of showing a single static (and essentially
+ *  arbitrary) swatch.
  * ============================================================
  */
 
@@ -58,6 +71,9 @@ public class HBEffectSimulator {
 
     private static final int REDRAW_EVERY_N_TICKS = 5;
     private static final long REDRAW_EVERY_MS = 300;
+
+    /** effectKind sentinel for the motion+random local pattern (see class-level note). */
+    private static final int EFFECT_KIND_MOTION_RANDOM = -2;
 
     /**
      * Client-side pacing floor for effects whose per-pixel step (EFFECT SPEED,
@@ -97,6 +113,7 @@ public class HBEffectSimulator {
     private boolean tvOnSequenceActive = false;
     private boolean lastTvOn = false;
     private boolean ambilightOn = false;
+    private boolean motionActive = false;
     private int activeIdleEffect = -1;
 
     private long ticksSinceRedraw = 0;
@@ -161,12 +178,41 @@ public class HBEffectSimulator {
         restartIdleIfNeeded();
     }
 
+    /**
+     * Called from StatusManager.applyStatus() with whether motion is
+     * currently triggered (STS_Motion.COM or .BED). See the class-level note
+     * for why this shows a local random flicker instead of trying to mirror
+     * firmware's real (untransmittable) per-pixel colours.
+     */
+    public void onMotionChanged(boolean active) {
+        motionActive = active;
+        if (ambilightOn) return; // Ambilight/UDPRAW owns HB while capturing - firmware doesn't run motion effects then either
+        refreshMotionRandomState();
+    }
+
+    /**
+     * Called from DataReceive._recvSettings() when a settings packet confirms
+     * the MOTION RANDOM COLOR setting (id 10) was applied - so toggling it
+     * while motion is already active starts/stops the flicker immediately.
+     */
+    public void onMotionRandomSettingChanged() {
+        if (ambilightOn) return;
+        refreshMotionRandomState();
+    }
+
     // ==================================================================
     // Lifecycle
     // ==================================================================
 
     private void restartIdleIfNeeded() {
         if (ambilightOn) return;
+        // Motion owns HB right now - onTvOnChanged() re-fires on every status
+        // packet (not just a real TV edge, since StatusManager.applyStatus()
+        // calls it whenever ANY field in the packet changed), so without this
+        // guard an unrelated refresh while motion was still active would fall
+        // through to here and reset the motion-random paint back to flat.
+        // Only refreshMotionRandomState()'s own teardown may clear it.
+        if (running && effectKind == EFFECT_KIND_MOTION_RANDOM) return;
         int idleEff = SET.getHBEffectValue();
         if (idleEff <= 0) {
             if (running) stop(); // effect set to static - stop and fall back to the normal static/dual paint
@@ -174,6 +220,65 @@ public class HBEffectSimulator {
         }
         if (running && !tvOnSequenceActive && idleEff == activeIdleEffect) return;
         startIdleLoop();
+    }
+
+    /** Starts or stops the motion-random pattern to match current motion + setting state. */
+    private void refreshMotionRandomState() {
+        boolean wantRandom = motionActive && SET.getMotionRandomColorValue() != 0;
+        boolean alreadyRandom = running && effectKind == EFFECT_KIND_MOTION_RANDOM;
+        if (wantRandom) {
+            if (!alreadyRandom) startMotionRandom();
+            return;
+        }
+        if (alreadyRandom) {
+            // Motion ended / setting turned off - explicitly release ownership
+            // BEFORE calling restartIdleIfNeeded(), otherwise its own guard
+            // above (correctly) refuses to touch an active motion-random view.
+            stopInternal();
+            effectKind = -1;
+            activeIdleEffect = -1;
+            restartIdleIfNeeded();
+        }
+    }
+
+    /**
+     * Starts the motion-random pattern, taking over from whatever else is
+     * running (matches firmware: motion's phase-0 fades everything to black
+     * first, overriding any in-flight effect). Paints each segment its own
+     * random colour once and leaves it there - no ongoing animation - until
+     * motion ends or the setting changes (see refreshMotionRandomState()).
+     */
+    private void startMotionRandom() {
+        stopInternal();
+        resetFrameState();
+        effectKind = EFFECT_KIND_MOTION_RANDOM;
+        activeIdleEffect = -1; // invalidate so restartIdleIfNeeded() doesn't think the old idle effect is still current
+        tvOnSequenceActive = false;
+        running = true;
+        renderMotionRandomFrame();
+    }
+
+    /**
+     * Paints each of the 18 preview segments its own fresh random colour at
+     * full brightness, once - see the class-level note on why this doesn't
+     * try to mirror firmware's actual (untransmittable) per-pixel random
+     * draws, just visibly flags "HB is random right now". Keeps
+     * LED.LED_Color[LED_HB] updated too (same as maybeRedraw() does for the
+     * other effects) so the static/dual fallback has a recent colour instead
+     * of a stale one once this stops.
+     */
+    private void renderMotionRandomFrame() {
+        int[] indices = HeartbeatPatternView.PIXEL_INDICES;
+        long sumR = 0, sumG = 0, sumB = 0;
+        for (int seg = 0; seg < indices.length; seg++) {
+            int r = rnd.nextInt(256), g = rnd.nextInt(256), b = rnd.nextInt(256);
+            view.setSegmentColor(seg, Color.argb(255, r, g, b));
+            sumR += r; sumG += g; sumB += b;
+        }
+        int n = indices.length;
+        LED.LED_Color[LED.LED_HB][LED._R] = (int) (sumR / n);
+        LED.LED_Color[LED.LED_HB][LED._G] = (int) (sumG / n);
+        LED.LED_Color[LED.LED_HB][LED._B] = (int) (sumB / n);
     }
 
     private void startTvOnSequence() {

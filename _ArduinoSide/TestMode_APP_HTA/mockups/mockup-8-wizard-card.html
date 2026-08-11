@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>FuZz TestMode — Wizard Card mockup</title>
+<link rel="stylesheet" href="shared/base.css">
+<link rel="stylesheet" href="mockup-8-wizard-card.css">
+</head>
+<body>
+<div class="pickbar">
+  <span class="num">UX 3 / 5</span><strong>Wizard / Focused Card</strong>
+  <span class="note">— mobile-first: one big card at a time, bottom tab nav</span>
+  <span class="sp"></span><a href="index2.html">← all 5 (round 2)</a>
+</div>
+
+<div class="phone">
+  <div class="topbar">
+    <div class="devswitch">
+      <button id="dev-diffuser" class="on">Diffuser</button>
+      <button id="dev-smarttv">SmartTV</button>
+    </div>
+    <button id="jump-btn" class="icon-btn">⌕</button>
+  </div>
+
+  <div id="cat-tabs" class="cat-tabs"></div>
+
+  <div id="view-commands" class="view">
+    <div class="stepper">
+      <button id="prev-btn" class="step-arrow">‹</button>
+      <div id="stepper-label" class="stepper-label"></div>
+      <button id="next-btn" class="step-arrow">›</button>
+    </div>
+    <div id="card-host" class="card-host"></div>
+  </div>
+
+  <div id="view-home" class="view hidden">
+    <div id="home-stats" class="home-stats"></div>
+    <div class="home-section-title">Quick test</div>
+    <div id="home-quicktest" class="home-quicktest"></div>
+  </div>
+
+  <div id="view-log" class="view hidden">
+    <div class="log-toolbar"><button id="savelog-btn" class="pill-btn">SaveLog</button></div>
+    <div id="log-list" class="log-list"></div>
+  </div>
+
+  <div class="bottomnav">
+    <button id="nav-home" class="nav-btn on">⌂<span>Home</span></button>
+    <button id="nav-commands" class="nav-btn">▤<span>Commands</span></button>
+    <button id="nav-log" class="nav-btn">≡<span>Log</span></button>
+  </div>
+</div>
+
+<div id="jump-overlay" class="jump-overlay hidden">
+  <div class="jump-card">
+    <input id="jump-input" type="text" placeholder="Jump to a command…" autocomplete="off">
+    <div id="jump-list" class="jump-list"></div>
+    <button id="jump-close" class="pill-btn">Close</button>
+  </div>
+</div>
+
+<script src="shared/data.js"></script>
+<script src="shared/engine.js"></script>
+<script src="shared/controls.js"></script>
+<script src="shared/result-view.js"></script>
+<script src="mockup-8-wizard-card.js"></script>
+</body>
+</html>

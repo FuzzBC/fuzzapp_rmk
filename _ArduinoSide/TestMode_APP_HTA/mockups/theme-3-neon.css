@@ -1,0 +1,68 @@
+/* Theme 3 - Neon Terminal
+ * Retro hacker / CRT test-rig look: near-black, monospace everywhere,
+ * neon green primary with cyan/magenta/amber for the rest of the accent
+ * family, thin glowing borders instead of shadows, faint scanline
+ * overlay. Leans into "this is a diagnostic/test tool" rather than
+ * disguising it as a consumer app.
+ */
+:root {
+  --bg: #060a08;
+  --bg-sidebar: #050706;
+  --bg-panel: #070b09;
+  --bg-card: #081a12;
+  --bg-field: #0a1410;
+  --bg-btn: #0d1c15;
+  --bg-btn-hover: #12281d;
+  --border: #163326;
+  --border-strong: #245038;
+  --text: #cdf7dd;
+  --text-secondary: #8fd6ab;
+  --text-muted: #4f8a6b;
+  --white: #e9fff1;
+
+  --accent-blue: #4fe0e0;
+  --accent-green: #39ff88;
+  --accent-red: #ff5f6d;
+  --accent-amber: #ffcc4d;
+  --accent-amber2: #ff9d4d;
+  --accent-purple: #d17bff;
+  --accent-pink: #ff6ec7;
+  --accent-muted: #4f8a6b;
+  --accent-blue-bg: #0c2a2a;
+
+  --chip-on-bg: #0c2f18; --chip-on-fg: #39ff88;
+  --chip-off-bg: #34101a; --chip-off-fg: #ff5f6d;
+  --chip-warn-bg: #332708; --chip-warn-fg: #ffcc4d;
+
+  --btn-green-bg: #0c2f18; --btn-green-fg: #39ff88; --btn-green-active: #123f20;
+  --row-selected-bg: #0d2b22; --row-hover-bg: #0a1a13;
+
+  --radius: 3px; --radius-sm: 2px;
+  --font-ui: 'Consolas', 'Cascadia Code', monospace;
+  --font-mono: 'Consolas', 'Cascadia Code', monospace;
+}
+
+body {
+  background: var(--bg);
+  position: relative;
+  text-shadow: 0 0 1px rgba(57,255,136,.05);
+}
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,.12) 0px, rgba(0,0,0,.12) 1px, transparent 1px, transparent 3px);
+  mix-blend-mode: multiply;
+}
+.topbar, .tabsbar, .connbar, .sidebar, .rawbox, .logpanel, .quicktest { border-color: var(--border); }
+.topbar-title { text-shadow: 0 0 8px rgba(57,255,136,.55); letter-spacing: .02em; }
+.tab { text-transform: uppercase; letter-spacing: .06em; font-size: 11.5px; }
+.tab.active { text-shadow: 0 0 6px rgba(79,224,224,.6); box-shadow: inset 0 -2px 0 var(--accent-blue); }
+.sec-title { text-transform: uppercase; letter-spacing: .05em; }
+.cmd-row.selected { box-shadow: inset 2px 0 0 var(--accent-blue), 0 0 12px -6px var(--accent-blue) inset; }
+.btn, .toggle-btn, .chip, .badge { border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.btn-green { box-shadow: 0 0 10px -2px rgba(57,255,136,.5); }
+.result-card, .status-cell, .reply-box, .current-card, .history-row, .settings-row, .preview-payload {
+  border: 1px solid var(--border-strong);
+}
+.status-cell-value, .ack-head, .detail-name { text-shadow: 0 0 6px currentColor; }
+.swatch-item .box { border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: #1c4030; }

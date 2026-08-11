@@ -1727,6 +1727,22 @@ public class LEDManager {
         if (HBFx != null) HBFx.onHBSettingChanged(settingId);
     }
 
+    /**
+     * Forwards a Motion COM/BED on/off edge to HBFx so it can show a locally-
+     * generated random HB pattern while motion is active with RANDOM COLOR on
+     * (the wire protocol only ever reports one of the 178 independently-
+     * random pixel colours the firmware actually assigns - see HBFx's
+     * class-level note and onMotionChanged()).
+     */
+    public void notifyMotionChanged(boolean active) {
+        if (HBFx != null) HBFx.onMotionChanged(active);
+    }
+
+    /** Forwards a changed MOTION RANDOM COLOR setting (10) to HBFx. */
+    public void notifyMotionRandomSettingChanged() {
+        if (HBFx != null) HBFx.onMotionRandomSettingChanged();
+    }
+
     /** Called by HBFx once it stops animating, so the view falls back to the normal static/dual paint. */
     public void onHBEffectSimulatorStopped() {
         updateHeartbeatPattern();
