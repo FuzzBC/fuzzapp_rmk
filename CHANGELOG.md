@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.014
+- Fixed: cloud mode required connecting once on your home WiFi before it
+  would work, which wasn't always possible (e.g. away from home). The
+  SmartTV's cloud address is now fixed from the start on both ends, so
+  cloud mode works immediately - no local-WiFi bootstrap step needed
+  anymore, on this or any additional phone.
+
 ## 8.013
 - Fixed: the in-app "update available" check was still looking at the old
   project's releases, so it could never see a new version here. This build

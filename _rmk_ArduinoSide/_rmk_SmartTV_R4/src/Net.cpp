@@ -124,15 +124,15 @@ IPAddress getIP() {
 /** WiFi connectivity test - use in all modules. */
 bool IsConnected() { return WiFi.status() == WL_CONNECTED; }
 
-/** 12 hex chars derived from the WiFi adapter's MAC, cached after the first
-    call. Used to build this board's MQTT topic path (see Globals.h). */
+/** Fixed per-deployment id (MQTT_DEVICE_ID_VALUE, WiFiCredentials.h), cached
+    after the first call. Used to build this board's MQTT topic path (see
+    Globals.h) - see Net.h's DeviceId() comment for why this isn't derived
+    from the WiFi MAC. */
 const char* DeviceId() {
     static char id[MQTT_DEVICE_ID_MAX];
     static bool have = false;
     if (!have) {
-        uint8_t mac[6];
-        WiFi.macAddress(mac);
-        snprintf(id, sizeof(id), "%02X%02X%02X%02X%02X%02X", mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]);
+        strcpy_P(id, MQTT_DEVICE_ID);
         have = true;
     }
     return id;

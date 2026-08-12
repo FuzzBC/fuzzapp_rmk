@@ -22,14 +22,15 @@ package com.fuzz.colors;
  *      therefore works over the cloud too: ACK frames come back on the d2c
  *      topic and are fed into the same DATAr -> DataSend.ackResolve() path.
  *
- *      KNOWN GAP (flagged, not guessed - see 01_PROTOCOL.md SS5 and
- *      _rmk_docs/00_PLAN.md): <deviceId> is the SmartTV's own WiFi MAC (12
- *      hex chars), computed on the firmware side. This app has no discovery
- *      channel for learning that value without already being on the LAN -
- *      DEFAULT_DEVICE_ID below is a placeholder until the real MAC is
- *      configured (surfaced via the same credentials entry point as
- *      user/pass - see setDeviceId()/getDeviceId()). Local UDP is
- *      unaffected either way.
+ *      <deviceId> was originally the SmartTV's own WiFi MAC, auto-learned
+ *      by the app over local UDP (TELEM_DEVICE_ID, see DataReceive) since
+ *      there was no other discovery channel - but that requires one local
+ *      connection to bootstrap, which isn't always possible (e.g. away from
+ *      the home network). DEFAULT_DEVICE_ID below is now a FIXED value
+ *      (MQTT_DEVICE_ID_VALUE in the firmware's WiFiCredentials.h) both ends
+ *      know from the start, so there's no bootstrap step at all -
+ *      setDeviceId()/getDeviceId() and the TELEM_DEVICE_ID path are still
+ *      here as a harmless no-op safety net in case the two ever drift.
  *
  *  Transport choice (see DATAs._transmit / Main._TransportAvailable):
  *      WiFi up   -> local UDP  (fast, LAN)
@@ -82,8 +83,8 @@ public class MqttTransport {
     public static final String TOPIC_BASE = "fuzz/";
     public static final String TOPIC_C2D_SUFFIX = "/b/c2d";   // this app publishes here
     public static final String TOPIC_D2C_SUFFIX = "/b/d2c";   // this app subscribes here
-    /** See the KNOWN GAP note in the class doc above. */
-    public static final String DEFAULT_DEVICE_ID = "000000000000";
+    /** Must match MQTT_DEVICE_ID_VALUE in the firmware's WiFiCredentials.h exactly - see the class doc above. */
+    public static final String DEFAULT_DEVICE_ID = "smarttvr4a";
 
     /** Keep-alive / connection-timeout seconds. */
     private static final int KEEPALIVE_S = 30;
@@ -154,18 +155,19 @@ public class MqttTransport {
         return _prefs().getString(KEY_PASS, "");
     }
 
-    /** @return the cached device id (WiFi MAC, 12 hex chars), or the placeholder if never configured. */
+    /** @return the cached device id, or DEFAULT_DEVICE_ID (already correct - see class doc) if never overridden. */
     public String getDeviceId() {
         return _prefs().getString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
     }
 
     /**
-     * @param deviceId  The controller's WiFi MAC (12 hex chars, no separators).
-     * Learned locally from TELEM_DEVICE_ID (see DataReceive._recvDeviceId()) -
-     * the cloud topic is per-device and this is the only way the app finds
-     * out the real one instead of using DEFAULT_DEVICE_ID. If a session is
-     * already live under the old (wrong) topic, drop and reconnect so the
-     * fix takes effect immediately rather than waiting for the next app
+     * @param deviceId  Override for the controller's MQTT topic id.
+     * DEFAULT_DEVICE_ID is already correct out of the box (fixed, configured
+     * value - see class doc), so this only matters if TELEM_DEVICE_ID (see
+     * DataReceive._recvDeviceId()) ever reports something different, e.g.
+     * the firmware's WiFiCredentials.h was reconfigured. If a session is
+     * already live under the old topic, drop and reconnect so the change
+     * takes effect immediately rather than waiting for the next app
      * restart - same reasoning tryConnect() uses for a credential change.
      */
     public void setDeviceId(String deviceId) {

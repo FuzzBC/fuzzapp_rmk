@@ -751,12 +751,12 @@ public class DataReceive {
     }
 
     /**
-     * TELEM_DEVICE_ID - the controller's own MQTT device id (12 ASCII hex
-     * chars, its WiFi MAC), sent as part of the HELLO burst. Only ever
-     * arrives over a working transport (local UDP in practice, since a
-     * mismatched cloud topic can't deliver anything until this is learned),
-     * so this is how the app bootstraps the cloud-fallback topic instead of
-     * sitting on MqttTransport.DEFAULT_DEVICE_ID forever.
+     * TELEM_DEVICE_ID - the controller's own MQTT device id, sent as part of
+     * the HELLO burst. MqttTransport.DEFAULT_DEVICE_ID is already correct
+     * out of the box (fixed, configured value on both ends - see
+     * MqttTransport's class doc), so in normal operation this is a no-op;
+     * it only matters as a safety net if the firmware's configured id ever
+     * changes without the app being told some other way.
      */
     private void _recvDeviceId(byte[] payload) {
         if (payload.length < 12 || Main.MQTT == null) return;

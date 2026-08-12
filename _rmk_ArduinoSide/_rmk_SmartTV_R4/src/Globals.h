@@ -464,3 +464,4 @@ namespace MQTTCRED { extern MQTTCREDx State; }
 
 extern const char WIFI_SSID[];
 extern const char WIFI_PASS[];
+extern const char MQTT_DEVICE_ID[];

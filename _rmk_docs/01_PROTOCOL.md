@@ -149,12 +149,13 @@ which SmartTV mostly relays unmodified). `Dir` = `→` sender-initiated command,
 | 0x35 | `TELEM_TEST_MODE` | ⇐ | mode (1B) | — | on entry + self-cancel |
 | 0x36 | `TELEM_DEVICE_ID` | ⇐ | device_id (12B ASCII hex, `NET::DeviceId()`) | — | on HELLO burst only |
 
-`TELEM_DEVICE_ID` is how the app learns this board's MQTT device id (the
-`fuzz/<device_id>/...` topic path) instead of sitting on a placeholder -
-there's no other discovery channel, so this only ever gets through over a
-transport that's already working (local UDP in practice; a cloud session
-using the wrong topic can't receive it). See DataReceive._recvDeviceId()
-and MqttTransport.setDeviceId() on the app side.
+`TELEM_DEVICE_ID` was originally how the app learned this board's MQTT
+device id when it was derived from the WiFi MAC, but that required a local
+connection to bootstrap. The id is now a FIXED value both ends already know
+(`MQTT_DEVICE_ID_VALUE` in WiFiCredentials.h, matching
+`MqttTransport.DEFAULT_DEVICE_ID` on the app side) - this opcode is kept as
+a harmless safety net (DataReceive._recvDeviceId()) in case the two ever
+drift, not as the primary discovery path anymore.
 
 ### Ambient / Test Mode (0x40-0x4F, Link B)
 
