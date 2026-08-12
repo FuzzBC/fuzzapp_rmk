@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.019
+- Fixed: cloud login could still fail with "Connection lost" (the last fix
+  covered a different cause). This app shares its cloud identity with the
+  original app, so having both connected to the cloud at the same time
+  made them repeatedly kick each other off. This build now uses its own
+  separate identity, so that can't happen anymore.
+
 ## 8.018
 - Fixed: cloud login could fail with "Connection lost" even with the
   correct username/password - two connection attempts happening close

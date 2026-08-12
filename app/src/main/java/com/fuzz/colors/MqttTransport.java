@@ -494,6 +494,18 @@ public class MqttTransport {
      * Stable, unique client id so the broker never kicks us for a duplicate and
      * we don't pile up sessions across app restarts. Falls back to a random id
      * if ANDROID_ID is unavailable.
+     *
+     * "-rmk" suffix (not in the frozen original's "ControlRGB-Android-<id>")
+     * is deliberate, not cosmetic: this app shares the same package name and
+     * signing key as the frozen original, so ANDROID_ID - and therefore the
+     * WHOLE client id string - is identical on any device with both
+     * installed. MQTT brokers kick the OLDER session the instant a second
+     * client connects with the same id; with both apps' automaticReconnect
+     * enabled, that's a connect/kick ping-pong forever, not a one-time
+     * event - confirmed live as the "reasonCode=32109 Connection lost"
+     * that kept happening even after fixing an unrelated concurrency bug
+     * in tryConnect(). The frozen original is never getting this fix (it's
+     * untouched on purpose), so this side has to be the one that changes.
      */
     private String _clientId() {
         String id;
@@ -506,6 +518,6 @@ public class MqttTransport {
         if (id == null || id.isEmpty()) {
             id = Integer.toHexString((int) (Math.random() * 0x7FFFFFFF));
         }
-        return "ControlRGB-Android-" + id;
+        return "ControlRGB-Android-rmk-" + id;
     }
 }
