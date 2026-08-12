@@ -277,6 +277,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private boolean telnetEnabled = false;
     /** MQTT wire-level trace toggle (Debug dialog grid) -- shows every broker publish/receive in the console. */
     private boolean mqttLogEnabled = false;
+    /** Last-sent SmartTV remote-telnet-enable state (Debug dialog grid) - SET_TELNET_ENABLE, flashed OFF, no EEPROM. */
+    private boolean smarttvTelnetOn = false;
     /** SmartTV debug toggle - enables detailed logging for SmartTV diffuser relay operations. 
      *  Set to true to enable SmartTV-specific debug logs in UDPReceive.java for troubleshooting
      *  communication between Android app, SmartTV, and Diffuser. */
@@ -1102,6 +1104,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 .getBoolean("ENABLED", false);
         mqttLogEnabled = getSharedPreferences("FuZz_MqttLog", MODE_PRIVATE)
                 .getBoolean("ENABLED", false);
+        smarttvTelnetOn = getSharedPreferences("FuZz_SmartTvTelnet", MODE_PRIVATE)
+                .getBoolean("ENABLED", false);
 
         // Telnet floating window: launcher button + close + drag-to-move
         telnetFab = findViewById(R.id._telnet_fab);
@@ -1407,6 +1411,26 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     /** @return true while MQTT R/S wire tracing is enabled (Debug dialog toggle). */
     public boolean _MqttLogEnabled() {
         return mqttLogEnabled;
+    }
+
+    /**
+     * SmartTV remote telnet toggle (Debug dialog grid). Sends SET_TELNET_ENABLE
+     * to the SmartTV so its own telnet server can be reached on the LAN for
+     * diagnostics - unrelated to the Diffuser-only TELNET console above.
+     * Flashed OFF with no EEPROM persistence on the device side, so this is
+     * a fire-and-forget command; the locally-persisted flag only reflects the
+     * last state this app requested, not a confirmed device readback.
+     *
+     * @param on  New state.
+     */
+    private void _SmartTvTelnetSetEnabled(boolean on) {
+        smarttvTelnetOn = on;
+        getSharedPreferences("FuZz_SmartTvTelnet", MODE_PRIVATE)
+                .edit().putBoolean("ENABLED", on).apply();
+
+        DATAs.sendTelnetEnable(on);
+        _Toast("TV TELNET { " + (on ? "ON" : "OFF") + " }");
+        _Console(false, "►►", "TV TELNET -> {{#" + (on ? "G}ON" : "R}OFF") + "{##}}");
     }
 
     /** Toggle the floating telnet window (only meaningful while telnet is ON). */
@@ -1884,6 +1908,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 ((android.widget.BaseAdapter) gv.getAdapter()).notifyDataSetChanged();
                 return;
             }
+            if (position == SET.SET_Debug.length + 2) {       // virtual TV TELNET cell
+                _SmartTvTelnetSetEnabled(!smarttvTelnetOn);
+                ((android.widget.BaseAdapter) gv.getAdapter()).notifyDataSetChanged();
+                return;
+            }
             DATAs.sendDebug(position);
             _Toast(" DEBUG  {" + SET.SET_Debug[position] + "}");
             _Console(false, "►►",
@@ -1912,15 +1941,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Adapter for the 2-col debug grid (icon + name + subtitle per cell).
-     * Two extra virtual cells are appended after SET_Debug[]: TELNET
-     * ON/OFF and MQTT LOG ON/OFF, both app-side only (never sent to the
-     * Arduino as a K-command) - see _TelnetSetEnabled() / _MqttLogSetEnabled().
+     * Three extra virtual cells are appended after SET_Debug[]: TELNET
+     * ON/OFF and MQTT LOG ON/OFF (both app-side only, never sent to the
+     * Arduino as a K-command - see _TelnetSetEnabled() / _MqttLogSetEnabled()),
+     * and TV TELNET ON/OFF, which DOES send a wire command (SET_TELNET_ENABLE)
+     * to remotely toggle the SmartTV's own telnet server - see
+     * _SmartTvTelnetSetEnabled().
      */
     private class DebugGridAdapter extends BaseAdapter {
-        @Override public int getCount()             { return SET.SET_Debug.length + 2; }
+        @Override public int getCount()             { return SET.SET_Debug.length + 3; }
         @Override public Object getItem(int i)      {
             if (i == SET.SET_Debug.length)     return "TELNET";
             if (i == SET.SET_Debug.length + 1) return "MQTT LOG";
+            if (i == SET.SET_Debug.length + 2) return "TV TELNET";
             return SET.SET_Debug[i];
         }
         @Override public long getItemId(int i)      { return i; }
@@ -1957,6 +1990,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 name.setText("MQTT LOG");
                 sub.setText(mqttLogEnabled ? "trace ON" : "trace OFF");
                 sub.setTextColor(mqttLogEnabled
+                        ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
+                        : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
+            } else if (position == SET.SET_Debug.length + 2) { // virtual TV TELNET cell
+                icon.setText("📺");                  // 📺
+                name.setText("TV TELNET");
+                sub.setText(smarttvTelnetOn ? "server ON" : "server OFF");
+                sub.setTextColor(smarttvTelnetOn
                         ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
                         : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
             } else {
@@ -2430,13 +2470,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     /**
-     * Publish one already-enveloped command packet over the cloud link.
+     * Publish one already-enveloped command frame over the cloud link.
      * Called by DATAs._transmit() when the local UDP path is unavailable.
      *
-     * @param packet  Exact wire string.
+     * @param frame  Exact wire frame bytes.
      */
-    public void _MqttPublish(String packet) {
-        if (MQTT != null) MQTT.publish(packet);
+    public void _MqttPublish(byte[] frame) {
+        if (MQTT != null) MQTT.publish(frame);
     }
 
     /**

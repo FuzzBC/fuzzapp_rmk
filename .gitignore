@@ -151,14 +151,19 @@ android.lock
 # =========================
 /_ArduinoSide/_Shared/WiFiCredentials.h
 
+# Same secret, _rmk_ rebuild's copy - see _rmk_ArduinoSide/_rmk_Shared/WiFiCredentials.h.example
+/_rmk_ArduinoSide/_rmk_Shared/WiFiCredentials.h
+
 # =========================
 # FlashConsole device config (COM port, OTA password/host - local to this
 # machine, never commit) - see flashconsole_config.json.example
 # =========================
 /_ArduinoSide/.Compiler/flashconsole_config.json
+/_rmk_ArduinoSide/_rmk_Compiler/flashconsole_config.json
 
 # FlashConsole single-instance lock file (runtime, not project history)
 /_ArduinoSide/.Compiler/.res/.flashconsole.lock
+/_rmk_ArduinoSide/_rmk_Compiler/.res/.flashconsole.lock
 
 # =========================
 # Build-time copy of the root CHANGELOG.md (see copyChangelog in

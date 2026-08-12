@@ -415,24 +415,30 @@ public class StatusManager {
      *
      * Called by DATAr on the UI thread.
      *
-     * @param message  11-char core packet: s TV Motion UDPRAW AmbientMode Diffuser.
+     * PROTOCOL ADAPTATION: was applyStatus(String message), parsing 5 hex
+     * pairs out of an ASCII "sAAbbCCddHH" packet. TELEM_STATUS's binary
+     * fields (tv, motion, udpraw, ambient, diffuser_summary) are the exact
+     * same 5 values in the exact same order, so this now takes them
+     * directly - see DataReceive's TELEM_STATUS case.
+     *
+     * @param tv        STS_Tv ordinal.
+     * @param motion    STS_Motion ordinal.
+     * @param udpraw    STS_Ambilight ordinal.
+     * @param ambient   STS_AmbientMode ordinal.
+     * @param diffuser  STS_Diffuser ordinal (4 = PARFUM).
      */
-    public void applyStatus(String message) {
+    public void applyStatus(int tv, int motion, int udpraw, int ambient, int diffuser) {
         // Decode each field into locals first, so we can detect a true no-op
         // update before touching any state or UI (avoids spamming icon
         // recolors / lock toggles / animations on every identical packet —
         // e.g. the Arduino-side periodic diffuser status ping).
-        // Climate ('H') and enable ('E') arrive in their own packets now.
-        STS_Tv            newTv          = STS_Tv.values()[
-                Integer.parseInt(message.substring(1, 3), 16)];
-        STS_Motion        newMotion      = STS_Motion.values()[
-                Integer.parseInt(message.substring(3, 5), 16)];
-        STS_Ambilight     newAmbilight   = STS_Ambilight.values()[
-                Integer.parseInt(message.substring(5, 7), 16)];
-        STS_AmbientMode   newAmbientMode = STS_AmbientMode.values()[
-                Integer.parseInt(message.substring(7, 9), 16)];
-        STS_Diffuser      newDiffuser    = STS_Diffuser.values()[
-                Integer.parseInt(message.substring(9, 11), 16)];
+        // Climate (TELEM_CLIMATE) and enable (TELEM_ENABLE) arrive in their
+        // own frames now.
+        STS_Tv            newTv          = STS_Tv.values()[tv];
+        STS_Motion        newMotion      = STS_Motion.values()[motion];
+        STS_Ambilight     newAmbilight   = STS_Ambilight.values()[udpraw];
+        STS_AmbientMode   newAmbientMode = STS_AmbientMode.values()[ambient];
+        STS_Diffuser      newDiffuser    = STS_Diffuser.values()[diffuser];
 
         // First packet ever: reveal the real AmbientMode state even if it
         // happens to equal the OFF default (which would otherwise be

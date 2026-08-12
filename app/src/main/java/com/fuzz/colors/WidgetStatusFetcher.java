@@ -11,13 +11,14 @@ package com.fuzz.colors;
  *  WidgetUpdateWorker runs in the background with no Activity alive.
  *  This duplicates just the handful of lines actually needed:
  *
- *      - the bare "Z" welcome (DataSend.sendWelcomeUdpDirect())
- *      - the 'H'/'u'/'s' packet parsing (byte-identical to
- *        DataReceive._recvClimate()/_recvDiffuserUsage()/_recvStatus(),
+ *      - the HELLO handshake (DataSend.sendWelcomeUdpDirect())
+ *      - TELEM_CLIMATE/TELEM_DIFFUSER_USAGE/TELEM_STATUS frame decoding via
+ *        com.fuzz.colors.protocol.Frame/ProtocolOpcodes (byte-identical to
+ *        DataReceive._recvClimate()/_recvDiffuserUsage()/_recvStatus()),
  *        the same refill-percent formula as
  *        StatusManager.applyDiffuserUsage(), and the same STS_Diffuser
- *        ordinal layout as StatusManager.applyStatus() for NO_WATER)
- *      - MqttTransport's wire framing (TAG_APP/TAG_DEV byte, same
+ *        ordinal layout as StatusManager.applyStatus() for NO_WATER
+ *      - MqttTransport's wire framing (two one-way topics, same
  *        host/topic/credential-prefs constants - reused directly, not
  *        copied, so there is exactly one source of truth for those)
  *
@@ -29,6 +30,9 @@ package com.fuzz.colors;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+
+import com.fuzz.colors.protocol.Frame;
+import com.fuzz.colors.protocol.ProtocolOpcodes;
 
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
@@ -55,7 +59,7 @@ class WidgetStatusFetcher {
     /** One fetch attempt's outcome - fields are null wherever that particular reading wasn't in the reply. */
     static final class Result {
         final Integer tempC, humPct, diffuserPct;
-        /** true/false only when an 's' status packet was actually seen this fetch; null = not received, caller should leave the cached value alone. */
+        /** true/false only when a TELEM_STATUS frame was actually seen this fetch; null = not received, caller should leave the cached value alone. */
         final Boolean noWater;
         /** "WIFI" (answered over local UDP) or "CLOUD" (answered over MQTT). Never null on a non-null Result. */
         final String transport;
@@ -112,7 +116,7 @@ class WidgetStatusFetcher {
             socket.setReuseAddress(true);
             socket.bind(new java.net.InetSocketAddress(DataSend.ARDUINO_PORT));
             socket.setSoTimeout(UDP_TIMEOUT_MS);
-            byte[] hello = "Z".getBytes();
+            byte[] hello = Frame.build(ProtocolOpcodes.Opcode.HELLO, 0, 0, new byte[]{ 1 });
             socket.send(new DatagramPacket(hello, hello.length,
                     InetAddress.getByName(DataSend.ARDUINO_IP), DataSend.ARDUINO_PORT));
 
@@ -127,13 +131,19 @@ class WidgetStatusFetcher {
                 } catch (SocketTimeoutException e) {
                     break;
                 }
-                String msg = new String(packet.getData(), 0, packet.getLength());
-                int[] climate = _parseClimate(msg);
-                if (climate != null) { temp = climate[0]; hum = climate[1]; }
-                Integer pct = _parseDiffuserPercent(msg);
-                if (pct != null) diffuserPct = pct;
-                Boolean nw = _parseDiffuserNoWater(msg);
-                if (nw != null) noWater = nw;
+                byte[] data = java.util.Arrays.copyOf(packet.getData(), packet.getLength());
+                Frame.Parsed f = Frame.parse(data, data.length);
+                if (!f.ok) continue;
+                if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_CLIMATE & 0xFF)) {
+                    ProtocolOpcodes.TelemClimatePayload c = ProtocolOpcodes.TelemClimatePayload.unpack(f.payload, 0);
+                    temp = c.temp_c; hum = c.humidity_pct;
+                } else if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_DIFFUSER_USAGE & 0xFF)) {
+                    Integer pct = _diffuserPercent(f.payload);
+                    if (pct != null) diffuserPct = pct;
+                } else if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_STATUS & 0xFF)) {
+                    ProtocolOpcodes.TelemStatusPayload s = ProtocolOpcodes.TelemStatusPayload.unpack(f.payload, 0);
+                    noWater = s.diffuser_summary == DIFFUSER_ORDINAL_NO_WATER;
+                }
             }
             if (temp == null && diffuserPct == null && noWater == null) return null;   // nothing arrived - not reachable on the LAN
             return new Result(temp, hum, diffuserPct, noWater, "WIFI");
@@ -150,6 +160,9 @@ class WidgetStatusFetcher {
         String user = prefs.getString(MqttTransport.KEY_USER, null);
         String pass = prefs.getString(MqttTransport.KEY_PASS, null);
         if (user == null || user.isEmpty() || pass == null || pass.isEmpty()) return null;   // no cloud credentials provisioned - see MqttTransport class doc
+        String deviceId = prefs.getString(MqttTransport.KEY_DEVICE_ID, MqttTransport.DEFAULT_DEVICE_ID);
+        String topicC2D = MqttTransport.TOPIC_BASE + deviceId + MqttTransport.TOPIC_C2D_SUFFIX;
+        String topicD2C = MqttTransport.TOPIC_BASE + deviceId + MqttTransport.TOPIC_D2C_SUFFIX;
 
         MqttClient client = null;
         try {
@@ -162,28 +175,33 @@ class WidgetStatusFetcher {
             final Boolean[] noWaterHolder = {null};
             // Counts down only once BOTH temp and diffuserPct are in hand -
             // matches _fetchLocalUdp()'s own loop condition. The board
-            // answers "Z" with separate H/u/s packets that don't all land
-            // at once; counting down on the FIRST packet of ANY kind (the
-            // old behaviour) meant a status ('s') packet arriving first
-            // returned immediately, permanently missing climate/diffuser
-            // data that was still in flight - this is what caused the
-            // widget to show a real "Updated" timestamp with blank
-            // temp/hum/diffuser values every time.
+            // answers HELLO with separate TELEM_CLIMATE/TELEM_DIFFUSER_USAGE/
+            // TELEM_STATUS frames that don't all land at once; counting down
+            // on the FIRST frame of ANY kind (the old behaviour) meant a
+            // status frame arriving first returned immediately, permanently
+            // missing climate/diffuser data that was still in flight - this
+            // is what caused the widget to show a real "Updated" timestamp
+            // with blank temp/hum/diffuser values every time.
             final CountDownLatch gotEnough = new CountDownLatch(1);
 
             client.setCallback(new MqttCallback() {
                 @Override public void connectionLost(Throwable cause) { }
 
                 @Override public void messageArrived(String topic, MqttMessage message) {
-                    byte[] payload = message.getPayload();
-                    if (payload.length < 2 || payload[0] != MqttTransport.TAG_DEV) return;   // drop our own echo / malformed
-                    String msg = new String(payload, 1, payload.length - 1);
-                    int[] climate = _parseClimate(msg);
-                    if (climate != null) { tempHolder[0] = climate[0]; humHolder[0] = climate[1]; }
-                    Integer pct = _parseDiffuserPercent(msg);
-                    if (pct != null) pctHolder[0] = pct;
-                    Boolean nw = _parseDiffuserNoWater(msg);
-                    if (nw != null) noWaterHolder[0] = nw;
+                    byte[] raw = message.getPayload();
+                    if (raw.length == 0) return;
+                    Frame.Parsed f = Frame.parse(raw, raw.length);
+                    if (!f.ok) return;
+                    if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_CLIMATE & 0xFF)) {
+                        ProtocolOpcodes.TelemClimatePayload c = ProtocolOpcodes.TelemClimatePayload.unpack(f.payload, 0);
+                        tempHolder[0] = c.temp_c; humHolder[0] = c.humidity_pct;
+                    } else if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_DIFFUSER_USAGE & 0xFF)) {
+                        Integer pct = _diffuserPercent(f.payload);
+                        if (pct != null) pctHolder[0] = pct;
+                    } else if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_STATUS & 0xFF)) {
+                        ProtocolOpcodes.TelemStatusPayload s = ProtocolOpcodes.TelemStatusPayload.unpack(f.payload, 0);
+                        noWaterHolder[0] = s.diffuser_summary == DIFFUSER_ORDINAL_NO_WATER;
+                    }
                     if (tempHolder[0] != null && pctHolder[0] != null) gotEnough.countDown();
                 }
 
@@ -196,15 +214,15 @@ class WidgetStatusFetcher {
             opts.setCleanSession(true);
             opts.setConnectionTimeout(MQTT_TIMEOUT_MS / 1000);
             client.connect(opts);
-            client.subscribe(MqttTransport.MQTT_TOPIC);
+            client.subscribe(topicD2C);
 
-            byte[] payload = new byte[]{MqttTransport.TAG_APP, 'Z'};
-            client.publish(MqttTransport.MQTT_TOPIC, payload, 0, false);
+            byte[] hello = Frame.build(ProtocolOpcodes.Opcode.HELLO, 0, 0, new byte[]{ 1 });
+            client.publish(topicC2D, hello, 0, false);
 
             // Waits out the full timeout unless both arrive sooner - same
             // trade-off _fetchLocalUdp() makes, so a diffuser that's still
-            // "learning" (see _parseDiffuserPercent's guard) doesn't cut
-            // this short either; whatever DID arrive by then is still used.
+            // "learning" (see _diffuserPercent's guard) doesn't cut this
+            // short either; whatever DID arrive by then is still used.
             gotEnough.await(MQTT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             if (tempHolder[0] == null && pctHolder[0] == null && noWaterHolder[0] == null) return null;
@@ -219,52 +237,18 @@ class WidgetStatusFetcher {
     }
 
     // --------------------------------------------------------
-    // Shared parsing - same wire format DataReceive/StatusManager use
+    // Shared parsing
     // --------------------------------------------------------
 
-    /** 'HTTHH' -> {temp, hum} (both 2-hex), or null if not a climate packet / malformed. Mirrors DataReceive._recvClimate(). */
-    private static int[] _parseClimate(String msg) {
-        if (msg.length() < 5 || msg.charAt(0) != 'H') return null;
-        try {
-            int temp = Integer.parseInt(msg.substring(1, 3), 16);
-            int hum  = Integer.parseInt(msg.substring(3, 5), 16);
-            return new int[]{temp, hum};
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
     /**
-     * 'uAAAAVVVVRRLLLL' -> refill percent, or null if not a diffuser-usage
-     * packet, malformed, or not enough history yet to compute a percent
-     * (same "still learning" guard as StatusManager.applyDiffuserUsage()).
+     * TELEM_DIFFUSER_USAGE payload -> refill percent, or null if not enough
+     * history yet to compute one (same "still learning" guard as
+     * StatusManager.applyDiffuserUsage()).
      */
-    private static Integer _parseDiffuserPercent(String msg) {
-        if (msg.length() < 15 || msg.charAt(0) != 'u') return null;
-        try {
-            int accumMin    = Integer.parseInt(msg.substring(1, 5), 16);
-            int avgMin      = Integer.parseInt(msg.substring(5, 9), 16);
-            int refillCount = Integer.parseInt(msg.substring(9, 11), 16);
-            if (refillCount == 0 || avgMin <= 0) return null;
-            return Math.max(0, Math.min(100, 100 - (accumMin * 100 / avgMin)));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /**
-     * 'sTTMMUUAADD' -> true if the diffuser sub-field (last 2-hex, DD)
-     * decodes to STS_Diffuser.NO_WATER, false for any other valid
-     * diffuser state, or null if not a status packet / malformed.
-     * Mirrors DataReceive._recvStatus() -> StatusManager.applyStatus().
-     */
-    private static Boolean _parseDiffuserNoWater(String msg) {
-        if (msg.length() != 11 || msg.charAt(0) != 's') return null;
-        try {
-            int diffuserOrdinal = Integer.parseInt(msg.substring(9, 11), 16);
-            return diffuserOrdinal == DIFFUSER_ORDINAL_NO_WATER;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    private static Integer _diffuserPercent(byte[] payload) {
+        if (payload.length < 7) return null;
+        ProtocolOpcodes.TelemDiffuserUsagePayload u = ProtocolOpcodes.TelemDiffuserUsagePayload.unpack(payload, 0);
+        if (u.refill_count == 0 || u.avg_min <= 0) return null;
+        return Math.max(0, Math.min(100, 100 - (u.accum_min * 100 / u.avg_min)));
     }
 }

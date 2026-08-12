@@ -6,17 +6,29 @@ package com.fuzz.colors;
  * ============================================================
  *  Responsibility:
  *      Shared inbound layer for the Arduino controller - NOT UDP-only.
- *      Parses every packet and dispatches to the correct handler (LED
- *      update, STS update, etc.) regardless of which transport delivered
- *      it: the local UDP receive loop below feeds _parsePacket() directly,
- *      while MqttTransport's cloud callback feeds the same parser via
- *      onCloudMessage()/onCloudMessageBin(). SmartTV debug enabled. Also:
+ *      Parses every binary v1 frame and dispatches to the correct handler
+ *      (LED update, STS update, etc.) regardless of which transport
+ *      delivered it: the local UDP receive loop below feeds _parseFrame()
+ *      directly, while MqttTransport's cloud callback feeds the same
+ *      parser via onCloudMessage(). Also:
  *      • Opens and owns the shared DatagramSocket (local UDP only).
  *      • Runs the background thread that listens for incoming local UDP
  *        packets from the Arduino.
  *      • Monitors connection health per transport - isUdpAvailable() for
  *        local UDP, isMqttArduinoAlive() for the cloud link - and drives
  *        the status label (see _setStatus()/Status).
+ *
+ *  PROTOCOL ADAPTATION (from the original ASCII scheme):
+ *      Every packet is now a binary v1 frame (MAGIC/FLAGS/SEQ/OPCODE/
+ *      payload/CRC8, see com.fuzz.colors.protocol.Frame /
+ *      01_PROTOCOL.md), not an ASCII string starting with a marker char.
+ *      There is no more ASCII-vs-binary branch in the receive loop (the
+ *      old 'LK' compressed colour packet needed one; TELEM_COLOR_SYNC uses
+ *      the exact same FILL/SETN record encoding that packet did, so
+ *      _recvColorSync() below is nearly a line-for-line port of the old
+ *      _recvLedColorBin()). ACK vs telemetry is classified by the frame's
+ *      own FLAGS bits (IS_ACK first, else dispatch by OPCODE), not by a
+ *      leading '#'/'*' marker character.
  *
  *  How to use:
  *      1.  Instantiate once in Main (MainActivity):
@@ -33,24 +45,6 @@ package com.fuzz.colors;
  *              DATAr.reconnect()    – re-open socket after failure
  *              DATAr.isUdpAvailable()      – check local UDP liveness
  *              DATAr.isMqttArduinoAlive()  – check cloud (MQTT) liveness
- *
- *  Received packet protocol (from Arduino):
- *      LBvv            – LED brightness
- *      LCiiRRggBB…     – LED colour(s)  (one or many)
- *      LDrrggbbRRggBB  – Dual colour
- *      LMvv            – Max brightness
- *      LOi…            – LED selected bitmask
- *      SiiVV…          – Settings value(s)
- *      sAAbbCCddEEffGG – Status packet
- *      MllllAAAA       – Lux + average
- *      pTTTT           – Parfum remaining minutes (0000 = inactive)
- *      uAAAAVVVVRRLLLL – Diffuser usage/refill stats (accum min, avg cycle min,
- *                        history count 0-10, lifetime refill count)
- *      DhRRVVVV...     – Full refill-cycle history (2-hex count + 10x4-hex
- *                        minutes, oldest first) - on demand only, see
- *                        DataSend.sendDiffuserHistory()
- *      ~               – Stop loading bar
- *      *MSG            – Print message to console
  *
  *  References used here (short aliases):
  *      Main  = MainActivity
@@ -72,6 +66,9 @@ import java.net.DatagramSocket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 
+import com.fuzz.colors.protocol.Frame;
+import com.fuzz.colors.protocol.ProtocolOpcodes;
+
 public class DataReceive {
 
     // --------------------------------------------------------
@@ -89,10 +86,8 @@ public class DataReceive {
 
     /**
      * Silence (ms) after which the link is declared lost. Must exceed the
-     * firmware keep-alive interval (APP_KEEPALIVE_MS = 10 s) with margin, or the
-     * app would flap to "CONNECTION LOST" during every idle gap between pings.
-     * Matches the firmware's own APP_ALIVE_TIMEOUT_MS (25 s) — tolerates ~2
-     * missed keep-alives before giving up.
+     * firmware keep-alive interval with margin, or the app would flap to
+     * "CONNECTION LOST" during every idle gap between pings.
      */
     public static final int CONN_LOST_TIMEOUT = 25000;
 
@@ -216,7 +211,7 @@ public class DataReceive {
     private final StatusManager STS;
 
     /**
-     * DATAs – the sender, used to resolve command ACKs ("#SSR").
+     * DATAs – the sender, used to resolve command ACKs.
      * Wired in from Main via setSender() after both are constructed.
      * Alias: DATAs (DataSend)
      */
@@ -242,7 +237,7 @@ public class DataReceive {
     }
 
     /**
-     * Wire the sender so incoming "#SSR" ACKs can resolve pending commands.
+     * Wire the sender so incoming ACK frames can resolve pending commands.
      * Call once from Main after both DATAr and DATAs are constructed.
      *
      * @param udps  The DataSend instance (alias: DATAs).
@@ -325,9 +320,6 @@ public class DataReceive {
     }
 
     /**
-     * @return true if socket is open and WiFi is connected.
-     */
-    /**
      * Local UDP link usable for the ACTIVE transport decision.
      *
      * True only when WiFi + socket are up AND the board is actually answering
@@ -375,7 +367,7 @@ public class DataReceive {
      * session only means the phone reached HiveMQ - it says nothing about
      * whether the board is on the other end, so this (not
      * MqttTransport.isConnected()) is what should gate the "CLOUD MODE"
-     * label. See onCloudMessage()/onCloudMessageBin(), the only writers.
+     * label. See onCloudMessage(), the only writer.
      *
      * @return true if the board has replied over cloud recently.
      *
@@ -444,26 +436,14 @@ public class DataReceive {
                     // so this is the authoritative local-liveness signal that
                     // isUdpAvailable() gates on (cloud traffic must not touch it).
                     lastUdpRxTime = System.currentTimeMillis();
-                    // The compressed colour packet ('L''K') is RAW BINARY - it can
-                    // hold 0x00 and bytes >= 0x80, which new String(...) would mangle
-                    // under the platform charset. Snapshot the reused socket buffer
-                    // and route it byte-for-byte; everything else stays the ASCII
-                    // String path exactly as before.
+                    // Every packet is a binary v1 frame now - no more ASCII vs
+                    // raw-binary branch, just copy the reused socket buffer and
+                    // hand it to the frame parser.
                     final byte[] data = java.util.Arrays.copyOf(packet.getData(), len);
-                    if (len >= 2 && data[0] == 'L' && data[1] == 'K') {
-                        Log.v("DATA_R", "UDP : Binary color packet detected");
-                        Main.runOnUiThread(() -> {
-                            lastReceiveTime = System.currentTimeMillis();
-                            _recvLedColorBin(data, len);
-                        });
-                    } else {
-                        final String msg = new String(data, 0, len);
-                        Log.v("DATA_R", "UDP : ASCII packet: " + msg);
-                        Main.runOnUiThread(() -> {
-                            lastReceiveTime = System.currentTimeMillis();
-                            _parsePacket(msg, msg.length());
-                        });
-                    }
+                    Main.runOnUiThread(() -> {
+                        lastReceiveTime = System.currentTimeMillis();
+                        _parseFrame(data, len);
+                    });
 
                 } catch (SocketTimeoutException e) {
                     // Normal – just means no packet arrived within 100 ms
@@ -509,29 +489,23 @@ public class DataReceive {
     }
 
     // ========================================================
-    //  Packet parser  (runs on UI thread via runOnUiThread)
+    //  Frame parser  (runs on UI thread via runOnUiThread)
     // ========================================================
 
     /**
-     * Route an incoming message to the correct handler.
-     *
-     * @param message  Raw ASCII string received from Arduino.
-     * @param size     Byte-length of the message.
-     */
-    /**
-     * Feed a status/reply payload that arrived over the MQTT cloud link
-     * (MqttTransport.MQTT_TOPIC, sender tag already stripped) into the SAME
+     * Feed a frame that arrived over the MQTT cloud link into the SAME
      * parser used for UDP. The wire format is byte-identical, so every
      * _recv* handler and the ACK path work unchanged. Marshalled onto the
      * UI thread to match the UDP receive loop.
      *
-     * @param message  Raw payload string from the broker.
+     * @param data  Raw frame bytes from the broker.
+     * @param len   Byte length.
      *
-     * Called by: MqttTransport.messageArrived() (cloud RX, ASCII payloads).
+     * Called by: MqttTransport.messageArrived() (cloud RX).
      */
-    public void onCloudMessage(final String message) {
-        if (message == null || message.isEmpty()) return;
-        Log.v("DATA_R", "MQTT : message received: " + message);
+    public void onCloudMessage(final byte[] data, final int len) {
+        if (data == null || len == 0) return;
+        Log.v("DATA_R", "MQTT : frame received, length: " + len);
         // Proof the Arduino itself is on the other end of the broker -
         // stamp this even if local ends up muting the payload below, so
         // isMqttArduinoAlive() stays accurate regardless of which
@@ -545,170 +519,82 @@ public class DataReceive {
         if (Main._UDP_Available()) return;
         Main.runOnUiThread(() -> {
             lastReceiveTime = System.currentTimeMillis();
-            _parsePacket(message, message.length());
+            _parseFrame(data, len);
         });
     }
 
     /**
-     * Cloud sibling of the local byte path: a raw 'LK' colour packet that arrived
-     * over MQTT (sender tag already stripped by MqttTransport). Same UDP-primary
-     * mute rule as onCloudMessage(), then straight into the binary parser.
+     * Route an incoming binary v1 frame to the correct handler.
      *
-     * @param data  Payload bytes starting at 'L' 'K'.
-     * @param len   Payload length.
-     *
-     * Called by: MqttTransport.messageArrived() (cloud RX, binary 'LK'
-     * colour packets).
-     */
-    public void onCloudMessageBin(final byte[] data, final int len) {
-        if (data == null || len < 2) return;
-        Log.v("DATA_R", "MQTT : binary message received, length: " + len);
-        lastMqttRxTime = System.currentTimeMillis();   // see onCloudMessage() above
-        if (Main._UDP_Available()) return;
-        Main.runOnUiThread(() -> {
-            lastReceiveTime = System.currentTimeMillis();
-            _recvLedColorBin(data, len);
-        });
-    }
-
-    /**
      * Called by: internal only - the local receive loop in startReceiving()
-     * (ASCII branch) and onCloudMessage(). Dispatches to every _recv*()
-     * handler below via the switch on message.charAt(0), regardless of
-     * which transport the packet arrived on.
+     * and onCloudMessage().
      */
-    private void _parsePacket(String message, int size) {
-        boolean recognized = false;
-        Log.v("DATA_R", "Parsing packet: " + message + " size: " + size);
+    private void _parseFrame(byte[] data, int len) {
+        Frame.Parsed f = Frame.parse(data, len);
+        if (!f.ok) {
+            Log.i("DATA_R", "MALFORMED FRAME [" + f.reason + "] len [" + len + "]");
+            Main._Console(true, "◄◄", "MALFORMED FRAME [{#R}" + f.reason + "{##}]");
+            return;
+        }
 
-        switch (message.charAt(0)) {
+        boolean recognized = true;
 
-            case '#': // #SSR – per-command ACK
-                Log.v("DATA_R", "ACK packet detected");
-                _recvAck(message, size);
-                recognized = true;
-                break;
+        if ((f.flags & ProtocolOpcodes.Flag.IS_ACK) != 0) {
+            _recvAck(f.seq, f.payload);
+            _confirmLive();
+            return;
+        }
 
-            case '*': // *MSG – print to console
-                Log.v("DATA_R", "Message packet detected");
-                _recvMsg(message.substring(1), size);
-                recognized = true;
-                break;
-
-            case 'L': // LED sub-commands
-                if (message.length() < 2) break;
-                Log.v("DATA_R", "LED command: " + message.charAt(1));
-                switch (message.charAt(1)) {
-                    case 'B': // LBvv – brightness
-                        _recvLedBrightness(message, size);
-                        recognized = true;
-                        break;
-                    case 'C': // LCii… – colour
-                        _recvLedColor(message, size);
-                        recognized = true;
-                        break;
-                    case 'D': // LD… – dual colour
-                        _recvDualColor(message, size);
-                        recognized = true;
-                        break;
-                    case 'M': // LMvv – max brightness
-                        _recvMaxBrightness(message, size);
-                        recognized = true;
-                        break;
-                }
-                break;
-
-            case 'D': // Diffuser sub-commands relayed from SmartTV (mirrors the diffuser's own D-prefix wire format)
-                if (message.length() < 2) break;
-                Log.v("DATA_R", "Diffuser command: " + message.charAt(1));
-                switch (message.charAt(1)) {
-                    case 'h': // Dh + 2-hex count + 10x4-hex minutes – full refill history (on demand only)
-                        _recvDiffuserHistory(message, size);
-                        recognized = true;
-                        break;
-                }
-                break;
-
-            case 'S': // SiiVV… – settings
-                Log.v("DATA_R", "Settings packet detected");
-                _recvSettings(message, size);
-                recognized = true;
-                break;
-
-            case 's': // sTTMMUUAADD – core status (TV/Motion/UDPRAW/Ambient/Diffuser)
-                Log.v("DATA_R", "Status packet detected");
-                _recvStatus(message, size);
-                recognized = true;
-                break;
-
-            case 'H': // HTTHH – climate (temperature, humidity)
-                Log.v("DATA_R", "Climate packet detected");
-                _recvClimate(message, size);
-                recognized = true;
-                break;
-
-            case 'E': // Ee – LED enable / disable
-                Log.v("DATA_R", "Enable packet detected");
-                _recvEnable(message, size);
-                recognized = true;
-                break;
-
-            case 'M': // Mllll – lux level (classified 1..5)
-                Log.v("DATA_R", "Lux packet detected");
-                _recvLux(message, size);
-                recognized = true;
-                break;
-
-            case 'p': // pTTTT – parfum remaining minutes (0000 = inactive)
-                Log.v("DATA_R", "Parfum packet detected");
-                _recvParfum(message, size);
-                recognized = true;
-                break;
-
-            case 'u': // uAAAAVVVVRRLLLL – diffuser usage/refill stats
-                Log.v("DATA_R", "Diffuser usage packet detected");
-                _recvDiffuserUsage(message, size);
-                recognized = true;
-                break;
-
-            case '@': // @mm – active test mode
-                Log.v("DATA_R", "Test mode packet detected");
-                _recvTestMode(message, size);
-                recognized = true;
-                break;
-
-            case 'w': // wRRWW – |rssi| dBm + wifi state
-                Log.v("DATA_R", "Link packet detected");
-                _recvLink(message, size);
-                recognized = true;
-                break;
-
-            case 'f': // ffff – fault bitmask (transition only)
-                Log.v("DATA_R", "Fault packet detected");
-                _recvFaults(message, size);
-                recognized = true;
-                break;
-
-            case 'e': // ee – EEPROM write landed
-                Log.v("DATA_R", "EEPROM saved packet detected");
-                _recvSaved(message, size);
-                recognized = true;
-                break;
-
-            case 'k': // k – keep-alive ping from the board; answer + mark live
-                Log.v("DATA_R", "Keep-alive packet detected");
-                _recvKeepAlive();
-                recognized = true;
-                break;
+        byte opcode = (byte) f.opcode;
+        if (opcode == ProtocolOpcodes.Opcode.LOG) {
+            _recvLog(f.seq, f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_COLOR_SYNC) {
+            _recvColorSync(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_DUAL_COLOR) {
+            _recvDualColor(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_MAX_BRIGHTNESS) {
+            _recvMaxBrightness(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_ENABLE) {
+            _recvEnable(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_SETTINGS_FULL) {
+            _recvSettingsFull(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_SETTINGS_ONE) {
+            _recvSettingsOne(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_SAVE_RESULT) {
+            _recvSaved(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_STATUS) {
+            _recvStatus(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_CLIMATE) {
+            _recvClimate(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_LUX) {
+            _recvLux(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_LINK) {
+            _recvLink(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_FAULTS) {
+            _recvFaults(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_TEST_MODE) {
+            _recvTestMode(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_PARFUM_REMAINING) {
+            _recvParfum(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_DIFFUSER_USAGE) {
+            _recvDiffuserUsage(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_DIFFUSER_STATUS) {
+            _recvDiffuserStatus(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_DIFFUSER_HISTORY) {
+            _recvDiffuserHistory(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.KEEPALIVE) {
+            _recvKeepAlive();
+        } else {
+            recognized = false;
         }
 
         if (recognized) {
             _confirmLive();
         } else {
-            Log.i("DATA_R", "MSG [" + message + "] size [" + size + "]");
+            String opName = ProtocolOpcodes.opcodeName(opcode);
+            Log.i("DATA_R", "OPCODE NOT HANDLED [" + opName + "]");
             Main._Console(true, "◄◄",
-                    "COMMAND NOT FOUND [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
+                    "OPCODE NOT HANDLED [{#Y}" + opName + "{##}]");
         }
     }
 
@@ -717,32 +603,23 @@ public class DataReceive {
     // ========================================================
 
     /**
-     * '#SSR' – per-command ACK. Resolves the pending command in DATAs so the
-     * app learns whether that specific command was applied.
-     * SS = 2-hex sequence id, R = 1-hex result code.
+     * ACK frame - resolves the pending command in DATAs so the app learns
+     * whether that specific command was applied.
      *
-     * @param message  Full packet ("#" + seq + result).
-     * @param size     Must be 4.
+     * @param seq      Sequence id from the frame header.
+     * @param payload  ACK payload (result code).
      *
-     * Called by: internal only - _parsePacket() (case '#'). Feeds
-     * DataSend.ackResolve() to resolve the pending command.
+     * Called by: internal only - _parseFrame(). Feeds DataSend.ackResolve()
+     * to resolve the pending command.
      */
-    private void _recvAck(String message, int size) {
-        Log.v("DATA_R", "Processing ACK: " + message + " size: " + size);
-        if (size != 4) {
-            Log.i("DATA_R", "ACK SIZE NOT VALID [" + message + "] SIZE [" + size + "]");
+    private void _recvAck(int seq, byte[] payload) {
+        if (payload.length < 1) {
+            Log.i("DATA_R", "ACK PAYLOAD EMPTY seq [" + seq + "]");
             return;
         }
-        try {
-            int s      = Integer.parseInt(message.substring(1, 3), 16);
-            int result = Integer.parseInt(message.substring(3, 4), 16);
-            Log.i("DATA_R", "ACK seq [" + s + "] result [" + result + "]");
-            Log.v("DATA_R", "ACK resolved - seq: " + s + " result: " + result);
-            if (DATAs != null) DATAs.ackResolve(s, result);
-        } catch (NumberFormatException e) {
-            Log.i("DATA_R", "ACK PARSE ERROR [" + message + "]");
-            Log.v("DATA_R", "ACK parse exception: " + e.getMessage());
-        }
+        ProtocolOpcodes.AckPayload ack = ProtocolOpcodes.AckPayload.unpack(payload, 0);
+        Log.i("DATA_R", "ACK seq [" + seq + "] result [" + ack.result + "]");
+        if (DATAs != null) DATAs.ackResolve(seq, ack.result);
     }
 
     // ========================================================
@@ -751,32 +628,29 @@ public class DataReceive {
     //  echoed to the Term console, where [values] chip up.
     // ========================================================
 
-    /** Fault bits, mirroring APP_FAULT_* in the firmware header. */
+    /** Fault bits, mirroring the firmware's fault mask layout. */
     public static final int FAULT_WIFI = 0x0001, FAULT_NTP = 0x0002, FAULT_EEPROM = 0x0004,
                             FAULT_BME  = 0x0008, FAULT_DIF_NORESP = 0x0010, FAULT_DIF_NOWATER = 0x0020;
 
-    /** Active __testmode value, 0 = none. */
+    /** Active test-mode value, 0 = none. */
     public int testMode = 0;
 
-    /** Link health from 'w'. rssi is dBm (negative), 0 when down. */
+    /** Link health. rssi is dBm (negative), 0 when down. */
     public int rssi = 0, wifiState = 0;
 
-    /** Latest fault bitmask from 'f'. */
+    /** Latest fault bitmask. */
     public int faults = 0;
 
-    /** '@mm' – the test mode currently forced, 0 = none. Called by: _parsePacket() only. */
-    private void _recvTestMode(String message, int size) {
-        Log.v("DATA_R", "Processing test mode: " + message);
-        if (size < 3) return;
-        try {
-            testMode = Integer.parseInt(message.substring(1, 3), 16);
-            Log.v("DATA_R", "Test mode set to: " + testMode);
-            Main._Console(true, "\u25c4\u25c4", "TEST MODE ["
-                    + ((testMode == 0) ? "none" : SET_TestModeName(testMode)) + "]");
-        } catch (NumberFormatException ignored) { }
+    /** TELEM_TEST_MODE - the test mode currently forced, 0 = none. */
+    private void _recvTestMode(byte[] payload) {
+        if (payload.length < 1) return;
+        testMode = payload[0] & 0xFF;
+        Log.v("DATA_R", "Test mode set to: " + testMode);
+        Main._Console(true, "◄◄", "TEST MODE ["
+                + ((testMode == 0) ? "none" : SET_TestModeName(testMode)) + "]");
     }
 
-    /** @return firmware __testmode name for a raw value. Called by: _recvTestMode() only. */
+    /** @return firmware test-mode name for a raw value. Called by: _recvTestMode() only. */
     private String SET_TestModeName(int m) {
         switch (m) {
             case 1:  return "TV ON";
@@ -790,75 +664,60 @@ public class DataReceive {
         }
     }
 
-    /** 'HTTHH' – climate: temperature + humidity (each 2-hex, degrees / %). Called by: _parsePacket() only. */
-    private void _recvClimate(String message, int size) {
-        Log.v("DATA_R", "Processing climate: " + message);
-        if (size < 5) return;
-        try {
-            int temp = Integer.parseInt(message.substring(1, 3), 16);
-            int hum  = Integer.parseInt(message.substring(3, 5), 16);
-            Log.v("DATA_R", "Climate - temp: " + temp + " humidity: " + hum);
-            STS.applyClimate(temp, hum);
-        } catch (NumberFormatException ignored) { }
+    /** TELEM_CLIMATE - temperature + humidity. */
+    private void _recvClimate(byte[] payload) {
+        if (payload.length < 2) return;
+        ProtocolOpcodes.TelemClimatePayload c = ProtocolOpcodes.TelemClimatePayload.unpack(payload, 0);
+        Log.v("DATA_R", "Climate - temp: " + c.temp_c + " humidity: " + c.humidity_pct);
+        STS.applyClimate(c.temp_c, c.humidity_pct);
     }
 
-    /** 'Ee' – global LED enable (1) / disable (0). Called by: _parsePacket() only. */
-    private void _recvEnable(String message, int size) {
-        Log.v("DATA_R", "Processing enable: " + message);
-        if (size < 2) return;
-        try {
-            int en = Integer.parseInt(message.substring(1, 2), 16);
-            Log.v("DATA_R", "Enable state: " + (en != 0));
-            STS.applyEnable(en != 0);
-        } catch (NumberFormatException ignored) { }
+    /** TELEM_ENABLE - global LED enable (1) / disable (0). */
+    private void _recvEnable(byte[] payload) {
+        if (payload.length < 1) return;
+        ProtocolOpcodes.TelemEnablePayload e = ProtocolOpcodes.TelemEnablePayload.unpack(payload, 0);
+        Log.v("DATA_R", "Enable state: " + (e.value != 0));
+        STS.applyEnable(e.value != 0);
     }
 
     /**
-     * 'wRRWW' – |rssi| dBm + NET_WiFiStatus. The board buckets the signal so
-     * this only arrives when the strength band or wifi state actually changes.
-     * Feeds the top-left Arduino/WiFi indicator.
-     *
-     * Called by: _parsePacket() only.
+     * TELEM_LINK - |rssi| dBm bucket + wifi state. The board buckets the
+     * signal so this only arrives when the strength band or wifi state
+     * actually changes. Feeds the top-left Arduino/WiFi indicator.
      */
-    private void _recvLink(String message, int size) {
-        Log.v("DATA_R", "Processing link: " + message);
-        if (size < 5) return;
-        try {
-            int mag   = Integer.parseInt(message.substring(1, 3), 16);
-            rssi      = (mag == 0) ? 0 : -mag;
-            wifiState = Integer.parseInt(message.substring(3, 5), 16);
-            Log.v("DATA_R", "Link - rssi: " + rssi + " wifiState: " + wifiState);
-            Main.updateWifiSignal(mag, wifiState);
-            Log.i("DATA_R", "LINK rssi [" + rssi + "] wifi [" + wifiState + "]");
-        } catch (NumberFormatException ignored) { }
+    private void _recvLink(byte[] payload) {
+        if (payload.length < 2) return;
+        ProtocolOpcodes.TelemLinkPayload l = ProtocolOpcodes.TelemLinkPayload.unpack(payload, 0);
+        rssi      = (l.rssi_bucket == 0) ? 0 : -l.rssi_bucket;
+        wifiState = l.wifi_state;
+        Log.v("DATA_R", "Link - rssi: " + rssi + " wifiState: " + wifiState);
+        Main.updateWifiSignal(l.rssi_bucket, wifiState);
+        Log.i("DATA_R", "LINK rssi [" + rssi + "] wifi [" + wifiState + "]");
     }
 
     /**
-     * 'k' – keep-alive ping from the board (every ~10 s). Reply with a bare 'k'
-     * so it knows the app is still here; the reply is un-enveloped on purpose
-     * (the firmware treats a 1-char 'k' as liveness only).
+     * KEEPALIVE - ping from the board (every ~10 s). Reply in kind so it
+     * knows the app is still here.
      *
-     * Called by: _parsePacket() only. Calls DataSend.sendKeepAlive() in reply.
+     * Called by: _parseFrame() only. Calls DataSend.sendKeepAlive() in reply.
      */
     private void _recvKeepAlive() {
         Log.v("DATA_R", "Keep-alive received, sending response");
         if (DATAs != null) DATAs.sendKeepAlive();
     }
 
-    /** 'fffff' – fault bitmask; only transitions are worth a console line. Called by: _parsePacket() only. */
-    private void _recvFaults(String message, int size) {
-        Log.v("DATA_R", "Processing faults: " + message);
-        if (size < 5) return;
-        try {
-            int now = Integer.parseInt(message.substring(1, 5), 16);
-            int raised  = now & ~faults;
-            int cleared = faults & ~now;
-            faults = now;
-            Log.v("DATA_R", "Faults - now: " + now + " raised: " + raised + " cleared: " + cleared);
+    /** TELEM_FAULTS - fault bitmask; only transitions are worth a console line. */
+    private void _recvFaults(byte[] payload) {
+        if (payload.length < 2) return;
+        ProtocolOpcodes.TelemFaultsPayload fp = ProtocolOpcodes.TelemFaultsPayload.unpack(payload, 0);
+        int now = fp.mask;
+        int raised  = now & ~faults;
+        int cleared = faults & ~now;
+        faults = now;
+        Log.v("DATA_R", "Faults - now: " + now + " raised: " + raised + " cleared: " + cleared);
 
-            if (raised  != 0) Main._Console(true, "\u25c4\u25c4", "{#R}FAULT{##} [" + _faultNames(raised) + "]");
-            if (cleared != 0) Main._Console(true, "\u25c4\u25c4", "{#G}FAULT CLEARED{##} [" + _faultNames(cleared) + "]");
-        } catch (NumberFormatException ignored) { }
+        if (raised  != 0) Main._Console(true, "◄◄", "{#R}FAULT{##} [" + _faultNames(raised) + "]");
+        if (cleared != 0) Main._Console(true, "◄◄", "{#G}FAULT CLEARED{##} [" + _faultNames(cleared) + "]");
     }
 
     /** @return comma-joined names for the set bits of a fault mask. Called by: _recvFaults() only. */
@@ -874,170 +733,62 @@ public class DataReceive {
     }
 
     /**
-     * 'err' – a scheduled EEPROM write finished.
+     * TELEM_SAVE_RESULT - a scheduled EEPROM write finished.
      *
      * A command ack only means "accepted"; settings live in RAM until the
      * delayed write runs, so this is the first point at which a change is
      * safe across a power cut.
-     *
-     * Called by: _parsePacket() only.
      */
-    private void _recvSaved(String message, int size) {
-        Log.v("DATA_R", "Processing saved: " + message);
-        if (size < 3) return;
-        try {
-            int result = Integer.parseInt(message.substring(1, 3), 16);
-            Log.v("DATA_R", "EEPROM save result: " + result);
-            Main._Console(true, "\u25c4\u25c4", (result == 0)
-                    ? "SETTINGS SAVED [OK]"
-                    : "SETTINGS SAVE [{#R}FAILED{##}] code [" + result + "]");
-        } catch (NumberFormatException ignored) { }
+    private void _recvSaved(byte[] payload) {
+        if (payload.length < 1) return;
+        int result = payload[0] & 0xFF;
+        Log.v("DATA_R", "EEPROM save result: " + result);
+        Main._Console(true, "◄◄", (result == 0)
+                ? "SETTINGS SAVED [OK]"
+                : "SETTINGS SAVE [{#R}FAILED{##}] code [" + result + "]");
     }
 
     /**
-     * '*' – Arduino sent one Term-console log line.
+     * LOG - Arduino sent one Term-console log line.
+     * Payload: level(u8) + source(u8) + text(rest, UTF-8) - the "str" field
+     * type in protocol_table.json means the generator skips codegen for it
+     * (same as any "raw" field), so this is hand-decoded, matching
+     * DeviceLink.handleLog() on the _rmk_app side. The frame's own SEQ byte
+     * covers what the old ASCII format carried as a separate seq field in
+     * the text body.
      *
-     * Wire format (no spaces): level(1 hex) + source(2 hex) + seq(2 hex) + [PRNT(4 chars) + _Debug(6 chars)] + text.
-     * The PRNT and _Debug parameters are optional for backward compatibility.
-     * A packet that doesn't carry a well-formed header is treated as legacy
-     * plain '*TEXT' output, so an older sketch still prints readably.
+     * @param seq      Frame sequence id (passed through to Main._ConsoleLog).
+     * @param payload  level(1) + source(1) + text(rest).
      *
-     * @param message  Text after the leading '*' (envelope header included).
-     * @param size     Total packet size.
-     *
-     * Called by: _parsePacket() only.
+     * Called by: _parseFrame() only.
      */
-    private void _recvMsg(String message, int size) {
-        Log.v("DATA_R", "Processing message: " + message);
-        String clean = message.replace("\n", "").replace("\r", "");
-
-        // Try new format with PRNT and _Debug parameters (header = 1 + 2 + 2 + 4 + 6 = 15 chars)
-        if (clean.length() >= 15) {
-            try {
-                int level = Integer.parseInt(clean.substring(0, 1), 16);
-                int src   = Integer.parseInt(clean.substring(1, 3), 16);
-                int seq   = Integer.parseInt(clean.substring(3, 5), 16);
-                String prnt = clean.substring(5, 9);   // "PRNT"
-                String debug = clean.substring(9, 15); // "_Debug"
-                String text = clean.substring(15);
-                
-                // Verify it's the new format by checking for "PRNT"
-                if ("PRNT".equals(prnt)) {
-                    Log.v("DATA_R", "New format log - level: " + level + " src: " + src + " seq: " + seq);
-                    Main._ConsoleLog(level, src, seq, text);
-                    Log.i("DATA_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "] prnt [" + prnt + "] debug [" + debug + "]");
-                    return;
-                }
-            } catch (NumberFormatException ignored) {
-                // malformed header - fall through to old format check
-            }
-        }
-
-        // Try old format (header = 1 + 2 + 2 = 5 chars)
-        if (clean.length() >= ConsoleAdapter.LOG_HDR) {
-            try {
-                int level = Integer.parseInt(clean.substring(0, 1), 16);
-                int src   = Integer.parseInt(clean.substring(1, 3), 16);
-                int seq   = Integer.parseInt(clean.substring(3, 5), 16);
-                Log.v("DATA_R", "Old format log - level: " + level + " src: " + src + " seq: " + seq);
-                Main._ConsoleLog(level, src, seq, clean.substring(ConsoleAdapter.LOG_HDR));
-                Log.i("DATA_R", "LOG lvl [" + level + "] src [" + src + "] seq [" + seq + "]");
-                return;
-            } catch (NumberFormatException ignored) {
-                // malformed header - fall through to the legacy path
-            }
-        }
-
-        Log.v("DATA_R", "Legacy format message: " + clean);
-        Main._Console(true, "{#C}*{##} ", clean);
-        Log.i("DATA_R", "PRINT [" + clean + "] SIZE [" + size + "]");
+    private void _recvLog(int seq, byte[] payload) {
+        if (payload.length < 2) return;
+        int level = payload[0] & 0xFF;
+        int src   = payload[1] & 0xFF;
+        String text = new String(payload, 2, payload.length - 2, java.nio.charset.StandardCharsets.UTF_8);
+        Log.v("DATA_R", "LOG level: " + level + " src: " + src + " text: " + text);
+        Main._ConsoleLog(level, src, seq, text);
+        Log.i("DATA_R", "LOG lvl [" + level + "] src [" + src + "]");
     }
 
     /**
-     * 'LBvv' – Arduino reports current brightness.
-     * Updates the brightness SeekBar in LED (LEDManager).
-     *
-     * @param message  Full 4-char packet.  e.g. "LB3f"
-     * @param size     Must be 4.
-     *
-     * Called by: _parsePacket() only.
-     */
-    private void _recvLedBrightness(String message, int size) {
-        Log.v("DATA_R", "Processing LED brightness: " + message);
-        if (size == 4) {
-            int brightness = Integer.parseInt(message.substring(2, 4), 16);
-            Log.v("DATA_R", "Brightness value: " + brightness);
-            LED.setBrightnessProgress(brightness);
-            Log.i("DATA_R", "BRIGHTNESS PROGRESS [" + brightness + "]");
-            Main._Console(true, "◄◄",
-                    "BRIGHTNESS PROGRESS [{#Y}" + brightness + "{##}]");
-        }
-        // Silently ignore bad size
-    }
-
-    /**
-     * 'LCiiRRggBB…' – Arduino reports colour for one or more LEDs.
-     * Format: LC + (ii RR gg BB)+ where ii = LED index (1 byte hex).
-     *
-     * @param message  Full packet.
-     * @param size     10 (single LED) or 2 + 8*N (multiple LEDs).
-     *
-     * Called by: _parsePacket() only (legacy ASCII path - see
-     * _recvLedColorBin() for the compressed replacement).
-     */
-    private void _recvLedColor(String message, int size) {
-        Log.v("DATA_R", "Processing LED color: " + message + " size: " + size);
-        if (size == 10 || ((size - 2) % 8 == 0)) {
-            for (int i = 2; i < size; i += 8) {
-                int l = Integer.parseInt(message.substring(i,     i + 2), 16);
-                int r = Integer.parseInt(message.substring(i + 2, i + 4), 16);
-                int g = Integer.parseInt(message.substring(i + 4, i + 6), 16);
-                int b = Integer.parseInt(message.substring(i + 6, i + 8), 16);
-
-                if (l < LED.LED_TOTAL) {
-                    Log.v("DATA_R", "LED " + l + " color - R:" + r + " G:" + g + " B:" + b);
-                    LED.updateColor(l, r, g, b);
-                    if (size == 10) {
-                        Log.i("DATA_R", "LED [" + l + "] COLOR [R:" + r
-                                + "][G:" + g + "][B:" + b + "]");
-                    } else if (i == 2) {
-                        Log.i("DATA_R", "MULTIPLE COLOR [" + size
-                                + "] LEDS [" + (size - 2) / 8 + "]");
-                    }
-                } else {
-                    Log.i("DATA_R", "LED [" + l + "] NOT FOUND");
-                    Main._Console(true, "◄◄",
-                            "LED [{#Y}" + l + "{##}] {#R}NOT FOUND{##}");
-                }
-            }
-        } else {
-            Log.i("DATA_R", "LED COLOR SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            Main._Console(true, "◄◄",
-                    "SIZE NOT VALID [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
-        }
-    }
-
-    /**
-     * 'LK…' – compressed binary colour delta (replaces the ASCII 'LC' path).
-     *
-     * Body is a run of records until packet end:
+     * TELEM_COLOR_SYNC - compressed binary colour delta. Body is a run of
+     * records until payload end:
      *   0x01 FILL  start count r g b        – LEDs [start, start+count) = (r,g,b)
      *   0x02 SETN  count {idx r g b}…       – 'count' scattered pixels
-     * A solid strip is ~6 bytes here vs ~482 as ASCII 'LC'; nothing is dropped.
-     * The legacy _recvLedColor() below stays as a rollback path.
+     * Same record encoding as the old ASCII-era 'LK' packet - this is
+     * nearly a line-for-line port of the old _recvLedColorBin().
      *
-     * @param d    Packet bytes ('L''K' at [0..1]).
-     * @param len  Packet length.
+     * @param d  Payload bytes (record stream, no 'L''K' prefix anymore -
+     *           the opcode itself identifies this).
      *
-     * Called by: internal only - NOT via _parsePacket() (binary payloads
-     * skip the ASCII switch). Called directly from the local receive loop
-     * in startReceiving() and from onCloudMessageBin().
+     * Called by: internal only - _parseFrame().
      */
-    private void _recvLedColorBin(byte[] d, int len) {
-        Log.v("DATA_R", "Processing binary LED color, length: " + len);
-        int i     = 2;   // skip 'L''K'
+    private void _recvColorSync(byte[] d) {
+        int len = d.length;
+        Log.v("DATA_R", "Processing color sync, length: " + len);
+        int i     = 0;
         int total = 0;
         while (i < len) {
             int op = d[i++] & 0xFF;
@@ -1072,265 +823,203 @@ public class DataReceive {
                 }
                 total += f;
             } else {
-                Log.i("DATA_R", "LK BAD OPCODE [" + op + "] at [" + (i - 1) + "]");
+                Log.i("DATA_R", "COLOR SYNC BAD OPCODE [" + op + "] at [" + (i - 1) + "]");
                 break;
             }
         }
-        Log.i("DATA_R", "LK COLOR LEDS [" + total + "] BYTES [" + len + "]");
+        Log.i("DATA_R", "COLOR SYNC LEDS [" + total + "] BYTES [" + len + "]");
     }
 
     /**
-     * 'LDrrggbbRRggBB' – Arduino returns the saved dual colour.
+     * TELEM_DUAL_COLOR - Arduino returns the saved dual colour.
      * Saves it to the LED dual-colour list and refreshes the UI.
      *
-     * @param message  14-char packet.
-     * @param size     Must be 14.
-     *
-     * Called by: _parsePacket() only.
+     * Called by: _parseFrame() only.
      */
-    private void _recvDualColor(String message, int size) {
-        Log.v("DATA_R", "Processing dual color: " + message);
-        if (size == 14) {
-            int r1 = Integer.parseInt(message.substring(2,  4),  16);
-            int g1 = Integer.parseInt(message.substring(4,  6),  16);
-            int b1 = Integer.parseInt(message.substring(6,  8),  16);
-            int r2 = Integer.parseInt(message.substring(8,  10), 16);
-            int g2 = Integer.parseInt(message.substring(10, 12), 16);
-            int b2 = Integer.parseInt(message.substring(12, 14), 16);
-
-            // Delegate save + UI refresh to LED
-            Log.v("DATA_R", "Dual color - L: " + r1 + "," + g1 + "," + b1 + " R: " + r2 + "," + g2 + "," + b2);
-            LED.addDualColor(r1, g1, b1, r2, g2, b2);
-
-            Log.i("DATA_R", "DUAL COLOR [" + r1 + " " + g1 + " " + b1
-                    + "] <> [" + r2 + " " + g2 + " " + b2 + "]");
-            Main._Console(true, "◄◄",
-                    "DUAL COLOR [" + r1 + "," + g1 + "," + b1
-                    + "] -- [" + r2 + "," + g2 + "," + b2 + "]");
-        } else {
-            Log.i("DATA_R", "DUAL COLOR SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            Main._Console(true, "◄◄",
-                    "DUAL COLOR SIZE NOT VALID [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
-        }
-    }
-
-    /**
-     * 'LMvv' – Arduino reports the maximum allowed brightness.
-     * Updates the brightness SeekBar maximum in LED.
-     *
-     * @param message  4-char packet.
-     * @param size     Must be 4.
-     *
-     * Called by: _parsePacket() only.
-     */
-    private void _recvMaxBrightness(String message, int size) {
-        Log.v("DATA_R", "Processing max brightness: " + message);
-        if (size == 4) {
-            int brightness = Integer.parseInt(message.substring(2, 4), 16);
-            Log.v("DATA_R", "Max brightness value: " + brightness);
-            LED.setMaxBrightness(brightness);
-            Log.i("DATA_R", "MAX BRIGHTNESS [" + brightness + "]");
-            Main._Console(true, "◄◄",
-                    "MAX BRIGHTNESS [{#Y}" + brightness + "{##}]");
-        } else {
-            Log.i("DATA_R", "MAX BRIGHTNESS SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            Main._Console(true, "◄◄",
-                    "MAX BRIGHTNESS SIZE NOT VALID [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
-        }
-    }
-
-    /**
-     * 'SiiVV…' – Arduino returns one or more setting values.
-     * Validates and applies each to SET (SettingsManager).
-     *
-     * @param message  Packet starting with 'S'.
-     * @param size     5 (single) or 1 + 4*N (multiple).
-     *
-     * Called by: _parsePacket() only.
-     */
-    private void _recvSettings(String message, int size) {
-        Log.v("DATA_R", "Processing settings: " + message + " size: " + size);
-        if (size == 5 || ((size - 1) % 4 == 0)) {
-            StringBuilder validLog = new StringBuilder("SETTING ");
-            for (int i = 1; i < size; i += 4) {
-                int id    = Integer.parseInt(message.substring(i,     i + 2), 16);
-                int value = Integer.parseInt(message.substring(i + 2, i + 4), 16);
-
-                if (SET.isValidId(id)) {
-                    // Clamp to valid range
-                    SettingInfo si = SET.getSettingInfo(id);
-                    if (si.maxValue() > 1) {
-                        if (value < si.minValue()) value = si.minValue();
-                        else if (value > si.maxValue()) value = si.maxValue();
-                    }
-                    SET.applyReceivedSetting(id, value);
-                    if (id == SET.SET_HB_Dual) LED._refreshHBDualSplit();
-                    if (id == SET.SET_HB_Effect || id == SET.SET_HB_EffectSpeed || id == SET.SET_TvOnHBEffect) {
-                        LED.notifyHBSettingChanged(id);
-                    }
-                    if (id == SET.SET_MotionRandomColor) LED.notifyMotionRandomSettingChanged();
-                    validLog.append("[").append(id).append(":")
-                            .append(value).append("] ");
-                } else {
-                    Log.i("DATA_R", "SETTING [" + id + "] NOT FOUND");
-                }
-            }
-            Log.i("DATA_R", validLog.toString());
-        } else {
-            Log.i("DATA_R", "SETTINGS SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            Main._Console(true, "◄◄",
-                    "SETTINGS SIZE NOT VALID [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
-        }
-    }
-
-    /**
-     * 'sTTMMUUAADD' – Arduino reports core system status (v8.1).
-     * Climate ('H') and enable ('E') were split into their own packets.
-     *
-     * Format (all 2-char hex fields):
-     *   s TT MM UU AA DD
-     *     TV Motion UDPRAW(Ambilight) AmbientMode Diffuser
-     *
-     * @param message  11-char packet.
-     * @param size     Must be 11.
-     *
-     * Called by: _parsePacket() only.
-     */
-    private void _recvStatus(String message, int size) {
-        Log.v("DATA_R", "Processing status: " + message);
-        if (size != 11) {
-            Log.i("DATA_R", "STATUS SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
+    private void _recvDualColor(byte[] payload) {
+        if (payload.length < 6) {
+            Log.i("DATA_R", "DUAL COLOR PAYLOAD TOO SHORT [" + payload.length + "]");
             return;
         }
+        ProtocolOpcodes.TelemDualColorPayload d = ProtocolOpcodes.TelemDualColorPayload.unpack(payload, 0);
+        Log.v("DATA_R", "Dual color - L: " + d.r1 + "," + d.g1 + "," + d.b1 + " R: " + d.r2 + "," + d.g2 + "," + d.b2);
+        LED.addDualColor(d.r1, d.g1, d.b1, d.r2, d.g2, d.b2);
+        Log.i("DATA_R", "DUAL COLOR [" + d.r1 + " " + d.g1 + " " + d.b1
+                + "] <> [" + d.r2 + " " + d.g2 + " " + d.b2 + "]");
+        Main._Console(true, "◄◄",
+                "DUAL COLOR [" + d.r1 + "," + d.g1 + "," + d.b1
+                + "] -- [" + d.r2 + "," + d.g2 + "," + d.b2 + "]");
+    }
 
-        Log.i("DATA_R", "STATUS [" + message + "]");
-        STS.applyStatus(message);
+    /**
+     * TELEM_MAX_BRIGHTNESS - Arduino reports the maximum allowed brightness.
+     * Updates the brightness SeekBar maximum in LED.
+     */
+    private void _recvMaxBrightness(byte[] payload) {
+        if (payload.length < 1) return;
+        int brightness = payload[0] & 0xFF;
+        Log.v("DATA_R", "Max brightness value: " + brightness);
+        LED.setMaxBrightness(brightness);
+        Log.i("DATA_R", "MAX BRIGHTNESS [" + brightness + "]");
+        Main._Console(true, "◄◄", "MAX BRIGHTNESS [{#Y}" + brightness + "{##}]");
+    }
+
+    /**
+     * TELEM_SETTINGS_FULL - all 50 settings in one push (id = array index,
+     * no id byte needed - see protocol_table.json's note on this opcode).
+     */
+    private void _recvSettingsFull(byte[] payload) {
+        Log.v("DATA_R", "Processing full settings, length: " + payload.length);
+        StringBuilder validLog = new StringBuilder("SETTINGS ");
+        for (int id = 0; id < payload.length; id++) {
+            int value = payload[id] & 0xFF;
+            _applyOneSetting(id, value, validLog);
+        }
+        Log.i("DATA_R", validLog.toString());
+    }
+
+    /** TELEM_SETTINGS_ONE - a single setting value (e.g. answering SETTINGS_READ_ONE). */
+    private void _recvSettingsOne(byte[] payload) {
+        if (payload.length < 2) return;
+        ProtocolOpcodes.TelemSettingsOnePayload s = ProtocolOpcodes.TelemSettingsOnePayload.unpack(payload, 0);
+        StringBuilder log = new StringBuilder("SETTING ");
+        _applyOneSetting(s.id, s.value, log);
+        Log.i("DATA_R", log.toString());
+    }
+
+    /**
+     * Shared by _recvSettingsFull()/_recvSettingsOne(): validate, clamp,
+     * apply one {id,value} pair to SET, and fire the same downstream LED
+     * notifications the ASCII-era _recvSettings() did.
+     */
+    private void _applyOneSetting(int id, int value, StringBuilder log) {
+        if (SET.isValidId(id)) {
+            SettingInfo si = SET.getSettingInfo(id);
+            if (si.maxValue() > 1) {
+                if (value < si.minValue()) value = si.minValue();
+                else if (value > si.maxValue()) value = si.maxValue();
+            }
+            SET.applyReceivedSetting(id, value);
+            if (id == SET.SET_HB_Dual) LED._refreshHBDualSplit();
+            if (id == SET.SET_HB_Effect || id == SET.SET_HB_EffectSpeed || id == SET.SET_TvOnHBEffect) {
+                LED.notifyHBSettingChanged(id);
+            }
+            if (id == SET.SET_MotionRandomColor) LED.notifyMotionRandomSettingChanged();
+            log.append("[").append(id).append(":").append(value).append("] ");
+        } else {
+            Log.i("DATA_R", "SETTING [" + id + "] NOT FOUND");
+        }
+    }
+
+    /**
+     * TELEM_STATUS - Arduino reports core system status: tv/motion/udpraw
+     * (ambilight)/ambient/diffuser_summary, one byte each.
+     *
+     * Called by: _parseFrame() only.
+     */
+    private void _recvStatus(byte[] payload) {
+        if (payload.length < 5) {
+            Log.i("DATA_R", "STATUS PAYLOAD TOO SHORT [" + payload.length + "]");
+            return;
+        }
+        ProtocolOpcodes.TelemStatusPayload s = ProtocolOpcodes.TelemStatusPayload.unpack(payload, 0);
+        Log.i("DATA_R", "STATUS [tv=" + s.tv + " motion=" + s.motion + " udpraw=" + s.udpraw
+                + " ambient=" + s.ambient + " dif=" + s.diffuser_summary + "]");
+        STS.applyStatus(s.tv, s.motion, s.udpraw, s.ambient, s.diffuser_summary);
         LED._refreshHBDualSplit(); // TV on/off can flip HB into/out of dual split
     }
 
     /**
-     * 'pTTTT' – Arduino relays the diffuser's parfum-mode remaining
-     * minutes (4-digit hex, 0000 = parfum inactive). Stored in STS so
-     * the long-press parfum popup opens with the live value.
+     * TELEM_PARFUM_REMAINING - Arduino relays the diffuser's parfum-mode
+     * remaining minutes (0 = parfum inactive). Stored in STS so the
+     * long-press parfum popup opens with the live value.
      *
-     * @param message  Full 5-char packet starting with 'p'.
-     * @param size     Byte-length of the message (must be 5).
-     *
-     * Called by: _parsePacket() only.
+     * Called by: _parseFrame() only.
      */
-    private void _recvParfum(String message, int size) {
-        Log.v("DATA_R", "Processing parfum: " + message);
-        if (size != 5) {
-            Log.i("DATA_R", "PARFUM SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            return;
-        }
-
-        try {
-            int minutes = Integer.parseInt(message.substring(1, 5), 16);
-            Log.v("DATA_R", "Parfum minutes: " + minutes);
-            Log.i("DATA_R", "PARFUM [" + minutes + " min]");
-            STS.applyParfumRemaining(minutes);
-        } catch (NumberFormatException e) {
-            Log.i("DATA_R", "PARFUM PARSE ERROR [" + message + "]");
-        }
+    private void _recvParfum(byte[] payload) {
+        if (payload.length < 2) return;
+        ProtocolOpcodes.TelemParfumRemainingPayload p = ProtocolOpcodes.TelemParfumRemainingPayload.unpack(payload, 0);
+        Log.v("DATA_R", "Parfum minutes: " + p.minutes);
+        Log.i("DATA_R", "PARFUM [" + p.minutes + " min]");
+        STS.applyParfumRemaining(p.minutes);
     }
 
     /**
-     * 'uAAAAVVVVRRLLLL' – diffuser usage/refill stats, relayed by the SmartTV
-     * from the diffuser's extended "Ds"/"Dc" reply: accumulated (mode-weighted)
-     * minutes since the last refill, rolling average completed-cycle minutes,
-     * refill history count (0-10), and lifetime refill count. Drives the
-     * top-left refill badge (icon tint, percent, fill bar) via STS.
+     * TELEM_DIFFUSER_USAGE - diffuser usage/refill stats, relayed by the
+     * SmartTV: accumulated (mode-weighted) minutes since the last refill,
+     * rolling average completed-cycle minutes, refill history count
+     * (0-10), and lifetime refill count. Drives the top-left refill badge
+     * (icon tint, percent, fill bar) via STS.
      *
-     * @param message  Full 15-char packet starting with 'u'.
-     * @param size     Byte-length of the message (must be 15).
-     *
-     * Called by: _parsePacket() only.
+     * Called by: _parseFrame() only.
      */
-    private void _recvDiffuserUsage(String message, int size) {
-        Log.v("DATA_R", "Processing diffuser usage: " + message);
-        if (size != 15) {
-            Log.i("DATA_R", "DIFFUSER USAGE SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
+    private void _recvDiffuserUsage(byte[] payload) {
+        if (payload.length < 7) {
+            Log.i("DATA_R", "DIFFUSER USAGE PAYLOAD TOO SHORT [" + payload.length + "]");
             return;
         }
-
-        try {
-            int accumMin     = Integer.parseInt(message.substring(1, 5), 16);
-            int avgMin       = Integer.parseInt(message.substring(5, 9), 16);
-            int refillCount  = Integer.parseInt(message.substring(9, 11), 16);
-            int totalRefills = Integer.parseInt(message.substring(11, 15), 16);
-            Log.i("DATA_R", "DIFFUSER USAGE [accum=" + accumMin + "min avg=" + avgMin
-                    + "min refills=" + refillCount + "/10 total=" + totalRefills + "]");
-            STS.applyDiffuserUsage(accumMin, avgMin, refillCount, totalRefills);
-        } catch (NumberFormatException e) {
-            Log.i("DATA_R", "DIFFUSER USAGE PARSE ERROR [" + message + "]");
-        }
+        ProtocolOpcodes.TelemDiffuserUsagePayload u = ProtocolOpcodes.TelemDiffuserUsagePayload.unpack(payload, 0);
+        Log.i("DATA_R", "DIFFUSER USAGE [accum=" + u.accum_min + "min avg=" + u.avg_min
+                + "min refills=" + u.refill_count + "/10 total=" + u.lifetime_refills + "]");
+        STS.applyDiffuserUsage(u.accum_min, u.avg_min, u.refill_count, u.lifetime_refills);
     }
 
     /**
-     * 'Dh' + 2-hex count + 10x4-hex minutes - full refill-cycle history, sent
-     * only on demand (see DataSend.sendDiffuserHistory()) and never cached by
+     * TELEM_DIFFUSER_STATUS - broader status push (mode/strip/parfum/usage/
+     * avg/refills all in one frame). Fans out to the same STS methods the
+     * separate TELEM_PARFUM_REMAINING/TELEM_DIFFUSER_USAGE frames feed, so
+     * a direct DIFFUSER_STATUS_QUERY reply (see DataSend.sendDiffuserStatus())
+     * updates exactly the same UI state either way.
+     *
+     * Called by: _parseFrame() only.
+     */
+    private void _recvDiffuserStatus(byte[] payload) {
+        if (payload.length < 11) {
+            Log.i("DATA_R", "DIFFUSER STATUS PAYLOAD TOO SHORT [" + payload.length + "]");
+            return;
+        }
+        ProtocolOpcodes.TelemDiffuserStatusPayload d = ProtocolOpcodes.TelemDiffuserStatusPayload.unpack(payload, 0);
+        Log.i("DATA_R", "DIFFUSER STATUS [mode=" + d.mode + " strip=" + d.strip + " parfum=" + d.parfum_min
+                + "min usage=" + d.usage_min + "min avg=" + d.avg_min + "min refills=" + d.refill_count
+                + "/10 total=" + d.lifetime_refills + "]");
+        STS.applyParfumRemaining(d.parfum_min);
+        STS.applyDiffuserUsage(d.usage_min, d.avg_min, d.refill_count, d.lifetime_refills);
+    }
+
+    /**
+     * TELEM_DIFFUSER_HISTORY - full refill-cycle history, sent only on
+     * demand (see DataSend.sendDiffuserHistory()) and never cached by
      * SmartTV, which just relays the diffuser's reply straight through.
-     * Oldest cycle first; slots beyond the valid count are 0 (unused).
+     * Payload: count(u8) + up to 10x minutes(u16) - a "raw" field (variable
+     * length), hand-decoded here same as every other raw opcode.
      *
-     * @param message  Full 44-char packet starting with "Dh".
-     * @param size     Byte-length of the message (must be 44).
-     *
-     * Called by: _parsePacket() only.
+     * Called by: _parseFrame() only.
      */
-    private void _recvDiffuserHistory(String message, int size) {
-        Log.v("DATA_R", "Processing diffuser history: " + message);
-        if (size != 44) {
-            Log.i("DATA_R", "DIFFUSER HISTORY SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            return;
+    private void _recvDiffuserHistory(byte[] payload) {
+        if (payload.length < 1) return;
+        int count = payload[0] & 0xFF;
+        int[] minutes = new int[10];
+        int pos = 1;
+        for (int i = 0; i < 10 && pos + 2 <= payload.length; i++) {
+            minutes[i] = ((payload[pos] & 0xFF) << 8) | (payload[pos + 1] & 0xFF);
+            pos += 2;
         }
-
-        try {
-            int count = Integer.parseInt(message.substring(2, 4), 16);
-            int[] minutes = new int[10];
-            for (int i = 0; i < 10; i++) {
-                int start = 4 + i * 4;
-                minutes[i] = Integer.parseInt(message.substring(start, start + 4), 16);
-            }
-            Log.i("DATA_R", "DIFFUSER HISTORY [" + count + "/10] " + java.util.Arrays.toString(minutes));
-            STS.applyDiffuserHistory(count, minutes);
-        } catch (NumberFormatException e) {
-            Log.i("DATA_R", "DIFFUSER HISTORY PARSE ERROR [" + message + "]");
-        }
+        Log.i("DATA_R", "DIFFUSER HISTORY [" + count + "/10] " + java.util.Arrays.toString(minutes));
+        STS.applyDiffuserHistory(count, minutes);
     }
 
     /**
-     * 'Mllll' – Arduino reports the classified lux level (1..5). The rolling
-     * average ('mA') was dropped in v8.1. Delegates the animated update to STS.
-     *
-     * @param message  5-char packet.
-     * @param size     Must be 5.
-     *
-     * Called by: _parsePacket() only.
+     * TELEM_LUX - Arduino reports the classified lux level (1..5). The
+     * rolling average was dropped. Delegates the animated update to STS.
      */
-    private void _recvLux(String message, int size) {
-        Log.v("DATA_R", "Processing lux: " + message);
-        if (size == 5) {
-            int lux = Integer.parseInt(message.substring(1, 5), 16);
-            Log.v("DATA_R", "Lux level: " + lux);
-            STS.applyLux(lux);
-        } else {
-            Log.i("DATA_R", "LUX SIZE NOT VALID [" + message
-                    + "] SIZE [" + size + "]");
-            Main._Console(true, "◄◄",
-                    "LUX SIZE NOT VALID [{#Y}" + message
-                    + "{##}] SIZE [{#R}" + size + "{##}]");
+    private void _recvLux(byte[] payload) {
+        if (payload.length < 1) {
+            Log.i("DATA_R", "LUX PAYLOAD TOO SHORT [" + payload.length + "]");
+            return;
         }
+        int lux = payload[0] & 0xFF;
+        Log.v("DATA_R", "Lux level: " + lux);
+        STS.applyLux(lux);
     }
 
     // ========================================================
@@ -1338,19 +1027,12 @@ public class DataReceive {
     // ========================================================
 
     /**
-     * Update the connection status display in Main.
-     * Only triggers a UI change when the status actually changes,
-     * to avoid redundant animations.
-     *
-     * @param status  New Status enum value.
-     */
-    /**
      * Live-status flavour: CLOUD MODE when the controller is reached over MQTT
      * (no local WiFi), otherwise the local Connected (IP:port) label. Call on
      * every liveness confirmation so the top label tracks the active transport.
      *
-     * Called by: internal _parsePacket() (every recognized local-UDP or
-     * cloud packet) and MqttTransport.connect()'s success callback (broker
+     * Called by: internal _parseFrame() (every recognized local-UDP or
+     * cloud frame) and MqttTransport.connect()'s success callback (broker
      * session just came up - may still resolve to CloudNoReply below).
      */
     public void _confirmLive() {
