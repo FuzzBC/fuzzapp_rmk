@@ -124,6 +124,21 @@ public class MqttTransport {
      * only needs to say "it broke" once, not on every single retry.
      * Cleared on the next successful connect (see CLOUD ON below). */
     private boolean cloudDownLogged = false;
+    /** Guards `client` + `connectGeneration` - tryConnect() used to read/
+     * write the shared `client` field from its background thread with zero
+     * synchronization, so two overlapping attempts (background supervisor
+     * vs. an explicit dialog Save, or two retries firing close together)
+     * could stomp on each other: one attempt's disconnect() tearing down
+     * the OTHER attempt's freshly-connecting/just-connected client. Live-
+     * tested and confirmed this is real - it surfaces as a Paho
+     * "Connection lost" (reasonCode 32109) moments after a connect that
+     * otherwise succeeds, which had been misread as a network/broker
+     * problem. connectGeneration lets a superseded attempt notice it's
+     * been overtaken (right after its own connect() call, the one place
+     * another thread could have raced in) and quietly clean up instead of
+     * fighting over the shared client. */
+    private final Object connectLock = new Object();
+    private int connectGeneration = 0;
     /** Detail from the most recent tryConnect() failure (reason code +
      * message for an MqttException, exception class + message otherwise) -
      * null after a successful connect. Read by MainActivity to show a
@@ -276,17 +291,31 @@ public class MqttTransport {
      *                  attempt resolves. May be null.
      */
     public void tryConnect(final String user, final String pass, final ConnectCallback callback) {
-        if (client != null) disconnect();   // drop any session opened under a previous/different pair
+        final int myGen;
+        final MqttClient staleClient;
+        synchronized (connectLock) {
+            connectGeneration++;          // supersede any attempt already in flight
+            myGen = connectGeneration;
+            staleClient = client;
+            client = null;                // claimed - nobody else touches this reference now
+        }
+        if (staleClient != null) {
+            new Thread(() -> {
+                try { if (staleClient.isConnected()) staleClient.disconnect(); staleClient.close(); } catch (Exception ignored) { }
+            }).start();
+        }
         connecting = true;
         final String topicD2C = TOPIC_BASE + getDeviceId() + TOPIC_D2C_SUFFIX;
 
         new Thread(() -> {
-            boolean ok;
+            boolean ok = false;
+            boolean superseded = false;
+            MqttClient localClient = null;
             try {
-                client = new MqttClient(
+                localClient = new MqttClient(
                         "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
                         _clientId(), new MemoryPersistence());
-                client.setCallback(pahoCallback);
+                localClient.setCallback(pahoCallback);
                 MqttConnectOptions opts = new MqttConnectOptions();
                 opts.setUserName(user);
                 opts.setPassword(pass.toCharArray());
@@ -296,11 +325,22 @@ public class MqttTransport {
                 opts.setKeepAliveInterval(KEEPALIVE_S);
 
                 Log.i("MQTT", "connecting to " + MQTT_HOST + ":" + MQTT_PORT);
-                client.connect(opts);
-                client.subscribe(topicD2C, 0);
-                Log.i("MQTT", "connected, subscribed " + topicD2C);
-                ok = true;
-                lastConnectError = null;
+                localClient.connect(opts);
+
+                // Only publish to the shared client / subscribe if nothing
+                // superseded us while connect() was blocking - the one
+                // window another tryConnect() could have raced in.
+                synchronized (connectLock) {
+                    if (myGen == connectGeneration) {
+                        localClient.subscribe(topicD2C, 0);
+                        client = localClient;
+                        ok = true;
+                        lastConnectError = null;
+                    } else {
+                        superseded = true;
+                    }
+                }
+                if (ok) Log.i("MQTT", "connected, subscribed " + topicD2C);
             } catch (Exception e) {
                 // The dialog's generic "Rejected by broker" hint used to be
                 // shown for EVERY failure here (bad password, network
@@ -316,6 +356,16 @@ public class MqttTransport {
                 ok = false;
             } finally {
                 connecting = false;
+            }
+
+            if (superseded) {
+                // A newer tryConnect() took over while we were connecting -
+                // this attempt's outcome doesn't matter anymore; clean up
+                // our own client quietly and don't touch shared state or
+                // fire the callback (the superseding attempt owns both).
+                final MqttClient toClose = localClient;
+                try { if (toClose.isConnected()) toClose.disconnect(); toClose.close(); } catch (Exception ignored) { }
+                return;
             }
 
             final boolean finalOk = ok;
@@ -369,10 +419,17 @@ public class MqttTransport {
         return client != null && client.isConnected();
     }
 
-    /** Disconnect and release the client. Call from Main.onDestroy(). */
+    /** Disconnect and release the client. Call from Main.onDestroy(). Also
+     * bumps connectGeneration so an in-flight tryConnect() (if any) notices
+     * it's been superseded and backs off instead of resurrecting a session
+     * right after this explicit disconnect - see tryConnect()'s doc. */
     public void disconnect() {
-        final MqttClient c = client;
-        client = null;
+        final MqttClient c;
+        synchronized (connectLock) {
+            connectGeneration++;
+            c = client;
+            client = null;
+        }
         if (c == null) return;
         new Thread(() -> {
             try {

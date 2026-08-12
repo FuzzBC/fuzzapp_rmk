@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.018
+- Fixed: cloud login could fail with "Connection lost" even with the
+  correct username/password - two connection attempts happening close
+  together (a background retry and a manual save, for example) could
+  interfere with each other and tear down a connection that was actually
+  working. Connection attempts are now properly sequenced so this can't
+  happen.
+
 ## 8.017
 - Fixed: the cloud login dialog showed "Rejected by broker" for any
   connection failure - a bad password, a network hiccup, or anything else,
