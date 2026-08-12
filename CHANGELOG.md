@@ -5,6 +5,12 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.017
+- Fixed: the cloud login dialog showed "Rejected by broker" for any
+  connection failure - a bad password, a network hiccup, or anything else,
+  all looked identical. It now shows the real reason so it's actually
+  possible to tell what went wrong.
+
 ## 8.016
 - Fixed: the console could spam "CLOUD LOST"/"CLOUD FAIL" every few seconds
   during an extended cloud outage. It now logs the failure once per

@@ -912,11 +912,17 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         _Console(false, "☁", "MQTT CRED -> checking with broker...");
         MQTT.tryConnect(user, pass, brokerOk -> {
             if (!brokerOk) {
-                _Toast("MQTT login rejected by broker");
+                // lastConnectError distinguishes an actual auth rejection
+                // from a network/TLS/timeout failure that used to show the
+                // exact same generic "Rejected by broker" hint either way.
+                String detail = MQTT.lastConnectError;
+                String hint = (detail != null) ? ("Connect failed - " + detail) : "Rejected by broker - check username/password";
+                _Toast("MQTT connect failed - see dialog for details");
+                _Console(false, "☁", "{#R}MQTT CRED FAILED{##} " + (detail != null ? detail : "rejected by broker"));
                 if (reopenOnFailure) {
-                    _promptMqttCredentials(user, pass, "Rejected by broker - check username/password");
+                    _promptMqttCredentials(user, pass, hint);
                 } else {
-                    _Console(false, "☁", "{#R}MQTT CRED REJECTED{##} (will retry later)");
+                    _Console(false, "☁", "{#R}MQTT CRED FAILED{##} (will retry later)");
                 }
                 return;
             }

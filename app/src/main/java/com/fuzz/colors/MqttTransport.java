@@ -68,6 +68,7 @@ import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
@@ -123,6 +124,13 @@ public class MqttTransport {
      * only needs to say "it broke" once, not on every single retry.
      * Cleared on the next successful connect (see CLOUD ON below). */
     private boolean cloudDownLogged = false;
+    /** Detail from the most recent tryConnect() failure (reason code +
+     * message for an MqttException, exception class + message otherwise) -
+     * null after a successful connect. Read by MainActivity to show a
+     * specific cause instead of a one-size-fits-all "Rejected by broker"
+     * hint, which used to cover bad credentials, network errors, and TLS
+     * failures identically. */
+    public volatile String lastConnectError;
 
     // --------------------------------------------------------
     // Constructor
@@ -292,8 +300,19 @@ public class MqttTransport {
                 client.subscribe(topicD2C, 0);
                 Log.i("MQTT", "connected, subscribed " + topicD2C);
                 ok = true;
+                lastConnectError = null;
             } catch (Exception e) {
-                Log.e("MQTT", "connect failed: " + e.getMessage());
+                // The dialog's generic "Rejected by broker" hint used to be
+                // shown for EVERY failure here (bad password, network
+                // hiccup, TLS issue, timeout, ...) with no way to tell
+                // which - Log.e() alone isn't visible without a PC+adb
+                // connection, so this is surfaced in-app instead (see
+                // MainActivity._submitMqttCredentials()'s use of this).
+                String detail = (e instanceof MqttException)
+                        ? ("reasonCode=" + ((MqttException) e).getReasonCode() + " " + e.getMessage())
+                        : (e.getClass().getSimpleName() + ": " + e.getMessage());
+                lastConnectError = detail;
+                Log.e("MQTT", "connect failed: " + detail);
                 ok = false;
             } finally {
                 connecting = false;
