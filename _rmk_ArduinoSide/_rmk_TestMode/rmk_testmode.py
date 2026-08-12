@@ -126,6 +126,13 @@ def cmd_send(args):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(args.timeout)
+    # Both firmwares reply to the FIXED port they themselves listen on (see
+    # AppLink.cpp's rawSend(): APP_UDP.beginPacket(APP_RECV_IP, APP_UDP_PORT)),
+    # not to our ephemeral source port - bind here or every ack/reply is sent
+    # into a socket nobody's listening on and this silently "times out"
+    # forever even though the device answered every single time. Matches
+    # udp_send.ps1 (TestMode.hta's own sender) and the original net.py.
+    sock.bind(("", args.port))
     sock.sendto(frame, (args.host, args.port))
     print("-> %s seq=%d flags=0x%02X payload=%s (%d bytes on wire)" % (
         opcode_name, args.seq, flags, payload.hex(), len(frame)))

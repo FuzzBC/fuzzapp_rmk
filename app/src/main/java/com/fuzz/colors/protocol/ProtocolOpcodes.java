@@ -77,6 +77,7 @@ public final class ProtocolOpcodes {
         public static final byte SET_TEST_DIFFUSER = (byte) 0x42;  // link=B dir=cmd ack=RELAY
         public static final byte SET_TEST_LUX = (byte) 0x43;  // link=B dir=cmd ack=FAST
         public static final byte SET_TELNET_ENABLE = (byte) 0x44;  // link=B dir=cmd ack=FAST
+        public static final byte SET_TELNET_VERBOSITY = (byte) 0x45;  // link=B dir=cmd ack=FAST
         public static final byte SET_MQTT_CREDENTIALS = (byte) 0x50;  // link=B dir=cmd ack=SLOW
         public static final byte DIFFUSER_STATUS_QUERY = (byte) 0x60;  // link=both dir=cmd ack=RELAY
         public static final byte DIFFUSER_HISTORY_QUERY = (byte) 0x61;  // link=both dir=cmd ack=RELAY
@@ -129,6 +130,7 @@ public final class ProtocolOpcodes {
             case Opcode.SET_TEST_DIFFUSER: return "SET_TEST_DIFFUSER";
             case Opcode.SET_TEST_LUX: return "SET_TEST_LUX";
             case Opcode.SET_TELNET_ENABLE: return "SET_TELNET_ENABLE";
+            case Opcode.SET_TELNET_VERBOSITY: return "SET_TELNET_VERBOSITY";
             case Opcode.SET_MQTT_CREDENTIALS: return "SET_MQTT_CREDENTIALS";
             case Opcode.DIFFUSER_STATUS_QUERY: return "DIFFUSER_STATUS_QUERY";
             case Opcode.DIFFUSER_HISTORY_QUERY: return "DIFFUSER_HISTORY_QUERY";
@@ -615,6 +617,22 @@ public final class ProtocolOpcodes {
             SetTelnetEnablePayload p = new SetTelnetEnablePayload();
             int i = offset;
             p.on = in[i++] & 0xFF;
+            return p;
+        }
+    }
+    public static final class SetTelnetVerbosityPayload {
+        public int level;
+        public static final int SIZE = 1;
+        public byte[] pack() {
+            byte[] out = new byte[SIZE];
+            int i = 0;
+            out[i++] = (byte) level;
+            return out;
+        }
+        public static SetTelnetVerbosityPayload unpack(byte[] in, int offset) {
+            SetTelnetVerbosityPayload p = new SetTelnetVerbosityPayload();
+            int i = offset;
+            p.level = in[i++] & 0xFF;
             return p;
         }
     }

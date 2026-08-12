@@ -71,6 +71,7 @@
     {"code": "0x42", "name": "SET_TEST_DIFFUSER",                                 "link": "B", "dir": "cmd", "ack": "RELAY", "fields": [{"name": "value", "type": "u8"}]},
     {"code": "0x43", "name": "SET_TEST_LUX",                                       "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "level", "type": "u8"}]},
     {"code": "0x44", "name": "SET_TELNET_ENABLE",                                  "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "on", "type": "u8"}], "note": "flashed OFF, no EEPROM persistence - only ever armed by an explicit command, never survives a reboot/reflash unattended (00_PLAN.md SS9 R1)"},
+    {"code": "0x45", "name": "SET_TELNET_VERBOSITY",                               "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "level", "type": "u8"}], "note": "0 normal (ERR/WRN/INF), 1 debug (+DBG), 2 verbose (+SEC/GAP) - filters termMsgLog()'s Telnet mirror only, not the UDP/MQTT LOG frame. Not persisted, same as SET_TELNET_ENABLE - resets to normal on reboot."},
     {"code": "0x50", "name": "SET_MQTT_CREDENTIALS",                                "link": "B", "dir": "cmd", "ack": "SLOW", "fields": [{"name": "cred", "type": "raw"}], "note": "userLen(u8)+user+passLen(u8)+pass, raw bytes (no base64 needed - v1 frames aren't ASCII-constrained)"},
 
     {"code": "0x60", "name": "DIFFUSER_STATUS_QUERY",                                "link": "both", "dir": "cmd", "ack": "RELAY", "fields": [{"name": "verbose", "type": "u8"}]},

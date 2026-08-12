@@ -415,7 +415,10 @@ typedef struct HBx { int Phase = 0; int ParamA = 0; SCHED::TaskId TaskID = SCHED
 
 /* --- TELNET (new capability - see 00_PLAN.md SS9 R1) --- */
 #define TELNET_PORT   23
-typedef struct TELNETx { bool Enabled = false; } TELNETx;
+// Verbosity gates termMsgLog()'s Telnet mirror only (see AppLink.cpp) -
+// 0 normal (ERR/WRN/INF), 1 debug (+DBG), 2 verbose (+SEC/GAP). Neither
+// EEPROM-persisted, same as Enabled - always starts at normal (0) on boot.
+typedef struct TELNETx { bool Enabled = false; uint8_t Verbosity = 0; } TELNETx;
 
 /* =========================================================================== */
 /* GLOBAL STATE - extern declarations (defined in Globals.cpp)                 */

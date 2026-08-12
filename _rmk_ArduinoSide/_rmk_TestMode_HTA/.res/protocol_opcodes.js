@@ -85,6 +85,7 @@ var Proto = (function () {
     SET_TEST_DIFFUSER: 0x42, // link=B dir=cmd ack=RELAY
     SET_TEST_LUX: 0x43, // link=B dir=cmd ack=FAST
     SET_TELNET_ENABLE: 0x44, // link=B dir=cmd ack=FAST
+    SET_TELNET_VERBOSITY: 0x45, // link=B dir=cmd ack=FAST
     SET_MQTT_CREDENTIALS: 0x50, // link=B dir=cmd ack=SLOW
     DIFFUSER_STATUS_QUERY: 0x60, // link=both dir=cmd ack=RELAY
     DIFFUSER_HISTORY_QUERY: 0x61, // link=both dir=cmd ack=RELAY
@@ -135,6 +136,7 @@ var Proto = (function () {
     0x42: "SET_TEST_DIFFUSER",
     0x43: "SET_TEST_LUX",
     0x44: "SET_TELNET_ENABLE",
+    0x45: "SET_TELNET_VERBOSITY",
     0x50: "SET_MQTT_CREDENTIALS",
     0x60: "DIFFUSER_STATUS_QUERY",
     0x61: "DIFFUSER_HISTORY_QUERY",
@@ -507,6 +509,18 @@ var Proto = (function () {
     return out;
   }
 
+  function packSetTelnetVerbosity(level) {
+    var s = '';
+    s += String.fromCharCode(level & 0xFF);
+    return s;
+  }
+  function unpackSetTelnetVerbosity(data, offset) {
+    offset = offset || 0;
+    var out = {}, i = offset;
+    out.level = data.charCodeAt(i) & 0xFF; i += 1;
+    return out;
+  }
+
   function packDiffuserStatusQuery(verbose) {
     var s = '';
     s += String.fromCharCode(verbose & 0xFF);
@@ -628,6 +642,7 @@ var Proto = (function () {
     packSetTestDiffuser: packSetTestDiffuser, unpackSetTestDiffuser: unpackSetTestDiffuser,
     packSetTestLux: packSetTestLux, unpackSetTestLux: unpackSetTestLux,
     packSetTelnetEnable: packSetTelnetEnable, unpackSetTelnetEnable: unpackSetTelnetEnable,
+    packSetTelnetVerbosity: packSetTelnetVerbosity, unpackSetTelnetVerbosity: unpackSetTelnetVerbosity,
     packDiffuserStatusQuery: packDiffuserStatusQuery, unpackDiffuserStatusQuery: unpackDiffuserStatusQuery,
     packDiffuserHistoryRemove: packDiffuserHistoryRemove, unpackDiffuserHistoryRemove: unpackDiffuserHistoryRemove,
     packDiffuserParfumStart: packDiffuserParfumStart, unpackDiffuserParfumStart: unpackDiffuserParfumStart,

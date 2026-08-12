@@ -1,5 +1,16 @@
 #include "Telnet.h"
 #include "Globals.h"
+// APP::termMsgLog() for the one-line trace below - kept in (not "TEMP") on
+// purpose: live-tested and confirmed this client-accept branch never fires
+// on this board at all, even after a full TCP handshake AND the client
+// sending data - WiFiS3's WiFiServer::available() appears to just never
+// recognize a pending client here, unlike the identical pattern on the
+// Diffuser's ESP8266 core (confirmed working there). Root cause is inside
+// the WiFiS3 library, not this code - not chased further since the UDP/
+// MQTT LOG frame termMsgLog() always sends (see AppLink.cpp) already
+// covers live diagnostics without depending on this. Left wired in case a
+// future WiFiS3 update fixes it - this trace is how you'd confirm that.
+#include "AppLink.h"
 
 namespace TELNET {
 
@@ -27,6 +38,7 @@ void Loop() {
     if (incoming) {
         if (TELNET_Cli.connected()) TELNET_Cli.stop();
         TELNET_Cli = incoming;
+        APP::termMsgLog(APP_LOG_WRN, APP_SRC_SYS, "APP", "Telnet::Loop", "client accepted, connected=[%d]", (int)TELNET_Cli.connected());
     }
 }
 
@@ -37,6 +49,14 @@ void SetEnabled(bool on) {
 
 bool IsEnabled() {
     return TELNET::State.Enabled;
+}
+
+void SetVerbosity(uint8_t level) {
+    TELNET::State.Verbosity = level;
+}
+
+uint8_t Verbosity() {
+    return TELNET::State.Verbosity;
 }
 
 /** Mirrors one line to the connected client - no-op while disabled or no

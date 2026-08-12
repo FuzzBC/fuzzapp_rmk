@@ -80,6 +80,7 @@ const char* OpcodeName(Opcode op) {
         case Opcode::SET_TEST_DIFFUSER: return "SET_TEST_DIFFUSER";
         case Opcode::SET_TEST_LUX: return "SET_TEST_LUX";
         case Opcode::SET_TELNET_ENABLE: return "SET_TELNET_ENABLE";
+        case Opcode::SET_TELNET_VERBOSITY: return "SET_TELNET_VERBOSITY";
         case Opcode::SET_MQTT_CREDENTIALS: return "SET_MQTT_CREDENTIALS";
         case Opcode::DIFFUSER_STATUS_QUERY: return "DIFFUSER_STATUS_QUERY";
         case Opcode::DIFFUSER_HISTORY_QUERY: return "DIFFUSER_HISTORY_QUERY";
@@ -434,6 +435,18 @@ bool Unpack(const uint8_t* in, size_t len, SetTelnetEnablePayload& out) {
     if (len < SET_TELNET_ENABLE_SIZE) return false;
     size_t i = 0;
     out.on = in[i++];
+    return true;
+}
+
+size_t Pack(const SetTelnetVerbosityPayload& p, uint8_t* out) {
+    size_t i = 0;
+    out[i++] = (uint8_t)p.level;
+    return i;
+}
+bool Unpack(const uint8_t* in, size_t len, SetTelnetVerbosityPayload& out) {
+    if (len < SET_TELNET_VERBOSITY_SIZE) return false;
+    size_t i = 0;
+    out.level = in[i++];
     return true;
 }
 

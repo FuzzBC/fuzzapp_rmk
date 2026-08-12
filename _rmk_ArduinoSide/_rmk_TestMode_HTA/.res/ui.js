@@ -69,6 +69,22 @@
     renderRawTransport();
     closeSheet();
     closeQuickCommands();
+    autoConnect(key);
+  }
+
+  // Eagerly refreshes the hero on every tab switch instead of waiting for a
+  // manual "Connect"/"Check status" press - SmartTV's HELLO happens to
+  // trigger a full telemetry burst so this looked automatic there already,
+  // but Diffuser's HELLO only ACKs (no telemetry), so its hero silently sat
+  // on "no data yet" until you noticed the differently-labelled "Check
+  // status" button was the equivalent action. Firing the real status query
+  // here removes that asymmetry instead of just documenting it.
+  function autoConnect(key) {
+    if (key === 'diffuser') {
+      fire(findSpec('DifStatus'), Proto.packDiffuserStatusQuery(0), {});
+    } else {
+      fire(findSpec('Hello'), Proto.packHello(1), {});
+    }
   }
 
   function toggleKeepAlive() {

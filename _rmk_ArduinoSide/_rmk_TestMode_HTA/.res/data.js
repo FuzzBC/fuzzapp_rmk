@@ -277,6 +277,9 @@ var SMARTTV_COMMANDS = [
   { id: 'SetTelnetEnable', opcode: 'SET_TELNET_ENABLE', transport: 'udp', section: 'UDP :8472 - ambient/telnet', name: 'Enable/disable remote Telnet', label: 'SET_TELNET_ENABLE',
     desc: 'Flashed OFF, no EEPROM persistence - only ever armed by this command, never survives a reboot unattended',
     direct_buttons: [[Proto.packSetTelnetEnable(0), 'Disable'], [Proto.packSetTelnetEnable(1), 'Enable']] },
+  { id: 'SetTelnetVerbosity', opcode: 'SET_TELNET_VERBOSITY', transport: 'udp', section: 'UDP :8472 - ambient/telnet', name: 'Set Telnet verbosity', label: 'SET_TELNET_VERBOSITY',
+    desc: 'Filters termMsgLog()\'s Telnet mirror only (not the UDP/MQTT LOG frame). Not persisted - resets to normal on reboot.',
+    direct_buttons: [[Proto.packSetTelnetVerbosity(0), 'Normal'], [Proto.packSetTelnetVerbosity(1), 'Debug'], [Proto.packSetTelnetVerbosity(2), 'Verbose']] },
 
   { id: 'SetMqttCreds', opcode: 'SET_MQTT_CREDENTIALS', transport: 'udp', section: 'UDP :8472 - mqtt', name: 'Set MQTT cloud credentials', label: 'SET_MQTT_CREDENTIALS',
     desc: 'userLen(u8)+user+passLen(u8)+pass, raw bytes - hand-built (raw field in protocol_table.json)',

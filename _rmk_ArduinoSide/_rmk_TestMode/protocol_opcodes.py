@@ -83,6 +83,7 @@ class Opcode:
     SET_TEST_DIFFUSER = 0x42  # link=B dir=cmd ack=RELAY
     SET_TEST_LUX = 0x43  # link=B dir=cmd ack=FAST
     SET_TELNET_ENABLE = 0x44  # link=B dir=cmd ack=FAST
+    SET_TELNET_VERBOSITY = 0x45  # link=B dir=cmd ack=FAST
     SET_MQTT_CREDENTIALS = 0x50  # link=B dir=cmd ack=SLOW
     DIFFUSER_STATUS_QUERY = 0x60  # link=both dir=cmd ack=RELAY
     DIFFUSER_HISTORY_QUERY = 0x61  # link=both dir=cmd ack=RELAY
@@ -133,6 +134,7 @@ OPCODE_NAMES = {
     0x42: "SET_TEST_DIFFUSER",
     0x43: "SET_TEST_LUX",
     0x44: "SET_TELNET_ENABLE",
+    0x45: "SET_TELNET_VERBOSITY",
     0x50: "SET_MQTT_CREDENTIALS",
     0x60: "DIFFUSER_STATUS_QUERY",
     0x61: "DIFFUSER_HISTORY_QUERY",
@@ -282,6 +284,11 @@ def pack_set_telnet_enable(on):
     return struct.pack(">B", on)
 def unpack_set_telnet_enable(data):
     return dict(zip(['on'], struct.unpack(">B", data[:struct.calcsize(">B")])))
+
+def pack_set_telnet_verbosity(level):
+    return struct.pack(">B", level)
+def unpack_set_telnet_verbosity(data):
+    return dict(zip(['level'], struct.unpack(">B", data[:struct.calcsize(">B")])))
 
 def pack_diffuser_status_query(verbose):
     return struct.pack(">B", verbose)

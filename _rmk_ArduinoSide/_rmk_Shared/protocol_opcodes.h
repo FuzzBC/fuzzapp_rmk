@@ -75,6 +75,7 @@ enum class Opcode : uint8_t {
     SET_TEST_DIFFUSER          = 0x42,  // link=B dir=cmd ack=RELAY
     SET_TEST_LUX               = 0x43,  // link=B dir=cmd ack=FAST
     SET_TELNET_ENABLE          = 0x44,  // link=B dir=cmd ack=FAST
+    SET_TELNET_VERBOSITY       = 0x45,  // link=B dir=cmd ack=FAST
     SET_MQTT_CREDENTIALS       = 0x50,  // link=B dir=cmd ack=SLOW
     DIFFUSER_STATUS_QUERY      = 0x60,  // link=both dir=cmd ack=RELAY
     DIFFUSER_HISTORY_QUERY     = 0x61,  // link=both dir=cmd ack=RELAY
@@ -292,6 +293,13 @@ struct SetTelnetEnablePayload {
 constexpr size_t SET_TELNET_ENABLE_SIZE = 1;
 size_t Pack(const SetTelnetEnablePayload& p, uint8_t* out);
 bool Unpack(const uint8_t* in, size_t len, SetTelnetEnablePayload& out);
+
+struct SetTelnetVerbosityPayload {
+    uint8_t level;
+};
+constexpr size_t SET_TELNET_VERBOSITY_SIZE = 1;
+size_t Pack(const SetTelnetVerbosityPayload& p, uint8_t* out);
+bool Unpack(const uint8_t* in, size_t len, SetTelnetVerbosityPayload& out);
 
 struct DiffuserStatusQueryPayload {
     uint8_t verbose;

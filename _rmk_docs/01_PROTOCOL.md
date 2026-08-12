@@ -165,6 +165,14 @@ drift, not as the primary discovery path anymore.
 | 0x41 | `SET_TEST_MODE` | → | mode (1B, 0x00-0x05) | FAST | interactive |
 | 0x42 | `SET_TEST_DIFFUSER` | → | value (1B: 00 off / 01-04 mode / FF re-roll) | RELAY | interactive |
 | 0x43 | `SET_TEST_LUX` | → | level (1B, 1-4) | FAST | interactive |
+| 0x44 | `SET_TELNET_ENABLE` | → | on/off (1B) | FAST | interactive |
+| 0x45 | `SET_TELNET_VERBOSITY` | → | level (1B: 0 normal / 1 debug / 2 verbose) | FAST | interactive |
+
+`SET_TELNET_ENABLE`/`SET_TELNET_VERBOSITY` are both SmartTV-only, flashed
+OFF/normal with no EEPROM persistence (never survive a reboot/reflash
+unattended - 00_PLAN.md SS9 R1). Verbosity filters `termMsgLog()`'s Telnet
+mirror only (see AppLink.cpp) - the UDP/MQTT LOG frame that same function
+sends is unaffected either way.
 | 0x50 | `SET_MQTT_CREDENTIALS` | → | userLen(1B)+user+passLen(1B)+pass (raw bytes — no base64; MQTT/UDP both carry binary natively in v1, unlike the old ASCII protocol) | SLOW | on demand |
 
 ### Diffuser control (0x60-0x6F, `both` — SmartTV relays these opcodes to/from the Diffuser largely unmodified on Link A; App issues them on Link B and SmartTV plays proxy)

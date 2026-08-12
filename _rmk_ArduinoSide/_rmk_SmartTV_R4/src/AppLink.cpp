@@ -113,7 +113,12 @@ void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func,
     memcpy(payload + 2, text, textLen);
     sendTelemetry(Opcode::LOG, payload, 2 + textLen);
 
-    if (TELNET::IsEnabled()) {
+    // Verbosity gates the mirror only (SET_TELNET_VERBOSITY) - 0 normal
+    // (ERR/WRN/INF), 1 debug (+DBG), 2 verbose (+SEC/GAP). The UDP/MQTT LOG
+    // frame above is always sent regardless; a connected app can already
+    // choose to ignore/filter it client-side if it ever gets noisy.
+    static const uint8_t VERBOSITY_CEILING[] = { APP_LOG_INF, APP_LOG_DBG, APP_LOG_GAP };
+    if (TELNET::IsEnabled() && level <= VERBOSITY_CEILING[TELNET::Verbosity()]) {
         static const char* LEVEL_TAG[] = { "ERR", "WRN", "INF", "DBG", "SEC", "GAP" };
         char line[176];
         snprintf(line, sizeof(line), "[%s] %s\n", (level <= APP_LOG_GAP) ? LEVEL_TAG[level] : "?", text);
@@ -941,6 +946,16 @@ static void dispatch(Opcode opcode, const uint8_t *payload, size_t len, uint8_t 
             if (!Unpack(payload, len, q)) { g_ackResult = AckResult::REJECTED; break; }
             TELNET::SetEnabled(q.on != 0);
             termMsgLog(APP_LOG_WRN, APP_SRC_SYS, "APP", "SetTelnetEnable", "Telnet console [%s]", q.on ? "ENABLED" : "disabled");
+            break;
+        }
+
+        case Opcode::SET_TELNET_VERBOSITY: {
+            SetTelnetVerbosityPayload q{};
+            if (!Unpack(payload, len, q)) { g_ackResult = AckResult::REJECTED; break; }
+            if (q.level > 2) { g_ackResult = AckResult::CLAMPED; q.level = 2; }
+            TELNET::SetVerbosity(q.level);
+            static const char* VERBOSITY_NAME[] = { "normal", "debug", "verbose" };
+            termMsgLog(APP_LOG_WRN, APP_SRC_SYS, "APP", "SetTelnetVerbosity", "Telnet verbosity [%s]", VERBOSITY_NAME[q.level]);
             break;
         }
 
