@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.015
+- Added: a "MQTT CRED" button in the debug panel to reopen the cloud
+  login dialog any time, pre-filled with whatever's currently saved - no
+  more waiting for the app to prompt you automatically. Also added a
+  SHOW/HIDE button next to the password field so you can double-check
+  exactly what's typed or saved.
+
 ## 8.014
 - Fixed: cloud mode required connecting once on your home WiFi before it
   would work, which wasn't always possible (e.g. away from home). The

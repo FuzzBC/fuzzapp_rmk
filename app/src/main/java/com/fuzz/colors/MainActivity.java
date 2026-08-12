@@ -800,12 +800,37 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         if (prefillUser != null) userField.setText(prefillUser);
         layout.addView(userField);
 
+        android.widget.LinearLayout passRow = new android.widget.LinearLayout(this);
+        passRow.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        passRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
         final android.widget.EditText passField = new android.widget.EditText(this);
         passField.setHint("MQTT password");
-        passField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        final int passHiddenType = android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD;
+        final int passVisibleType = android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
+        passField.setInputType(passHiddenType);
         if (prefillPass != null) passField.setText(prefillPass);
-        layout.addView(passField);
+        passField.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        passRow.addView(passField);
+
+        // Plain toggle button, not a password-manager-style icon - this is a
+        // debug/troubleshooting aid (verify exactly what's typed/cached
+        // matches the firmware's credential, character for character), not
+        // a general login form.
+        final android.widget.Button showPassBtn = new android.widget.Button(this);
+        showPassBtn.setText("SHOW");
+        showPassBtn.setOnClickListener(v -> {
+            boolean nowHidden = passField.getInputType() == passHiddenType;
+            passField.setInputType(nowHidden ? passVisibleType : passHiddenType);
+            passField.setSelection(passField.getText().length());   // typeface swap resets cursor otherwise
+            showPassBtn.setText(nowHidden ? "HIDE" : "SHOW");
+        });
+        passRow.addView(showPassBtn);
+
+        layout.addView(passRow);
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Cloud Mode Login");
@@ -1897,6 +1922,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         GridView gv = view.findViewById(R.id.grid_debug_item);
         gv.setAdapter(new DebugGridAdapter());
 
+        AlertDialog alert = builder.create();
+        alert.setCanceledOnTouchOutside(true);
+
         gv.setOnItemClickListener((parent, v, position, id) -> {
             if (position == SET.SET_Debug.length) {          // virtual TELNET cell
                 _TelnetSetEnabled(!telnetEnabled);
@@ -1911,6 +1939,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             if (position == SET.SET_Debug.length + 2) {       // virtual TV TELNET cell
                 _SmartTvTelnetSetEnabled(!smarttvTelnetOn);
                 ((android.widget.BaseAdapter) gv.getAdapter()).notifyDataSetChanged();
+                return;
+            }
+            if (position == SET.SET_Debug.length + 3) {       // virtual MQTT CRED cell
+                alert.dismiss();
+                _promptMqttCredentials(MQTT != null ? MQTT.getUser() : null,
+                        MQTT != null ? MQTT.getPass() : null, null);
                 return;
             }
             DATAs.sendDebug(position);
@@ -1929,8 +1963,6 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             }
         });
 
-        AlertDialog alert = builder.create();
-        alert.setCanceledOnTouchOutside(true);
         alert.show();
 
         int w = (int) (getResources().getDisplayMetrics().widthPixels  * 0.82);
@@ -1941,19 +1973,23 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * Adapter for the 2-col debug grid (icon + name + subtitle per cell).
-     * Three extra virtual cells are appended after SET_Debug[]: TELNET
+     * Four extra virtual cells are appended after SET_Debug[]: TELNET
      * ON/OFF and MQTT LOG ON/OFF (both app-side only, never sent to the
      * Arduino as a K-command - see _TelnetSetEnabled() / _MqttLogSetEnabled()),
-     * and TV TELNET ON/OFF, which DOES send a wire command (SET_TELNET_ENABLE)
+     * TV TELNET ON/OFF, which DOES send a wire command (SET_TELNET_ENABLE)
      * to remotely toggle the SmartTV's own telnet server - see
-     * _SmartTvTelnetSetEnabled().
+     * _SmartTvTelnetSetEnabled() - and MQTT CRED, which reopens the cloud
+     * credentials dialog on demand (pre-filled with whatever's currently
+     * cached) so a rejected/stale pair can be reviewed or retyped without
+     * waiting for one of the narrow automatic re-prompt conditions.
      */
     private class DebugGridAdapter extends BaseAdapter {
-        @Override public int getCount()             { return SET.SET_Debug.length + 3; }
+        @Override public int getCount()             { return SET.SET_Debug.length + 4; }
         @Override public Object getItem(int i)      {
             if (i == SET.SET_Debug.length)     return "TELNET";
             if (i == SET.SET_Debug.length + 1) return "MQTT LOG";
             if (i == SET.SET_Debug.length + 2) return "TV TELNET";
+            if (i == SET.SET_Debug.length + 3) return "MQTT CRED";
             return SET.SET_Debug[i];
         }
         @Override public long getItemId(int i)      { return i; }
@@ -1997,6 +2033,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 name.setText("TV TELNET");
                 sub.setText(smarttvTelnetOn ? "server ON" : "server OFF");
                 sub.setTextColor(smarttvTelnetOn
+                        ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
+                        : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
+            } else if (position == SET.SET_Debug.length + 3) { // virtual MQTT CRED cell
+                icon.setText("🔑");                  // 🔑
+                name.setText("MQTT CRED");
+                boolean has = MQTT != null && MQTT.hasCredentials();
+                sub.setText(has ? "saved" : "none saved");
+                sub.setTextColor(has
                         ? ThemeManager.getColor(MainActivity.this, R.color.telnet_status_connected)
                         : ThemeManager.getColor(MainActivity.this, R.color.telnet_status_error));
             } else {
