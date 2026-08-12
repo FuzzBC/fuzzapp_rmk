@@ -1,4 +1,4 @@
-# Publishes the just-built release APK as a GitHub release on FuzzBC/fuzzapp.
+# Publishes the just-built release APK as a GitHub release on FuzzBC/fuzzapp_rmk.
 # Tag is V<versionName> (e.g. V1.003) - UpdateChecker.java pulls the numeric
 # versionCode back out of it (the part after the last '.') to compare.
 #
@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $root  = $PSScriptRoot
 $owner = 'FuzzBC'
-$repo  = 'fuzzapp'
+$repo  = 'fuzzapp_rmk'
 
 $propsPath = Join-Path $root 'github_release.properties'
 if (-not (Test-Path $propsPath)) {

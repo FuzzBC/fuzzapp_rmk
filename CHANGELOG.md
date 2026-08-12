@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.011
+- Added: a "TV TELNET" toggle in the debug panel to remotely enable or
+  disable the SmartTV's diagnostic Telnet server.
+- Internal: rebuilt how the app talks to the SmartTV and Diffuser (a more
+  reliable binary format instead of plain text). No other visible changes,
+  but this build only works with matching firmware - it will not talk to
+  an older device.
+
 ## 8.008
 - Security/repo hygiene (no effect on the app itself): the Arduino firmware's
   WiFi and OTA passwords are no longer hardcoded in source. They now live in
