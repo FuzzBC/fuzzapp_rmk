@@ -5,6 +5,11 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.016
+- Fixed: the console could spam "CLOUD LOST"/"CLOUD FAIL" every few seconds
+  during an extended cloud outage. It now logs the failure once per
+  outage instead of on every retry.
+
 ## 8.015
 - Added: a "MQTT CRED" button in the debug panel to reopen the cloud
   login dialog any time, pre-filled with whatever's currently saved - no
