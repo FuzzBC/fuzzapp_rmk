@@ -207,6 +207,40 @@ var ResultView = (function () {
     container.appendChild(wrap);
   }
 
+  // LOG_LEVEL_NAMES (Engine.decodePayload's `fields.level`) -> .dbg-* CSS
+  // class/short tag - mirrors the firmware's APP_LogLevel enum (Globals.h):
+  // ERROR/WARN/INFO/DEBUG are per-line rows, SECTION is a plain header line
+  // (no level tag), GAP is just a blank spacer - matches app.css's .dbg-*
+  // rules, which existed but were never wired to anything until now (a
+  // multi-line LOG dump - e.g. DIAG_HEALTH - used to fall through to the
+  // plain, uncolored replyList() below instead).
+  var DBG_LEVEL_INFO = {
+    ERROR: ['dbg-error', 'ERR'], WARN: ['dbg-warn', 'WRN'],
+    INFO: ['dbg-info', 'INF'], DEBUG: ['dbg-debug', 'DBG']
+  };
+  function isAllLog(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      if (!entries[i].parsed || entries[i].parsed.opcodeName !== 'LOG') return false;
+    }
+    return entries.length > 0;
+  }
+  function logDumpView(container, entries) {
+    var wrap = el('div', 'dbg-list');
+    entries.forEach(function (e) {
+      var d = Engine.decodePayload(e.parsed.opcode, e.parsed.payload);
+      var f = d.fields;
+      if (!f) { wrap.appendChild(el('div', 'res-list-line', e.desc || '(malformed LOG)')); return; }
+      if (f.level === 'SECTION') { wrap.appendChild(el('div', 'dbg-section', f.text)); return; }
+      if (f.level === 'GAP') { wrap.appendChild(el('div', 'dbg-gap')); return; }
+      var info = DBG_LEVEL_INFO[f.level] || DBG_LEVEL_INFO.INFO;
+      var row = el('div', 'dbg-row ' + info[0]);
+      row.appendChild(el('div', 'dbg-level', info[1]));
+      row.appendChild(el('div', 'dbg-text', f.text));
+      wrap.appendChild(row);
+    });
+    container.appendChild(wrap);
+  }
+
   // sendResult: whatever Engine.send()'s callback received.
   function render(container, spec, sendResult, sentVals) {
     clear(container);
@@ -224,7 +258,10 @@ var ResultView = (function () {
     var entries = sendResult.entries || [];
     var render_ = spec.render || {};
 
-    if (entries.length > 1) replyList(container, entries);
+    if (entries.length > 1) {
+      if (isAllLog(entries)) logDumpView(container, entries);
+      else replyList(container, entries);
+    }
 
     var first = entries.length ? entries[0] : null;
     var payload = first ? first.parsed.payload : '';
