@@ -159,9 +159,19 @@ public class MqttTransport {
         return _prefs().getString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
     }
 
-    /** @param deviceId  The controller's WiFi MAC (12 hex chars, no separators). */
+    /**
+     * @param deviceId  The controller's WiFi MAC (12 hex chars, no separators).
+     * Learned locally from TELEM_DEVICE_ID (see DataReceive._recvDeviceId()) -
+     * the cloud topic is per-device and this is the only way the app finds
+     * out the real one instead of using DEFAULT_DEVICE_ID. If a session is
+     * already live under the old (wrong) topic, drop and reconnect so the
+     * fix takes effect immediately rather than waiting for the next app
+     * restart - same reasoning tryConnect() uses for a credential change.
+     */
     public void setDeviceId(String deviceId) {
+        if (deviceId.equals(getDeviceId())) return;
         _prefs().edit().putString(KEY_DEVICE_ID, deviceId).apply();
+        if (isConnected()) { disconnect(); connect(); }
     }
 
     /**

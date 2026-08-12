@@ -5,6 +5,15 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.012
+- Fixed: cloud mode (used automatically when your phone has no local WiFi)
+  could get stuck showing "CLOUD - NO REPLY" forever, even though the
+  broker connection itself was fine. The app now learns the SmartTV's real
+  cloud address the first time it connects over local WiFi, instead of
+  using a placeholder that never matched. Requires one local-WiFi
+  connection after updating (both the app and the SmartTV firmware) for
+  the fix to take effect before cloud-only mode works again.
+
 ## 8.011
 - Added: a "TV TELNET" toggle in the debug panel to remotely enable or
   disable the SmartTV's diagnostic Telnet server.

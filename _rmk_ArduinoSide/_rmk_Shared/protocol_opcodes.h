@@ -69,6 +69,7 @@ enum class Opcode : uint8_t {
     TELEM_LINK                 = 0x33,  // link=B dir=telem ack=NONE
     TELEM_FAULTS               = 0x34,  // link=B dir=telem ack=NONE
     TELEM_TEST_MODE            = 0x35,  // link=B dir=telem ack=NONE
+    TELEM_DEVICE_ID            = 0x36,  // link=B dir=telem ack=NONE
     SET_AMBIENT_MODE           = 0x40,  // link=B dir=cmd ack=FAST
     SET_TEST_MODE              = 0x41,  // link=B dir=cmd ack=FAST
     SET_TEST_DIFFUSER          = 0x42,  // link=B dir=cmd ack=RELAY
@@ -249,6 +250,13 @@ struct TelemTestModePayload {
 constexpr size_t TELEM_TEST_MODE_SIZE = 1;
 size_t Pack(const TelemTestModePayload& p, uint8_t* out);
 bool Unpack(const uint8_t* in, size_t len, TelemTestModePayload& out);
+
+struct TelemDeviceIdPayload {
+    uint8_t device_id[12];
+};
+constexpr size_t TELEM_DEVICE_ID_SIZE = 12;
+size_t Pack(const TelemDeviceIdPayload& p, uint8_t* out);
+bool Unpack(const uint8_t* in, size_t len, TelemDeviceIdPayload& out);
 
 struct SetAmbientModePayload {
     uint8_t on;

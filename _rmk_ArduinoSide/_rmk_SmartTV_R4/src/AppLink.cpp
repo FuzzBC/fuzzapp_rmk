@@ -374,6 +374,18 @@ void updSettings() {
     sendTelemetry(Opcode::TELEM_SETTINGS_FULL, buf, n);
 }
 
+/** Sends this board's MQTT device ID (12 ASCII hex chars, same string
+    NET::DeviceId() builds the fuzz/<id>/... topics from) so the app can
+    learn it locally and cache it for the cloud fallback path - the MQTT
+    topic is per-device and the app has no other way to discover it. */
+static void updDeviceId() {
+    TelemDeviceIdPayload p{};
+    memcpy(p.device_id, NET::DeviceId(), sizeof(p.device_id));
+    uint8_t buf[TELEM_DEVICE_ID_SIZE];
+    size_t n = Pack(p, buf);
+    sendTelemetry(Opcode::TELEM_DEVICE_ID, buf, n);
+}
+
 /** Arms every dirty-gated group (except faults) to resend on next push -
     called before updStatus() on welcome/resume for a full sync. */
 static void TxCacheReset() {
@@ -436,6 +448,8 @@ static void T_END_TEST_MODE(SCHED::TaskId taskId) {
 
 static void cmdConnected(uint8_t transport) {
     State.ActiveProtocol = transport;
+
+    updDeviceId();
 
     TelemMaxBrightnessPayload maxBr{ (uint8_t)APP_BRIGHT };
     uint8_t maxBrBuf[TELEM_MAX_BRIGHTNESS_SIZE];

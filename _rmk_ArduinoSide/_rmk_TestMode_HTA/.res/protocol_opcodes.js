@@ -79,6 +79,7 @@ var Proto = (function () {
     TELEM_LINK: 0x33, // link=B dir=telem ack=NONE
     TELEM_FAULTS: 0x34, // link=B dir=telem ack=NONE
     TELEM_TEST_MODE: 0x35, // link=B dir=telem ack=NONE
+    TELEM_DEVICE_ID: 0x36, // link=B dir=telem ack=NONE
     SET_AMBIENT_MODE: 0x40, // link=B dir=cmd ack=FAST
     SET_TEST_MODE: 0x41, // link=B dir=cmd ack=FAST
     SET_TEST_DIFFUSER: 0x42, // link=B dir=cmd ack=RELAY
@@ -128,6 +129,7 @@ var Proto = (function () {
     0x33: "TELEM_LINK",
     0x34: "TELEM_FAULTS",
     0x35: "TELEM_TEST_MODE",
+    0x36: "TELEM_DEVICE_ID",
     0x40: "SET_AMBIENT_MODE",
     0x41: "SET_TEST_MODE",
     0x42: "SET_TEST_DIFFUSER",
@@ -433,6 +435,18 @@ var Proto = (function () {
     return out;
   }
 
+  function packTelemDeviceId(device_id) {
+    var s = '';
+    for (var idevice_id = 0; idevice_id < 12; idevice_id++) s += String.fromCharCode(device_id.charCodeAt(idevice_id) & 0xFF);
+    return s;
+  }
+  function unpackTelemDeviceId(data, offset) {
+    offset = offset || 0;
+    var out = {}, i = offset;
+    out.device_id = data.substr(i, 12); i += 12;
+    return out;
+  }
+
   function packSetAmbientMode(on) {
     var s = '';
     s += String.fromCharCode(on & 0xFF);
@@ -608,6 +622,7 @@ var Proto = (function () {
     packTelemLink: packTelemLink, unpackTelemLink: unpackTelemLink,
     packTelemFaults: packTelemFaults, unpackTelemFaults: unpackTelemFaults,
     packTelemTestMode: packTelemTestMode, unpackTelemTestMode: unpackTelemTestMode,
+    packTelemDeviceId: packTelemDeviceId, unpackTelemDeviceId: unpackTelemDeviceId,
     packSetAmbientMode: packSetAmbientMode, unpackSetAmbientMode: unpackSetAmbientMode,
     packSetTestMode: packSetTestMode, unpackSetTestMode: unpackSetTestMode,
     packSetTestDiffuser: packSetTestDiffuser, unpackSetTestDiffuser: unpackSetTestDiffuser,

@@ -562,6 +562,8 @@ public class DataReceive {
             _recvSettingsOne(f.payload);
         } else if (opcode == ProtocolOpcodes.Opcode.TELEM_SAVE_RESULT) {
             _recvSaved(f.payload);
+        } else if (opcode == ProtocolOpcodes.Opcode.TELEM_DEVICE_ID) {
+            _recvDeviceId(f.payload);
         } else if (opcode == ProtocolOpcodes.Opcode.TELEM_STATUS) {
             _recvStatus(f.payload);
         } else if (opcode == ProtocolOpcodes.Opcode.TELEM_CLIMATE) {
@@ -746,6 +748,21 @@ public class DataReceive {
         Main._Console(true, "◄◄", (result == 0)
                 ? "SETTINGS SAVED [OK]"
                 : "SETTINGS SAVE [{#R}FAILED{##}] code [" + result + "]");
+    }
+
+    /**
+     * TELEM_DEVICE_ID - the controller's own MQTT device id (12 ASCII hex
+     * chars, its WiFi MAC), sent as part of the HELLO burst. Only ever
+     * arrives over a working transport (local UDP in practice, since a
+     * mismatched cloud topic can't deliver anything until this is learned),
+     * so this is how the app bootstraps the cloud-fallback topic instead of
+     * sitting on MqttTransport.DEFAULT_DEVICE_ID forever.
+     */
+    private void _recvDeviceId(byte[] payload) {
+        if (payload.length < 12 || Main.MQTT == null) return;
+        String deviceId = new String(payload, 0, 12, java.nio.charset.StandardCharsets.US_ASCII);
+        Log.v("DATA_R", "Device id: " + deviceId);
+        Main.MQTT.setDeviceId(deviceId);
     }
 
     /**

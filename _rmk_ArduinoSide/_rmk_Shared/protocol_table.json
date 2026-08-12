@@ -64,6 +64,7 @@
     {"code": "0x33", "name": "TELEM_LINK",                                   "link": "B", "dir": "telem", "ack": "NONE", "fields": [{"name": "rssi_bucket", "type": "u8"}, {"name": "wifi_state", "type": "u8"}]},
     {"code": "0x34", "name": "TELEM_FAULTS",                                  "link": "B", "dir": "telem", "ack": "NONE", "fields": [{"name": "mask", "type": "u16"}]},
     {"code": "0x35", "name": "TELEM_TEST_MODE",                                "link": "B", "dir": "telem", "ack": "NONE", "fields": [{"name": "mode", "type": "u8"}]},
+    {"code": "0x36", "name": "TELEM_DEVICE_ID",                                "link": "B", "dir": "telem", "ack": "NONE", "fields": [{"name": "device_id", "type": "bytes", "len": 12}], "note": "12 ASCII hex chars, exact string NET::DeviceId() returns - lets the app learn this board's MQTT topic (fuzz/<device_id>/...) instead of using a placeholder. Sent as part of the HELLO telemetry burst."},
 
     {"code": "0x40", "name": "SET_AMBIENT_MODE",                                "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "on", "type": "u8"}]},
     {"code": "0x41", "name": "SET_TEST_MODE",                                    "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "mode", "type": "u8"}]},

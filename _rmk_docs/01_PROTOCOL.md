@@ -147,6 +147,14 @@ which SmartTV mostly relays unmodified). `Dir` = `→` sender-initiated command,
 | 0x33 | `TELEM_LINK` | ⇐ | rssi-bucket(1B, 0-4) + wifi-state(1B) | — | dirty on bucket change |
 | 0x34 | `TELEM_FAULTS` | ⇐ | bitmask (2B) | — | transition-only, never on welcome |
 | 0x35 | `TELEM_TEST_MODE` | ⇐ | mode (1B) | — | on entry + self-cancel |
+| 0x36 | `TELEM_DEVICE_ID` | ⇐ | device_id (12B ASCII hex, `NET::DeviceId()`) | — | on HELLO burst only |
+
+`TELEM_DEVICE_ID` is how the app learns this board's MQTT device id (the
+`fuzz/<device_id>/...` topic path) instead of sitting on a placeholder -
+there's no other discovery channel, so this only ever gets through over a
+transport that's already working (local UDP in practice; a cloud session
+using the wrong topic can't receive it). See DataReceive._recvDeviceId()
+and MqttTransport.setDeviceId() on the app side.
 
 ### Ambient / Test Mode (0x40-0x4F, Link B)
 

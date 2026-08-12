@@ -74,6 +74,7 @@ const char* OpcodeName(Opcode op) {
         case Opcode::TELEM_LINK: return "TELEM_LINK";
         case Opcode::TELEM_FAULTS: return "TELEM_FAULTS";
         case Opcode::TELEM_TEST_MODE: return "TELEM_TEST_MODE";
+        case Opcode::TELEM_DEVICE_ID: return "TELEM_DEVICE_ID";
         case Opcode::SET_AMBIENT_MODE: return "SET_AMBIENT_MODE";
         case Opcode::SET_TEST_MODE: return "SET_TEST_MODE";
         case Opcode::SET_TEST_DIFFUSER: return "SET_TEST_DIFFUSER";
@@ -361,6 +362,18 @@ bool Unpack(const uint8_t* in, size_t len, TelemTestModePayload& out) {
     if (len < TELEM_TEST_MODE_SIZE) return false;
     size_t i = 0;
     out.mode = in[i++];
+    return true;
+}
+
+size_t Pack(const TelemDeviceIdPayload& p, uint8_t* out) {
+    size_t i = 0;
+    for (size_t k = 0; k < 12; k++) out[i++] = p.device_id[k];
+    return i;
+}
+bool Unpack(const uint8_t* in, size_t len, TelemDeviceIdPayload& out) {
+    if (len < TELEM_DEVICE_ID_SIZE) return false;
+    size_t i = 0;
+    for (size_t k = 0; k < 12; k++) out.device_id[k] = in[i++];
     return true;
 }
 

@@ -77,6 +77,7 @@ class Opcode:
     TELEM_LINK = 0x33  # link=B dir=telem ack=NONE
     TELEM_FAULTS = 0x34  # link=B dir=telem ack=NONE
     TELEM_TEST_MODE = 0x35  # link=B dir=telem ack=NONE
+    TELEM_DEVICE_ID = 0x36  # link=B dir=telem ack=NONE
     SET_AMBIENT_MODE = 0x40  # link=B dir=cmd ack=FAST
     SET_TEST_MODE = 0x41  # link=B dir=cmd ack=FAST
     SET_TEST_DIFFUSER = 0x42  # link=B dir=cmd ack=RELAY
@@ -126,6 +127,7 @@ OPCODE_NAMES = {
     0x33: "TELEM_LINK",
     0x34: "TELEM_FAULTS",
     0x35: "TELEM_TEST_MODE",
+    0x36: "TELEM_DEVICE_ID",
     0x40: "SET_AMBIENT_MODE",
     0x41: "SET_TEST_MODE",
     0x42: "SET_TEST_DIFFUSER",
@@ -250,6 +252,11 @@ def pack_telem_test_mode(mode):
     return struct.pack(">B", mode)
 def unpack_telem_test_mode(data):
     return dict(zip(['mode'], struct.unpack(">B", data[:struct.calcsize(">B")])))
+
+def pack_telem_device_id(device_id):
+    return struct.pack(">12s", device_id)
+def unpack_telem_device_id(data):
+    return dict(zip(['device_id'], struct.unpack(">12s", data[:struct.calcsize(">12s")])))
 
 def pack_set_ambient_mode(on):
     return struct.pack(">B", on)

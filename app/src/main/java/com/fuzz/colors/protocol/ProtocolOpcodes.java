@@ -71,6 +71,7 @@ public final class ProtocolOpcodes {
         public static final byte TELEM_LINK = (byte) 0x33;  // link=B dir=telem ack=NONE
         public static final byte TELEM_FAULTS = (byte) 0x34;  // link=B dir=telem ack=NONE
         public static final byte TELEM_TEST_MODE = (byte) 0x35;  // link=B dir=telem ack=NONE
+        public static final byte TELEM_DEVICE_ID = (byte) 0x36;  // link=B dir=telem ack=NONE
         public static final byte SET_AMBIENT_MODE = (byte) 0x40;  // link=B dir=cmd ack=FAST
         public static final byte SET_TEST_MODE = (byte) 0x41;  // link=B dir=cmd ack=FAST
         public static final byte SET_TEST_DIFFUSER = (byte) 0x42;  // link=B dir=cmd ack=RELAY
@@ -122,6 +123,7 @@ public final class ProtocolOpcodes {
             case Opcode.TELEM_LINK: return "TELEM_LINK";
             case Opcode.TELEM_FAULTS: return "TELEM_FAULTS";
             case Opcode.TELEM_TEST_MODE: return "TELEM_TEST_MODE";
+            case Opcode.TELEM_DEVICE_ID: return "TELEM_DEVICE_ID";
             case Opcode.SET_AMBIENT_MODE: return "SET_AMBIENT_MODE";
             case Opcode.SET_TEST_MODE: return "SET_TEST_MODE";
             case Opcode.SET_TEST_DIFFUSER: return "SET_TEST_DIFFUSER";
@@ -517,6 +519,22 @@ public final class ProtocolOpcodes {
             TelemTestModePayload p = new TelemTestModePayload();
             int i = offset;
             p.mode = in[i++] & 0xFF;
+            return p;
+        }
+    }
+    public static final class TelemDeviceIdPayload {
+        public byte[] device_id;
+        public static final int SIZE = 12;
+        public byte[] pack() {
+            byte[] out = new byte[SIZE];
+            int i = 0;
+            System.arraycopy(device_id, 0, out, i, 12); i += 12;
+            return out;
+        }
+        public static TelemDeviceIdPayload unpack(byte[] in, int offset) {
+            TelemDeviceIdPayload p = new TelemDeviceIdPayload();
+            int i = offset;
+            p.device_id = new byte[12]; System.arraycopy(in, i, p.device_id, 0, 12); i += 12;
             return p;
         }
     }
