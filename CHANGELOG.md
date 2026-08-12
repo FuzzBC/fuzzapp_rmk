@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.013
+- Fixed: the in-app "update available" check was still looking at the old
+  project's releases, so it could never see a new version here. This build
+  still won't detect itself (you're reading this because you already
+  installed it by hand) - but from here on, future updates should show up
+  automatically.
+
 ## 8.012
 - Fixed: cloud mode (used automatically when your phone has no local WiFi)
   could get stuck showing "CLOUD - NO REPLY" forever, even though the

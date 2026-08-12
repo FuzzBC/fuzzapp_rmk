@@ -21,8 +21,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Checks the public FuzzBC/fuzzapp GitHub repo for a newer version than the
- * one currently installed, and hands back the APK asset URL to download.
+ * Checks the public FuzzBC/fuzzapp_rmk GitHub repo for a newer version than
+ * the one currently installed, and hands back the APK asset URL to download.
  *
  * Release tags on that repo must look like "vNN" where NN is the numeric
  * versionCode (e.g. "v3") - this is compared directly against
@@ -32,7 +32,7 @@ import java.util.concurrent.Executors;
 public class UpdateChecker {
 
     private static final String OWNER = "FuzzBC";
-    private static final String REPO  = "fuzzapp";
+    private static final String REPO  = "fuzzapp_rmk";
     private static final String API_URL =
             "https://api.github.com/repos/" + OWNER + "/" + REPO + "/releases/latest";
 
