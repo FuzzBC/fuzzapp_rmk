@@ -2,8 +2,8 @@
   tcp_send.ps1 - one-shot Telnet/TCP line sender for TestMode.hta.
 
   Opens a TCP connection (the diffuser's Serial/Telnet console, default
-  port 23), writes -Payload as one CRLF-terminated line, collects
-  whatever text arrives within -TimeoutMs, then closes. Console replies
+  port 23), writes -PayloadHex (decoded) as one CRLF-terminated line,
+  collects whatever text arrives within -TimeoutMs, then closes. Console replies
   (S/D/?/banner) can span several lines, so this reads for the whole
   window instead of stopping at the first chunk - mirrors
   TestMode_APP/.res/net.py's send_tcp().
