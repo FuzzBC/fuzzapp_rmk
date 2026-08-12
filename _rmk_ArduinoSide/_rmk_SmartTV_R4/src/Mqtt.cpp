@@ -112,11 +112,18 @@ const char* Topic_C2D() {
     unbounded duration) would otherwise freeze that ramp for 1-2+ seconds.
     Skipped before touching LastTry so the very next attempt isn't held
     back by an extra throttle wait it never used. Does nothing if no
-    credentials have ever been provisioned (MqttCred::State.valid). */
+    credentials have ever been provisioned (MqttCred::State.valid).
+    Backs the retry interval off after MQTT_BACKOFF_STREAK consecutive
+    failures (e.g. a persistently rejected credential) - each attempt is
+    still a blocking call of unbounded duration, so a tight failure loop
+    burns disproportionately more of loop()'s time than a healthy one ever
+    would; spacing failed attempts out further keeps that bounded without
+    touching the per-attempt call itself. */
 void Reconnect() {
     if (UDPRAW::State.Status || TV::State.Transitioning) return;
     if (!MQTTCRED::State.valid) return;
-    if (TimeNow - MQTT::State.LastTry < MQTT_RETRY_MS) return;
+    uint32_t retryMs = (MQTT::State.FailStreak >= MQTT_BACKOFF_STREAK) ? MQTT_BACKOFF_RETRY_MS : MQTT_RETRY_MS;
+    if (TimeNow - MQTT::State.LastTry < retryMs) return;
     MQTT::State.LastTry = TimeNow;
 
     buildTopics();
@@ -127,9 +134,16 @@ void Reconnect() {
     bool ok = MQTT_Cli.connect(cid, MQTTCRED::State.user, MQTTCRED::State.pass);
     if (ok) {
         MQTT::State.Up = true;
+        MQTT::State.FailStreak = 0;
         MQTT_Cli.subscribe(g_topicC2D);
+        APP::termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "MQTT::Reconnect", "connected, cid=[%s] sub=[%s]", cid, g_topicC2D);
     } else {
         MQTT::State.Up = false;
+        if (MQTT::State.FailStreak < 255) MQTT::State.FailStreak++;
+        // PubSubClient::state() codes: -4 TIMEOUT, -3 CONNECTION_LOST,
+        // -2 CONNECT_FAILED, -1 DISCONNECTED, 1 BAD_PROTOCOL,
+        // 2 BAD_CLIENT_ID, 3 UNAVAILABLE, 4 BAD_CREDENTIALS, 5 UNAUTHORIZED.
+        APP::termMsgLog(APP_LOG_WRN, APP_SRC_SYS, "APP", "MQTT::Reconnect", "connect FAILED state=[%d] streak=[%d] cid=[%s] user=[%s]", MQTT_Cli.state(), MQTT::State.FailStreak, cid, MQTTCRED::State.user);
     }
 }
 

@@ -117,6 +117,12 @@ public class MqttTransport {
     private MqttClient client;
     /** true while a connect() attempt is running - keeps connect() idempotent. */
     private volatile boolean connecting = false;
+    /** True once a CLOUD FAIL/LOST line has already been printed for the
+     * current down-streak - the background supervisor (every SUPERVISE_MS,
+     * see MainActivity) retries silently behind the scenes, but the console
+     * only needs to say "it broke" once, not on every single retry.
+     * Cleared on the next successful connect (see CLOUD ON below). */
+    private boolean cloudDownLogged = false;
 
     // --------------------------------------------------------
     // Constructor
@@ -296,14 +302,16 @@ public class MqttTransport {
             final boolean finalOk = ok;
             Main.runOnUiThread(() -> {
                 if (finalOk) {
+                    cloudDownLogged = false;
                     Main._Console(false, "☁", "{#G}CLOUD ON{##}");
                     if (DATAr != null) DATAr._confirmLive();   // flip top label to CLOUD MODE
                     // Local UDP already got the boot welcome (Main.onCreate step 8).
                     // If it didn't - starting off-WiFi / pinned CLOUD ONLY - announce
                     // over the cloud link now so the board pushes a fresh full state.
                     if (!Main._UDP_Available()) Main.DATAs.sendWelcome("mqtt connect");
-                } else {
-                    Main._Console(false, "☁", "{#R}CLOUD FAIL{##}");
+                } else if (!cloudDownLogged) {
+                    cloudDownLogged = true;
+                    Main._Console(false, "☁", "{#R}CLOUD FAIL{##} (retrying quietly)");
                 }
                 if (callback != null) callback.onResult(finalOk);
             });
@@ -389,7 +397,10 @@ public class MqttTransport {
         public void connectionLost(Throwable cause) {
             Log.w("MQTT", "connection lost: " + (cause != null ? cause.getMessage() : "?"));
             Main.runOnUiThread(() -> {
-                Main._Console(false, "☁", "{#Y}CLOUD LOST{##}");
+                if (!cloudDownLogged) {
+                    cloudDownLogged = true;
+                    Main._Console(false, "☁", "{#Y}CLOUD LOST{##} (retrying quietly)");
+                }
                 // Cloud dropped while off-WiFi -> drop the CLOUD MODE label.
                 if (!Main._IsWifiConn())
                     DATAr._setStatus(DataReceive.Status.NoWifi);

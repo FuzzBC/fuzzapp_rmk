@@ -81,7 +81,20 @@ static void sendAck(uint8_t seq, uint8_t result) {
 
 /** Sends one Term-console log line as a LOG (0x03) telemetry frame -
     level/source/text fields, same information the original's '*' envelope
-    carried, no more ASCII header packing. */
+    carried, no more ASCII header packing. Also mirrors to the Telnet
+    console (TELNET::Mirror(), see Telnet.cpp) - this used to be UDP-only,
+    so nothing showed up over Telnet (SET_TELNET_ENABLE) even with it on.
+    Every termMsgLog() call site in the codebase (WiFi/MQTT/EEPROM/BME/
+    etc.) gets this for free, same idea as the original's per-module
+    ENABLE_LOG_X/_VERBOSE tiers but always-on and runtime (no recompile
+    needed to see it) - the original's compile-time macro system isn't
+    ported 1:1, this is the pragmatic equivalent for now.
+    Deliberately NOT mirrored to Serial (unlike Debug::print()): this
+    board's Serial is USB-CDC (TinyUSB), which can block on write when
+    nothing's reading it - fine for the original's 2 boot-banner calls,
+    not for 30+ call sites firing continuously with no monitor attached.
+    TELNET::Mirror() already no-ops safely while disabled/unconnected,
+    so this carries none of that risk. */
 void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func, const char *format, ...) {
     char text[160];
     int off = snprintf(text, sizeof(text), "[%s::%s] ", ns, func);
@@ -99,6 +112,13 @@ void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func,
     payload[1] = source;
     memcpy(payload + 2, text, textLen);
     sendTelemetry(Opcode::LOG, payload, 2 + textLen);
+
+    if (TELNET::IsEnabled()) {
+        static const char* LEVEL_TAG[] = { "ERR", "WRN", "INF", "DBG", "SEC", "GAP" };
+        char line[176];
+        snprintf(line, sizeof(line), "[%s] %s\n", (level <= APP_LOG_GAP) ? LEVEL_TAG[level] : "?", text);
+        TELNET::Mirror(line);
+    }
 }
 
 /** Rebuilds the selected-LED cache from the current selection bitmask -

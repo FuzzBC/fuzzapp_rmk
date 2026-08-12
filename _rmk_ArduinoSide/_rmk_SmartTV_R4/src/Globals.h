@@ -159,6 +159,8 @@ extern const char* const DIF_STRIP_STATUS_NAMES[11] PROGMEM;           // indexe
 #define MQTT_PORT       8883
 #define MQTT_KEEPALIVE  30
 #define MQTT_RETRY_MS   5000
+#define MQTT_BACKOFF_STREAK    3       /* consecutive Reconnect() failures before backing off */
+#define MQTT_BACKOFF_RETRY_MS  60000   /* retry interval once backed off - see Mqtt.cpp Reconnect() */
 #define MQTT_TOPIC_BASE     "fuzz/"
 #define MQTT_TOPIC_C2D_SUFFIX  "/b/c2d"
 #define MQTT_TOPIC_D2C_SUFFIX  "/b/d2c"
@@ -383,6 +385,12 @@ typedef struct MQTTx {
     uint32_t LastTry;
     bool     RxPending;
     int      RxLen;
+    // Consecutive Reconnect() failures - backs the retry interval off once
+    // this crosses MQTT_BACKOFF_STREAK, so a run of rejected/unreachable
+    // attempts (each a blocking TLS connect, up to several seconds) can't
+    // keep re-firing every MQTT_RETRY_MS and starve loop() of time UDP/LED/
+    // TV handling also needs. Reset to 0 on the next successful connect.
+    uint8_t  FailStreak;
 } MQTTx;
 
 typedef struct MQTTCREDx {
