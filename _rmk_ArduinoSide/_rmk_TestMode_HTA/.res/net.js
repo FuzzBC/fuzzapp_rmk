@@ -66,6 +66,23 @@ var Net = (function () {
     }
     return out;
   }
+  function hex2(b) { var s = (b & 0xFF).toString(16); return s.length < 2 ? '0' + s : s; }
+  // Payload bytes go on the command line hex-encoded, never raw - a raw
+  // binary payload (any byte 0-255) embedded in a Win32 command line gets
+  // silently truncated at the first embedded NUL byte (confirmed live:
+  // WshShell.Run's child process invocation fails outright, no output
+  // file, no visible error). Any opcode whose payload happens to contain
+  // a zero byte anywhere - extremely common: a colour channel of 0, an
+  // id/value of 0, a disabled flag, mode 0, etc. - silently never reached
+  // the wire under the old raw-string param. Hex is command-line-safe by
+  // construction (only 0-9a-f), so this sidesteps the whole bug class
+  // instead of trying to escape around it (see udp_send.ps1/tcp_send.ps1's
+  // matching -PayloadHex decode side).
+  function strToHex(s) {
+    var out = '';
+    for (var i = 0; i < s.length; i++) out += hex2(s.charCodeAt(i));
+    return out;
+  }
 
   var seqCounter = 0;
   function uniqueName() {
@@ -136,7 +153,7 @@ var Net = (function () {
     var outFile = RES_DIR + '\\' + uniqueName() + '.txt';
     var maxTimeout = Math.max(timeoutMs * 4, 6000);
     var cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + q(script) +
-      ' -IP ' + q(ip) + ' -Port ' + parseInt(port, 10) + ' -Payload ' + q(payload) +
+      ' -IP ' + q(ip) + ' -Port ' + parseInt(port, 10) + ' -PayloadHex ' + q(strToHex(payload)) +
       ' -TimeoutMs ' + parseInt(timeoutMs, 10) + ' -MaxTimeoutMs ' + maxTimeout + ' -OutFile ' + q(outFile);
     runHiddenAsync(cmd, outFile, maxTimeout + 4000, function (res) {
       if (!res.ok) { cb({ status: 'ERROR', message: res.message, replies: [] }); return; }
@@ -148,7 +165,7 @@ var Net = (function () {
     var script = RES_DIR + '\\tcp_send.ps1';
     var outFile = RES_DIR + '\\' + uniqueName() + '.txt';
     var cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + q(script) +
-      ' -IP ' + q(ip) + ' -Port ' + parseInt(port, 10) + ' -Payload ' + q(payload) +
+      ' -IP ' + q(ip) + ' -Port ' + parseInt(port, 10) + ' -PayloadHex ' + q(strToHex(payload)) +
       ' -TimeoutMs ' + parseInt(timeoutMs, 10) + ' -OutFile ' + q(outFile);
     runHiddenAsync(cmd, outFile, timeoutMs + 4000, function (res) {
       if (!res.ok) { cb({ status: 'ERROR', message: res.message, replies: [] }); return; }

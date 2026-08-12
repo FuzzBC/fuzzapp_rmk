@@ -26,13 +26,21 @@
 param(
     [Parameter(Mandatory = $true)][string]$IP,
     [Parameter(Mandatory = $true)][int]$Port,
-    [Parameter(Mandatory = $true)][string]$Payload,
+    # Hex-encoded, not raw text - see udp_send.ps1's -PayloadHex comment.
+    # Console commands here are normally plain ASCII, but the raw-send box
+    # can contain anything, so this gets the same safe treatment.
+    [Parameter(Mandatory = $true)][string]$PayloadHex,
     [Parameter(Mandatory = $true)][string]$OutFile,
     [int]$TimeoutMs = 1500
 )
 
 $ErrorActionPreference = 'Stop'
-$enc = [System.Text.Encoding]::GetEncoding(28591)  # ISO-8859-1/Latin-1 - see udp_send.ps1
+function Decode-Hex([string]$hex) {
+    if ($hex.Length -eq 0) { return [byte[]]@() }
+    $out = New-Object byte[] ($hex.Length / 2)
+    for ($i = 0; $i -lt $out.Length; $i++) { $out[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+    return $out
+}
 $partFile = "$OutFile.part"
 
 function Write-Result([string[]]$lines) {
@@ -54,7 +62,16 @@ try {
 
 try {
     $stream = $client.GetStream()
-    $lineBytes = $enc.GetBytes($Payload + "`r`n")
+    # A single-element [byte[]] can get unwrapped to a plain scalar by
+    # PowerShell's return-value handling (confirmed live: "S" -> a 1-byte
+    # payload - broke the `+` concatenation below with a bizarre
+    # op_Addition error) - build the CRLF-terminated line explicitly
+    # instead of relying on array-plus-array to always stay array-shaped.
+    $payloadBytes = @(Decode-Hex $PayloadHex)
+    $lineBytes = New-Object byte[] ($payloadBytes.Length + 2)
+    if ($payloadBytes.Length -gt 0) { [System.Array]::Copy($payloadBytes, $lineBytes, $payloadBytes.Length) }
+    $lineBytes[$payloadBytes.Length] = 13
+    $lineBytes[$payloadBytes.Length + 1] = 10
     $stream.Write($lineBytes, 0, $lineBytes.Length)
     $stream.Flush()
 

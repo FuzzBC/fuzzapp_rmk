@@ -39,7 +39,17 @@
 param(
     [Parameter(Mandatory = $true)][string]$IP,
     [Parameter(Mandatory = $true)][int]$Port,
-    [Parameter(Mandatory = $true)][string]$Payload,
+    # Hex-encoded payload bytes, not raw text - a raw binary payload (any
+    # byte 0-255, including 0x00) embedded directly in a Win32 command line
+    # gets silently truncated at the first NUL byte (confirmed live: the
+    # whole child process invocation fails, no output file, no error - see
+    # net.js's toHex()/q() for the encode side). Any opcode whose payload
+    # happens to contain a zero byte anywhere - extremely common: a colour
+    # channel of 0, id/value of 0, a disabled flag, mode 0, etc. - silently
+    # never reached the wire under the old raw-string param. Hex is
+    # command-line-safe by construction (only 0-9A-F), so this sidesteps
+    # the whole class of bug instead of trying to escape around it.
+    [Parameter(Mandatory = $true)][string]$PayloadHex,
     [Parameter(Mandatory = $true)][string]$OutFile,
     [int]$TimeoutMs = 1200,
     [int]$MaxTimeoutMs = 0
@@ -47,10 +57,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($MaxTimeoutMs -le 0) { $MaxTimeoutMs = [Math]::Max($TimeoutMs * 4, 6000) }
-# ISO-8859-1/Latin-1: lossless byte<->char round trip (every byte 0-255 maps
-# to exactly one char and back) - the wire protocol is ASCII text except
-# the binary 'LK' packet, and UTF-8 would silently mangle that one.
-$enc = [System.Text.Encoding]::GetEncoding(28591)
+function Decode-Hex([string]$hex) {
+    if ($hex.Length -eq 0) { return [byte[]]@() }
+    $out = New-Object byte[] ($hex.Length / 2)
+    for ($i = 0; $i -lt $out.Length; $i++) { $out[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+    return $out
+}
 $partFile = "$OutFile.part"
 
 function Write-Result([string[]]$lines) {
@@ -70,7 +82,10 @@ try {
 }
 
 try {
-    $bytes = $enc.GetBytes($Payload)
+    # @() forces array context - a single-element [byte[]] can otherwise
+    # get unwrapped to a plain scalar by PowerShell's return-value handling
+    # (confirmed live in tcp_send.ps1's case; applied here defensively too).
+    $bytes = @(Decode-Hex $PayloadHex)
     $udp.Send($bytes, $bytes.Length, $IP, $Port) | Out-Null
 } catch {
     Write-Result @('ERROR', "send failed: $($_.Exception.Message)")
