@@ -146,6 +146,12 @@ a { color: inherit; }
 .result-box { margin-top: 12px; }
 .result-empty { color: #7c7972; font-size: 12px; }
 
+/* --- ui.js buildDiffuserHistory() rows --- */
+.dh-row { display: flex; align-items: center; background: #212226; border: 1px solid #2c2d33; border-radius: 10px; padding: 8px 12px; margin-bottom: 6px; }
+.dh-index { font-family: Consolas, monospace; color: #7c7972; font-size: 11px; width: 34px; flex: 0 0 auto; }
+.dh-value { font-family: Consolas, monospace; font-weight: 700; color: #4ecf8a; font-size: 13px; flex: 1; }
+.dh-remove { border: none; background: rgba(255,107,107,.14); color: #ff6b6b; border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: 11px; }
+
 /* --- ResultView.js generic classes --- */
 .res-ack { display: flex; align-items: center; padding: 11px 13px; border-radius: 12px; margin-bottom: 10px; }
 .res-ack-icon { font-size: 15px; font-weight: 700; margin-right: 10px; }

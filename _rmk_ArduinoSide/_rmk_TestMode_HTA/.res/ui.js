@@ -333,18 +333,16 @@
       clear(list);
       if (!minutes.length) { list.appendChild(el('div', 'result-empty', 'No refill cycles recorded yet.')); return; }
       minutes.forEach(function (mins, i) {
-        var row = el('div', 'ctl-row');
-        row.appendChild(el('div', 'ctl-label', '#' + (i + 1)));
-        var w = el('div', 'ctl-widget');
-        w.appendChild(document.createTextNode(Engine.fmtDurationMin(mins) + '  '));
-        var del = el('button', 'chip-status', 'Remove ✕');
+        var row = el('div', 'dh-row');
+        row.appendChild(el('div', 'dh-index', '#' + (i + 1)));
+        row.appendChild(el('div', 'dh-value', Engine.fmtDurationMin(mins)));
+        var del = el('button', 'dh-remove', 'Remove ✕');
         del.addEventListener('click', function () {
           if (!window.confirm("Remove entry #" + (i + 1) + ' (' + Engine.fmtDurationMin(mins) + ")? Everything after it shifts down to fill the gap. This can't be undone.")) return;
           status.textContent = 'Removing #' + (i + 1) + '…';
           Engine.send(deviceKey, delSpec, Proto.packDiffuserHistoryRemove(i), {}, function () { fetchAndRender(); });
         });
-        w.appendChild(del);
-        row.appendChild(w);
+        row.appendChild(del);
         list.appendChild(row);
       });
     }
