@@ -11,6 +11,7 @@ namespace HB {
 
 void T_EFFECT_HB(SCHED::TaskId taskId) {
     int hbEffIdx = EE::Get(EE_HB_EFFECT);
+    DLOGV_HB("tick, effect index [%d]", hbEffIdx);
     if (hbEffIdx > 0 && hbEffIdx <= EFFECT_HANDLERS_COUNT) {
         EFFECT_HANDLERS[hbEffIdx - 1](taskId);
     } else {
@@ -491,6 +492,7 @@ void T_EFFECT_HB_14_RainbowWavePulse(SCHED::TaskId taskId) {
 
 void EndTask() {
     if (HB::State.TaskID == SCHED::TASK_ID_NONE) return;
+    DLOG_HB("ending task id [%d]", (int)HB::State.TaskID);
     SCHED::KillId(HB::State.TaskID);
     HB::State.TaskID = SCHED::TASK_ID_NONE;
 }
@@ -500,6 +502,7 @@ void StartEffect(bool silent, bool reset, bool fast) {
     if (UDPRAW::State.Status || APP::Am.Status) return;
 
     if (reset) HB::State.Phase = 0;   // fresh cycle - the task's own Scratch resets itself on registration
+    DLOG_HB("starting effect [%d] reset=[%d] fast=[%d]", EE::Get(EE_HB_EFFECT), (int)reset, (int)fast);
 
     HB::State.TaskID = SCHED::AddTask("HB_StartEffect", "T_EFFECT_HB", T_EFFECT_HB, SCHED::Unit::MS,
                            EE::Get(EE_HB_EFFECT_SPEED), fast ? 0 : random(2000, 5000), false);

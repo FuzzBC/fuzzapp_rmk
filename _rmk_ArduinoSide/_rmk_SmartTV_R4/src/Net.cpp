@@ -61,10 +61,12 @@ void Setup() {
     saves the connect stamp. */
 void Check(SCHED::TaskId taskId) {
     (void)taskId;
+    DLOGV_NET("tick, WifiSt=[%d] connected=[%d]", (int)NET_WifiSt, (int)IsConnected());
     if (UDPRAW::State.Status) return;
 
     if (!IsConnected()) {
         if (NET_WifiSt != netWifiRetrying) {
+            DLOG_NET("WiFi drop detected - issuing Connect() and scheduling Reconnect in [%d] s", NET_RETRY_DELAY);
             NET_WifiSt = netWifiRetrying;
             Connect();
             setConnectTime(true);
@@ -73,6 +75,7 @@ void Check(SCHED::TaskId taskId) {
         }
     } else {
         if (NET::Wifi.ConnectTime[_YY] == 0) {
+            DLOG_NET("WiFi regained - restoring UDP ports%s", (RTC_Status == rtcRETRY) ? " and re-arming NTP" : "");
             NET_WifiSt = netWifiOK;
             UDPRAW::UdpSet();
             APP::UdpSet();
@@ -93,6 +96,7 @@ void Connect() {
     char ssidBuf[64], passBuf[64];
     strcpy_P(ssidBuf, WIFI_SSID);
     strcpy_P(passBuf, WIFI_PASS);
+    DLOG_NET("WiFi.begin(\"%s\")", ssidBuf);
     WiFi.begin(ssidBuf, passBuf);
 }
 
@@ -159,6 +163,7 @@ void Reconnect(SCHED::TaskId taskId) {
     }
 
     if (IsConnected()) {
+        DLOG_NET("reconnected after retry");
         NET_WifiSt = netWifiOK;
         getIP();
 
@@ -168,6 +173,7 @@ void Reconnect(SCHED::TaskId taskId) {
         APP::UdpSet();
         DIF::UdpSet();
     } else {
+        DLOG_NET("retry timed out - re-arming in [%d] s", NET_RETRY_DELAY);
         SCHED::AddTask("Reconnect", "Reconnect", Reconnect, SCHED::Unit::S, NET_RETRY_DELAY, NET_RETRY_DELAY, false);
     }
 }

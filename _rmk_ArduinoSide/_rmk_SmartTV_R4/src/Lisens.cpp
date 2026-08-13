@@ -71,6 +71,7 @@ void Check(SCHED::TaskId taskId) {
         // -- PHASE 3: apply --
         // Held while the app forces a lux level (SET_TEST_LUX) - the sensor
         // must not override the test value until the test-mode timeout releases it.
+        DLOGV_LISENS("avg=[%d] rawTarget=[%d] nowLux=[%d] (was [%d])", avg, rawTarget, nowLux, LISENS::State.Lux);
         if (TestMode != _testmode_lux) setLux(nowLux);
         APP::updLux();
 
@@ -86,6 +87,7 @@ void Check(SCHED::TaskId taskId) {
     adapted), and re-pushes the lux-compensated diffuser brightness. */
 void setLux(int newLux) {
     if (LISENS::State.Lux == newLux) return;
+    DLOG_LISENS("lux [%d] -> [%d]", LISENS::State.Lux, newLux);
     LISENS::State.Lux = newLux;
 
     if (LED::State.Enabled) {

@@ -30,7 +30,10 @@ void Status() {
             simulatedBed = PinStatus(MOTION_PIN_BED);
         }
 
+        DLOGV_MOTION("com=[%d] bed=[%d] trigger=[%d] status=[%d]", simulatedCom, simulatedBed, (int)MOTION::State.Trigger, (int)MOTION::State.Status);
+
         if ((simulatedCom + simulatedBed) && !MOTION::State.Trigger) {
+            DLOG_MOTION("new trigger armed (com=[%d] bed=[%d])", simulatedCom, simulatedBed);
             MOTION::State.Trigger = true;
             MOTION::State.TriggerTime = TimeNow;
         } else {
@@ -49,6 +52,7 @@ void Status() {
                 if (!MOTION::State.AutoOffTime && simulatedBed) {
                     MOTION::State.AutoOffTime = TimeNow + ((uint32_t)EE::Get(EE_MOTION_AUTO_OFF_TIME) * 60000);
                 } else if (MOTION::State.AutoOffTime && TimeNow >= MOTION::State.AutoOffTime) {
+                    DLOG_MOTION("auto-off timer elapsed - going motAUTOOFF");
                     MOTION::State.Status = motAUTOOFF;
                     SCHED::KillAllUnlocked();
                     SCHED::TaskId offId = SCHED::AddTask("MOTION_Status", "T_EFFECT_MOTION_OFF", T_EFFECT_MOTION_OFF, SCHED::Unit::MS,

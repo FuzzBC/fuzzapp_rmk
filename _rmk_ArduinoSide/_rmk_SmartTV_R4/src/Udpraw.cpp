@@ -79,6 +79,7 @@ void Loop() {
         memset(UDPRAW_Buffer, 255, packetSize);
     }
 
+    DLOGV_UDPRAW("frame [%d] bytes", packetSize);
     UDPRAW::State.LastCheck = TimeNow;
     if (!UDPRAW::State.Status) Init();
 
@@ -172,6 +173,7 @@ void T_UDPRAW_SET_COLOR(SCHED::TaskId taskId) {
     the strip last, after every other call in this function that could
     otherwise re-arm a fresh transition on its way out. */
 void End(bool handover) {
+    DLOG_UDPRAW("stream ending, handover=[%d], ran [%.1f] fps", (int)handover, UDPRAW::State.Fps);
     if (handover) {
         TV::State.Status     = false;
         MOTION::State.Status = motON;
@@ -200,6 +202,7 @@ void End(bool handover) {
     app, and launches T_UDPRAW_SET_COLOR after UDPRAW_LED_MOVIE_DELAY ms.
     Called internally by Loop() only. */
 void Init() {
+    DLOG_UDPRAW("stream starting");
     UDPRAW::State.InitTime[_HH] = NET::Date.time[_HH];
     UDPRAW::State.InitTime[_MI] = NET::Date.time[_MI];
     UDPRAW::State.InitTime[_SS] = NET::Date.time[_SS];

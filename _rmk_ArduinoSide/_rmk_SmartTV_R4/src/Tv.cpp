@@ -19,6 +19,7 @@ void Status() {
     TV::State.PrevPinValue = TV::State.PinValue;
 
     TV::State.PinValue = analogRead(TV_PIN) / TV_ADC_DIVIDER;
+    DLOGV_TV("raw pin [%d] -> scaled [%d]", TV::State.PinValue * TV_ADC_DIVIDER, TV::State.PinValue);
 
     if (TestMode == _testmode_tvOn) {
         TV::State.PinValue = TV_TEST_PIN_ON;
@@ -38,6 +39,8 @@ void Status() {
     if ((TV::State.LastDebounceTime + TV_DEBOUNCE_TIME) < TimeNow) {
         if ((TV::State.LastReadStatus + TV_READ_STATUS_TIME) < TimeNow) {
             if (TV::State.ReadPin != TV::State.Status) {
+                DLOG_TV("debounced status change [%s] -> [%s]",
+                    TV::State.Status ? "ON" : "OFF", TV::State.ReadPin ? "ON" : "OFF");
                 TV::State.Status = TV::State.ReadPin;
 
                 if (!UDPRAW::State.Status) {

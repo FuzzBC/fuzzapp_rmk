@@ -72,6 +72,7 @@ void Check(SCHED::TaskId taskId) {
     BME280::TempUnit tempUnit(BME280::TempUnit_Celsius);
     BME280::PresUnit presUnit(BME280::PresUnit_Pa);
     bme280sensor.read(pres, temp, hum, tempUnit, presUnit);
+    DLOGV_BME("read temp=[%.1f] hum=[%.1f] pres=[%.0f]", temp, hum, pres);
 
     bool n = false;
     if (BME::State.Temperature != temp) {
@@ -84,6 +85,7 @@ void Check(SCHED::TaskId taskId) {
     }
 
     if (n) {
+        DLOG_BME("changed - temp=[%.1f] hum=[%.1f]", temp, hum);
         APP::updStatus("NET::Check");
     }
 }

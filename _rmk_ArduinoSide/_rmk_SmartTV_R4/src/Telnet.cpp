@@ -43,6 +43,7 @@ void Loop() {
 }
 
 void SetEnabled(bool on) {
+    DLOG_TELNET("enabled [%d] -> [%d]", (int)TELNET::State.Enabled, (int)on);
     TELNET::State.Enabled = on;
     if (!on && TELNET_Cli.connected()) TELNET_Cli.stop();
 }
@@ -62,6 +63,11 @@ uint8_t Verbosity() {
 /** Mirrors one line to the connected client - no-op while disabled or no
     client is attached. Called by Debug::print(). */
 void Mirror(const char *line) {
+    // NOTE: deliberately no DLOG*_TELNET() call anywhere in this function -
+    // termMsgLog() (AppLink.cpp) calls Mirror() to reach the Telnet client,
+    // so any DLOG*_TELNET() call here would feed straight back into
+    // termMsgLog() -> Mirror() again the instant DBG_TELNET(_V) is on and
+    // SET_TELNET_VERBOSITY is raised to match - infinite recursion.
     if (!TELNET::State.Enabled) return;
     if (!TELNET_Cli || !TELNET_Cli.connected()) return;
     TELNET_Cli.print(line);

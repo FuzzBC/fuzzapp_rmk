@@ -17,6 +17,7 @@
 #include <TimeLib.h>
 #include "Scheduler.h"
 #include "Led.h"   // CRGB/CHSV
+#include "DebugConfig.h"   // DLOG_*()/DLOGV_*() per-module compile-time debug macros
 
 /* --- GLOBAL MACROS --- */
 #define NL              "\n"

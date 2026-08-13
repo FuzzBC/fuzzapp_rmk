@@ -36,6 +36,7 @@ void Setup() {
 }
 
 void Refresh(uint32_t now) {
+    DLOGV_LED("push strip at [%lu] ms", (unsigned long)now);
     stripFront.show();
     stripBack.show();
     stripHB.show();
@@ -70,6 +71,7 @@ static inline void ForceShow() {
     of six separate bugfix cycles in production before converging here. */
 void ForceOffAndKillTasks(const char *killTag) {
     (void)killTag;
+    DLOG_LED("force-off requested by [%s]", killTag ? killTag : "?");
     for (int i = 0; i < LED_NUM_TOTAL; i++) {
         LED::State.TargetColor[i] = CRGB(0, 0, 0);
     }

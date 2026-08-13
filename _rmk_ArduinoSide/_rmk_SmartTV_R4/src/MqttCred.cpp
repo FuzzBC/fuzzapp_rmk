@@ -40,6 +40,7 @@ void Load() {
     int base = EEBase();
     uint8_t magic = EEPROM.read(base);
     if (magic != MQTTCRED_MAGIC) {
+        DLOG_MQTTCRED("no cached credentials (magic mismatch at base [%d])", base);
         State.valid   = false;
         State.user[0] = '\0';
         State.pass[0] = '\0';
@@ -68,8 +69,10 @@ void Load() {
     or UNAUTHORIZED (broker refused this pair). */
 Proto::AckResult SetCredentials(const char* user, const char* pass) {
     if (!user || !pass || user[0] == '\0' || pass[0] == '\0') {
+        DLOG_MQTTCRED("rejected - empty user or pass");
         return Proto::AckResult::REJECTED;
     }
+    DLOGV_MQTTCRED("verifying candidate pair, user=[%s]", user);
 
     // Force a clean connect attempt - if a session with the OLD (still-good)
     // credentials happens to be up, drop it first so the result below is
@@ -82,12 +85,14 @@ Proto::AckResult SetCredentials(const char* user, const char* pass) {
     bool ok = MQTT_Cli.connect(cid, user, pass);
 
     if (!ok) {
+        DLOG_MQTTCRED("broker rejected candidate pair, state=[%d]", MQTT_Cli.state());
         MQTT::State.Up = false;
         // Deliberately not touching State.user/State.pass/EEPROM - a bad
         // candidate never overwrites a previously-good cached pair, and
         // MQTT::Reconnect() will quietly re-establish it on its own next tick.
         return Proto::AckResult::UNAUTHORIZED;
     }
+    DLOG_MQTTCRED("broker accepted candidate pair");
 
     MQTT_Cli.subscribe(MQTT::Topic_C2D());
     MQTT::State.Up      = true;

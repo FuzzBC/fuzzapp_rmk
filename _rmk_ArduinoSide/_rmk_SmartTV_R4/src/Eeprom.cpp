@@ -80,6 +80,7 @@ void WriteTime() {
     EE::State.Index = EE_START_READ_INDEX;
     g_writeHadError = false;
 
+    DLOG_EE("changes pending - scheduling chunked write in [%d] ms", EE_SAVE_TIME);
     EE::State.tID = SCHED::AddTask("Write", "Write", Write, SCHED::Unit::MS, EE_SAVE_DELAY_BETWEEN_CHUNKS, EE_SAVE_TIME, true);
 }
 
@@ -607,6 +608,7 @@ bool Set(uint8_t settingId, uint8_t value) {
     confirm the write succeeded.
     @return true if the readback matches, false on write failure. */
 bool w(int index, int value) {
+    DLOGV_EE("write index [%d] = [%d]", index, value);
     EEPROM.update(index, value);
 
     // EEPROM.update() narrows value to a uint8_t on write, so the

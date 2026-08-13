@@ -34,6 +34,7 @@ static void stageFrame(Opcode opcode, uint8_t seq, uint8_t flags, const uint8_t 
     if (!NET::IsConnected()) return;
     size_t n = BuildFrame(opcode, seq, flags, payload, payloadLen, g_asyncFrame, sizeof(g_asyncFrame));
     if (n == 0) return;
+    DLOGV_DIF("staged opcode [%d] seq [%d] [%d] bytes", (int)opcode, (int)seq, (int)n);
     g_asyncLen     = n;
     g_asyncPending = true;
     g_asyncPhase   = 0;
@@ -329,6 +330,7 @@ static void logPush(uint8_t triggerBy, uint8_t mode, uint8_t effect) {
     MOTION's off-fade completion, ambient mode OFF. */
 void AutoOff() {
     if (ActiveModeSetting() != 0xFF) return;
+    DLOG_DIF("all sources idle - auto shutdown");
     idleTimerReset();
     Shutdown();
 }
@@ -345,6 +347,7 @@ void AutoOn(uint8_t eeModeSetting, const DIF_Colorx *colorOverride) {
     const uint8_t trig = (eeModeSetting == EE_DIF_MODE_TV)      ? difTrigTV      :
                          (eeModeSetting == EE_DIF_MODE_UDPRAW)   ? difTrigUDPRAW  :
                          (eeModeSetting == EE_DIF_MODE_MOTION)   ? difTrigMotion  : difTrigAmbient;
+    DLOG_DIF("auto-on trigger [%d] mode [%d] effect [%d]", (int)trig, mode, effect);
     logPush(trig, mode, effect);
     TurnOn(mode, effect, colorOverride);
 }

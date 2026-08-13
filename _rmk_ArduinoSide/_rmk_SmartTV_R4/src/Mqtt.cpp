@@ -67,6 +67,7 @@ void Loop() {
 void Callback(char* topic, byte* payload, unsigned int length) {
     (void)topic;
     if (length < 1) return;
+    DLOGV_MQTT("rx [%d] bytes on [%s]%s", length, topic, MQTT::State.RxPending ? " (dropped, previous still pending)" : "");
     if (MQTT::State.RxPending) return;
     unsigned int n = length;
     if (n >= APP_UDP_MAX_BUFFER_SIZE) n = APP_UDP_MAX_BUFFER_SIZE - 1;
@@ -94,6 +95,7 @@ static void Dispatch() {
 void Publish(const uint8_t* buf, size_t len) {
     if (!MQTT::State.Up || buf == NULL || len == 0) return;
     buildTopics();
+    DLOGV_MQTT("tx [%d] bytes on [%s]", (int)len, g_topicD2C);
     MQTT_Cli.beginPublish(g_topicD2C, len, false);
     MQTT_Cli.write(buf, len);
     MQTT_Cli.endPublish();

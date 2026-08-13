@@ -1,4 +1,6 @@
 #include "Scheduler.h"
+#include "Globals.h"
+#include "AppLink.h"
 #include <Arduino.h>
 #include <string.h>
 
@@ -26,7 +28,6 @@ static inline uint32_t toMs(Unit unit, uint32_t v) {
 
 TaskId AddTask(const char *source, const char *name, TaskFunc fn,
                Unit unit, uint32_t interval, uint32_t startDelay, bool locked) {
-    (void)source;  // logging-only in the original; callers still pass it for call-site clarity
     for (TaskId i = 0; i < MAX_TASKS; i++) {
         if (g_slots[i].active) continue;
         TaskSlot &s = g_slots[i];
@@ -42,13 +43,17 @@ TaskId AddTask(const char *source, const char *name, TaskFunc fn,
         g_taskCount++;
         g_totalTasksCreated++;
         if (g_taskCount > g_maxTaskCountEverSeen) g_maxTaskCountEverSeen = g_taskCount;
+        DLOGV_TASK("id=[%d] name=[%s] src=[%s] interval=[%lu] ms locked=[%d] count=[%d]",
+            (int)i, name, source, (unsigned long)s.intervalMs, (int)locked, (int)g_taskCount);
         return i;
     }
+    DLOG_TASK("table FULL - could not register [%s] requested by [%s]", name, source);
     return TASK_ID_NONE;  // table full - caller should treat like a failed registration
 }
 
 void KillId(TaskId id) {
     if (id == TASK_ID_NONE || id >= MAX_TASKS || !g_slots[id].active) return;
+    DLOGV_TASK("id=[%d] name=[%s]", (int)id, g_slots[id].name ? g_slots[id].name : "?");
     g_slots[id].active = false;
     g_slots[id].fn = nullptr;
     if (g_taskCount > 0) g_taskCount--;

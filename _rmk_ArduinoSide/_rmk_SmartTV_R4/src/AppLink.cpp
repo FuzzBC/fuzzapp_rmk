@@ -869,6 +869,7 @@ static void handleDiffuserParfumStart(const uint8_t *payload, size_t len, uint8_
     outcome; RELAY-tier opcodes arm DifLink's relay instead of resolving
     the ack immediately - see the tail of dispatchFrame(). */
 static void dispatch(Opcode opcode, const uint8_t *payload, size_t len, uint8_t relaySeq) {
+    DLOGV_APP("opcode [%d] len [%d] relaySeq [%d]", (int)opcode, (int)len, (int)relaySeq);
     switch (opcode) {
         case Opcode::HELLO:
             cmdConnected(State.RxProtocol);
@@ -1046,7 +1047,11 @@ static void dispatch(Opcode opcode, const uint8_t *payload, size_t len, uint8_t 
     DIFFUSER_* relay is still awaiting the diffuser's own reply. */
 void dispatchFrame(const uint8_t *data, int len, uint8_t transport) {
     ParsedFrame f = ParseFrame(data, (size_t)len);
-    if (!f.ok) return;
+    if (!f.ok) {
+        DLOG_APP("malformed frame, [%d] bytes, transport [%d]", len, (int)transport);
+        return;
+    }
+    DLOG_APP("frame opcode [%d] seq [%d] transport [%d] suspended=[%d]", (int)f.opcode, (int)f.seq, (int)transport, (int)State.Suspended);
 
     if (State.Suspended) State.Suspended = false;
     SCHED::ResetTime(State.KeepAliveID);
