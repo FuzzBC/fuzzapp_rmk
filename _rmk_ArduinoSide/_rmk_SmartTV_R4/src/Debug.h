@@ -15,7 +15,8 @@
 
 namespace Debug {
 
-void print(const char *line);                          // raw line, no formatting/newline added
+void print(const char *line);                          // raw line, no formatting/newline added - Serial (guarded) + Telnet mirror
+void printSerial(const char *line);                    // Serial only (guarded), no Telnet - for callers with their own Telnet gating (e.g. AppLink::termMsgLog())
 void log(const char *format, ...);                      // formatMSG-style, newline-terminated
 
 } // namespace Debug

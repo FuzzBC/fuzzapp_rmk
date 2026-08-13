@@ -89,12 +89,14 @@ static void sendAck(uint8_t seq, uint8_t result) {
     ENABLE_LOG_X/_VERBOSE tiers but always-on and runtime (no recompile
     needed to see it) - the original's compile-time macro system isn't
     ported 1:1, this is the pragmatic equivalent for now.
-    Deliberately NOT mirrored to Serial (unlike Debug::print()): this
-    board's Serial is USB-CDC (TinyUSB), which can block on write when
-    nothing's reading it - fine for the original's 2 boot-banner calls,
-    not for 30+ call sites firing continuously with no monitor attached.
-    TELNET::Mirror() already no-ops safely while disabled/unconnected,
-    so this carries none of that risk. */
+    Serial mirror is unconditional for ERR/WRN/INF (the original firmware's
+    always-on tier - boot info, WiFi/sensor status, TV on/off, etc.) via
+    Debug::printSerial(), which is guarded with `if (Serial)` so it never
+    blocks with nothing plugged in - same guard the original used for its
+    own (heavier) Serial output on this same board. DBG/SEC/GAP stay
+    Serial-silent by default (still reachable over Telnet, see below) since
+    they're the noisy tiers meant for active troubleshooting, not every
+    boot. */
 void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func, const char *format, ...) {
     char text[160];
     int off = snprintf(text, sizeof(text), "[%s::%s] ", ns, func);
@@ -113,15 +115,20 @@ void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func,
     memcpy(payload + 2, text, textLen);
     sendTelemetry(Opcode::LOG, payload, 2 + textLen);
 
-    // Verbosity gates the mirror only (SET_TELNET_VERBOSITY) - 0 normal
-    // (ERR/WRN/INF), 1 debug (+DBG), 2 verbose (+SEC/GAP). The UDP/MQTT LOG
-    // frame above is always sent regardless; a connected app can already
-    // choose to ignore/filter it client-side if it ever gets noisy.
+    static const char* LEVEL_TAG[] = { "ERR", "WRN", "INF", "DBG", "SEC", "GAP" };
+    char line[176];
+    snprintf(line, sizeof(line), "[%s] %s\n", (level <= APP_LOG_GAP) ? LEVEL_TAG[level] : "?", text);
+
+    if (level <= APP_LOG_INF) {
+        Debug::printSerial(line);
+    }
+
+    // Verbosity gates the Telnet mirror only (SET_TELNET_VERBOSITY) - 0
+    // normal (ERR/WRN/INF), 1 debug (+DBG), 2 verbose (+SEC/GAP). The UDP/
+    // MQTT LOG frame above is always sent regardless; a connected app can
+    // already choose to ignore/filter it client-side if it ever gets noisy.
     static const uint8_t VERBOSITY_CEILING[] = { APP_LOG_INF, APP_LOG_DBG, APP_LOG_GAP };
     if (TELNET::IsEnabled() && level <= VERBOSITY_CEILING[TELNET::Verbosity()]) {
-        static const char* LEVEL_TAG[] = { "ERR", "WRN", "INF", "DBG", "SEC", "GAP" };
-        char line[176];
-        snprintf(line, sizeof(line), "[%s] %s\n", (level <= APP_LOG_GAP) ? LEVEL_TAG[level] : "?", text);
         TELNET::Mirror(line);
     }
 }

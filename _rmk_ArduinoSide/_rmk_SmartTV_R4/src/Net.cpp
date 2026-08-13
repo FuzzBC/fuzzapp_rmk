@@ -37,12 +37,15 @@ void Setup() {
 
     if (IsConnected()) {
         NET_WifiSt = netWifiOK;
-        getIP();
+        IPAddress ip = getIP();
+        APP::termMsgLog(APP_LOG_INF, APP_SRC_NET, "NET", "Setup", "WiFi connected, IP [%d.%d.%d.%d] RSSI [%d] dBm",
+            ip[0], ip[1], ip[2], ip[3], (int)WiFi.RSSI());
 
         RTC_Begin();
         setConnectTime(false);
     } else {
         NET_WifiSt = netWifiRetrying;
+        APP::termMsgLog(APP_LOG_WRN, APP_SRC_NET, "NET", "Setup", "WiFi connect FAILED after [%d] s - retrying in background", NET_CONNECT_TIMEOUT);
 
         SCHED::AddTask("NET_Setup", "Reconnect", Reconnect, SCHED::Unit::S, NET_RETRY_DELAY, NET_RETRY_DELAY, false);
     }
@@ -213,6 +216,7 @@ void RTC_Begin() {
 
         RTC_Status = rtcRETRY;
         syncing    = false;
+        APP::termMsgLog(APP_LOG_WRN, APP_SRC_RTC, "NET", "RTC_Begin", "NTP sync FAILED - retrying in [%d] s", NET_RTC_RETRY);
         SCHED::AddTask("NET_RTC_Begin", "RTC_RetryTask", RTC_RetryTask, SCHED::Unit::S, NET_RTC_RETRY, NET_RTC_RETRY, false);
         return;
     }
@@ -227,6 +231,9 @@ void RTC_Begin() {
         SCHED::AddTask("NET_RTC_Begin", "RTC_Resync", RTC_Resync, SCHED::Unit::S, NET_RTC_RESYNC, NET_RTC_RESYNC, true);
 
         setConnectTime(false);
+        APP::termMsgLog(APP_LOG_INF, APP_SRC_RTC, "NET", "RTC_Begin", "NTP synced, date [%02d/%02d/%d] time [%02d:%02d:%02d]",
+            NET::Date.time[_DD], NET::Date.time[_MM], NET::Date.time[_YY],
+            NET::Date.time[_HH], NET::Date.time[_MI], NET::Date.time[_SS]);
     }
 
     syncing = false;

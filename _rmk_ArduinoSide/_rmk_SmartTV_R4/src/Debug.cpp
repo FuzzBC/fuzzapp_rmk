@@ -6,12 +6,22 @@
 
 namespace Debug {
 
-/** Writes one line as-is to Serial and mirrors it to the Telnet client
-    (no-op there while disabled/unconnected - see Telnet.cpp). Does not
-    append a newline - callers pass one if they want one, same as the
-    original PRNT::_print(). */
+/** Writes one line to Serial only if a host is actually connected and
+    reading (checked via `if (Serial)`) - this board's Serial is native
+    USB (TinyUSB), and writing with nothing enumerated/reading can block.
+    Same guard the original firmware used for its Serial output on this
+    same hardware, which is why it's safe for termMsgLog() (AppLink.cpp)
+    to mirror every INF-and-above call here unconditionally instead of
+    only the 2 boot-banner lines this module started with. */
+void printSerial(const char *line) {
+    if (Serial) Serial.print(line);
+}
+
+/** printSerial() + mirrors to the Telnet client (no-op there while
+    disabled/unconnected - see Telnet.cpp). Does not append a newline -
+    callers pass one if they want one, same as the original PRNT::_print(). */
 void print(const char *line) {
-    Serial.print(line);
+    printSerial(line);
     TELNET::Mirror(line);
 }
 

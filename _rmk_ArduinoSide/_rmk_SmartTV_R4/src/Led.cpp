@@ -31,6 +31,8 @@ void Setup() {
     shuffleArray(LED::State.HeartbeatOrder, LED_HB_NUM);
 
     SCHED::AddTask("LED_Setup", "LED_Refresh", Refresh, SCHED::Unit::MS, LED_REFRESH_TIME, 0, true);
+    APP::termMsgLog(APP_LOG_INF, APP_SRC_LED, "LED", "Setup", "strips ready, TV:%d COM:%d UCOM:%d BED:%d LAMP:%d HB:%d total:%d",
+        LED_TV_NUM, LED_COM_NUM, LED_UCOM_NUM, LED_BED_NUM, LED_LAMP_NUM, LED_HB_NUM, LED_NUM_TOTAL);
 }
 
 void Refresh(uint32_t now) {

@@ -1488,6 +1488,8 @@ void LogPush(bool event, int pinBefore, int pinAtTrigger) {
     configured effect. Called automatically by Status(). */
 void Off() {
     LogPush(false, TV::State.PrevPinValue, TV::State.PinValue);
+    APP::termMsgLog(APP_LOG_INF, APP_SRC_TV, "TV", "Off", "with effect [%d], delay [%lu] ms",
+        EE::Get(EE_TV_OFF_EFF), (unsigned long)LED::getLuxAdaptDelay(EE::Get(EE_TV_OFF_BR_CL_DEL)));
 
     LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE);
     LED::shuffleArray(LED::State.HeartbeatOrder, LED_HB_NUM);
@@ -1514,6 +1516,8 @@ void Off() {
     tick. Called automatically by Status(). */
 void On() {
     LogPush(true, TV::State.PrevPinValue, TV::State.PinValue);
+    APP::termMsgLog(APP_LOG_INF, APP_SRC_TV, "TV", "On", "with effect [%d], delay [%lu] ms",
+        EE::Get(EE_TV_ON_EFF), (unsigned long)LED::getLuxAdaptDelay(EE::Get(EE_TV_ON_BR_CL_DEL)));
 
     LED::shuffleArray(LED::State.PixelOrder, LED_NUM - LED_HB_NUM_FAKE);
 
