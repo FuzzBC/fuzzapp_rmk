@@ -132,14 +132,15 @@ a { color: inherit; }
 .ctl-color { display: flex; align-items: center; }
 .ctl-swatch { width: 30px; height: 26px; border-radius: 8px; border: 1px solid #2c2d33; margin-right: 8px; }
 .ctl-hex { width: 84px; text-transform: uppercase; }
-/* R/G/B sliders under the hex field - Trident (IE11, which mshta hosts)
-   has no native <input type="color"> picker at all, so this is the actual
-   interactive way to choose a color here, not just typing hex digits. */
-.ctl-rgb { margin-top: 8px; }
-.ctl-rgb-row { display: flex; align-items: center; margin-bottom: 4px; }
-.ctl-rgb-label { width: 14px; flex: 0 0 auto; font-family: Consolas, monospace; font-weight: 700; font-size: 11px; color: #7c7972; margin-right: 8px; }
-.ctl-rgb-row input[type=range] { width: 150px; margin-right: 8px; }
-.ctl-rgb-value { background: rgba(74,85,104,.28); color: #b8c2d0; font-weight: 700; font-size: 12px; padding: 3px 9px; border-radius: 8px; min-width: 30px; text-align: center; }
+/* Canvas SV square + hue strip under the hex field - Trident (IE11, which
+   mshta hosts) has no native <input type="color"> picker at all, so this
+   is the actual interactive way to choose a color here, not just typing
+   hex digits. Sizes are set on the <canvas> elements themselves in
+   controls.js (SV_W/SV_H/HUE_W/HUE_H) - width/height here must match or
+   the canvas bitmap scales blurrily. */
+.ctl-picker { margin-top: 8px; }
+.ctl-sv { display: block; width: 180px; height: 110px; border-radius: 8px; border: 1px solid #2c2d33; cursor: crosshair; margin-bottom: 6px; }
+.ctl-hue { display: block; width: 180px; height: 16px; border-radius: 6px; border: 1px solid #2c2d33; cursor: pointer; }
 .ctl-zones { display: flex; flex-wrap: wrap; }
 .ctl-zone-chip { background: #212226; border: 1px solid #2c2d33; color: #b7b4ac; border-radius: 999px; padding: 6px 13px; font-size: 11px; margin: 0 6px 6px 0; }
 .ctl-zone-chip.on { background: #4a5568; color: #fff; border-color: transparent; }
