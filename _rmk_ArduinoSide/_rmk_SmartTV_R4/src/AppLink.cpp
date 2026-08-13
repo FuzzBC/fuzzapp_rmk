@@ -133,6 +133,36 @@ void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func,
     }
 }
 
+/** Banner printed once each time a USB serial monitor actually attaches
+    (see the .ino's loop() - watches `(bool)Serial` for a false->true edge,
+    same DTR-based "someone's actually reading" signal Debug::printSerial()
+    already gates every other Serial write on, so this can't fire into the
+    void either). Mirrors the Diffuser's own Telnet-connect banner
+    (Telnet.cpp's tickTelnet(): IP/MAC/signal/uptime/mode/strip) - same
+    idea, adapted to what's actually useful on this board: everything the
+    DIAG_HEALTH opcode already reports, laid out as a fixed table instead
+    of individual termMsgLog() lines, so plugging in a cable immediately
+    shows the state that matters without needing the phone app or a DIAG_
+    HEALTH request first. */
+void sendSerialWelcome() {
+    bool wifiOk = (WiFi.status() == WL_CONNECTED);
+    unsigned long s = millis() / 1000UL;
+    unsigned long d = s / 86400UL, h = (s % 86400UL) / 3600UL, m = (s % 3600UL) / 60UL, r = s % 60UL;
+    IPAddress ip = WiFi.localIP();
+
+    Debug::print("\n──────── " FW_NAME " SERIAL ────────\n");
+    Debug::log("%-10s: %lud %02luh %02lum %02lus", "Uptime", d, h, m, r);
+    Debug::log("%-10s: %s (%d dBm)", "WiFi", wifiOk ? "OK" : "DOWN", (int)WiFi.RSSI());
+    Debug::log("%-10s: %d.%d.%d.%d", "IP", ip[0], ip[1], ip[2], ip[3]);
+    Debug::log("%-10s: %s", "MQTT", MQTT::State.Up ? "up" : "down");
+    Debug::log("%-10s: %s", "TV", TV::State.Status ? "ON" : "OFF");
+    Debug::log("%-10s: %d", "Motion", (int)MOTION::State.Status);
+    Debug::log("%-10s: %s", "Ambilight", UDPRAW::State.Status ? "ON" : "OFF");
+    Debug::log("%-10s: mode [%d] parfum [%d] min", "Diffuser", DIF::State.Mode, DIF::State.ParfumMin);
+    Debug::log("%-10s: %d of %d B", "RAM free", getFreeRam(), ARD_RAM_TOTAL);
+    Debug::print("────────────────────────────────────\n");
+}
+
 /** Rebuilds the selected-LED cache from the current selection bitmask -
     avoids repeated full scans in Led.cpp's batch brightness/colour ops. */
 void RefreshSelectedCache() {

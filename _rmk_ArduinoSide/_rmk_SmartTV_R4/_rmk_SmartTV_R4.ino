@@ -62,6 +62,21 @@ void setup() {
 void loop() {
     TimeNow = millis();
 
+    // USB-CDC Serial has no connect callback, but `(bool)Serial` reflects
+    // the host's DTR line - true only once an actual terminal (Serial
+    // Monitor, the FuZzAPP FlashConsole tool, etc.) has opened the port,
+    // same signal Debug::printSerial() already gates every other Serial
+    // write on. Watching it for a false->true edge here is the closest
+    // equivalent to Telnet's real accept() event (see TELNET::Loop()) -
+    // fires the welcome banner exactly once per fresh connection, not on
+    // every loop() tick.
+    static bool wasSerialUp = false;
+    bool isSerialUp = (bool)Serial;
+    if (isSerialUp && !wasSerialUp) {
+        APP::sendSerialWelcome();
+    }
+    wasSerialUp = isSerialUp;
+
     APP::Loop();
     DIF::Loop();
     DIF::TickAsyncSend();   // advance any staged diffuser send one non-blocking step

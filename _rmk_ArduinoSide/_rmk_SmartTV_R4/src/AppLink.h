@@ -43,6 +43,7 @@ bool updLux();
 void Notify_Saved(uint8_t result);
 
 void termMsgLog(uint8_t level, uint8_t source, const char *ns, const char *func, const char *format, ...);
+void sendSerialWelcome();
 
 Proto::AckResult SaveMqttCredentials(const char *user, const char *pass);
 
