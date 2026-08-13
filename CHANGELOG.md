@@ -5,6 +5,12 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.031
+- Fixed: while an update is downloading (or the update-available/what's-new
+  cards are up), a tap could still reach the LED grid or SET tab
+  underneath instead of being blocked by the popup - now fully blocked
+  while any of those cards are showing.
+
 ## 8.030
 - Added: the SmartTV's own telnet server ("TV TELNET" in the debug grid)
   now actually shows something - previously it could arm the console on

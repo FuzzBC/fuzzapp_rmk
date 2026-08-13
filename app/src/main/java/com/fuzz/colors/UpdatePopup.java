@@ -422,6 +422,7 @@ public class UpdatePopup {
             return; // activity finished in the gap between the checks above and here
         }
         _dimBehind(popup);
+        _blockOutsideTouches(popup);
         _animateIn(card);
     }
 
@@ -432,6 +433,26 @@ public class UpdatePopup {
         WindowManager.LayoutParams lp = (WindowManager.LayoutParams) root.getLayoutParams();
         lp.flags |= WindowManager.LayoutParams.FLAG_DIM_BEHIND;
         lp.dimAmount = DIM_AMOUNT;
+        wm.updateViewLayout(root, lp);
+    }
+
+    /**
+     * setOutsideTouchable(false) above only promises the popup won't
+     * dismiss on a stray outside tap - it doesn't reliably stop that tap
+     * from reaching (and operating) whatever's underneath, since
+     * PopupWindow only clears FLAG_NOT_TOUCH_MODAL on its own when
+     * outsideTouchable and touchable are both true. Clearing the flag
+     * directly here guarantees the card is the only thing touchable while
+     * it's up - important for showProgress() in particular, where a
+     * background tap reaching the LED grid or SET tab mid-download would
+     * be a genuinely confusing thing to allow.
+     */
+    private void _blockOutsideTouches(PopupWindow p) {
+        View root = p.getContentView().getRootView();
+        WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+        if (wm == null || !(root.getLayoutParams() instanceof WindowManager.LayoutParams)) return;
+        WindowManager.LayoutParams lp = (WindowManager.LayoutParams) root.getLayoutParams();
+        lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         wm.updateViewLayout(root, lp);
     }
 
