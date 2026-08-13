@@ -2,9 +2,10 @@
  * mockups' shared/controls.js with two IE11/Trident-safety changes:
  *   - classList.toggle(cls, force) -> explicit add()/remove() (the 2-arg
  *     form isn't reliable on IE11's classList)
- *   - hexcolor no longer uses <input type="color"> (no native colour
- *     picker in Trident) - just the hex text field plus a plain preview
- *     swatch
+ *   - hexcolor doesn't use <input type="color"> (no native colour picker
+ *     in Trident) - instead: a hex text field, a preview swatch, and
+ *     three R/G/B range sliders (kept in sync both ways with the hex
+ *     field) as the actual interactive way to pick a colour here
  * Same param TYPES as before (enum/range/number/checkbox/hexcolor/ledmask
  * /text), same theme-neutral .ctl-* class names app.css styles.
  */
@@ -72,15 +73,58 @@ var Controls = (function () {
       swatch.style.background = '#' + p['default'];
       var textInput = document.createElement('input');
       textInput.type = 'text'; textInput.className = 'ctl-hex'; textInput.value = p['default'].toUpperCase(); textInput.maxLength = 6;
+      hw.appendChild(swatch); hw.appendChild(textInput);
+      widget.appendChild(hw);
+
+      // R/G/B sliders - the actual interactive way to pick a color here
+      // (no native <input type="color"> in Trident, see file header).
+      // Bidirectional sync with the hex field: typing hex moves the
+      // sliders, dragging a slider rewrites the hex text + swatch.
+      var rgb = el('div', 'ctl-rgb');
+      var sliders = {};
+      var syncing = false;
+      function hexToRgb(hex) {
+        return { r: parseInt(hex.substr(0, 2), 16) || 0, g: parseInt(hex.substr(2, 2), 16) || 0, b: parseInt(hex.substr(4, 2), 16) || 0 };
+      }
+      function byte2(n) { var s = n.toString(16).toUpperCase(); return s.length < 2 ? '0' + s : s; }
+      ['R', 'G', 'B'].forEach(function (ch) {
+        var row = el('div', 'ctl-rgb-row');
+        row.appendChild(el('span', 'ctl-rgb-label', ch));
+        var input = document.createElement('input');
+        input.type = 'range'; input.min = 0; input.max = 255;
+        var valLabel = el('span', 'ctl-rgb-value', '0');
+        input.addEventListener('input', function () {
+          valLabel.firstChild.nodeValue = input.value;
+          if (syncing) return;
+          var v = byte2(parseInt(sliders.R.value, 10)) + byte2(parseInt(sliders.G.value, 10)) + byte2(parseInt(sliders.B.value, 10));
+          textInput.value = v;
+          swatch.style.background = '#' + v;
+          onChange();
+        });
+        row.appendChild(input); row.appendChild(valLabel);
+        rgb.appendChild(row);
+        sliders[ch] = input;
+      });
+      widget.appendChild(rgb);
+
+      function setFromHex(hex) {
+        var c = hexToRgb(hex);
+        syncing = true;
+        sliders.R.value = c.r; sliders.R.nextSibling.firstChild.nodeValue = c.r;
+        sliders.G.value = c.g; sliders.G.nextSibling.firstChild.nodeValue = c.g;
+        sliders.B.value = c.b; sliders.B.nextSibling.firstChild.nodeValue = c.b;
+        syncing = false;
+      }
+      setFromHex(p['default'].toUpperCase());
+
       textInput.addEventListener('input', function () {
         var v = textInput.value.toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, 6);
         while (v.length < 6) v += '0';
         textInput.value = v;
         swatch.style.background = '#' + v;
+        setFromHex(v);
         onChange();
       });
-      hw.appendChild(swatch); hw.appendChild(textInput);
-      widget.appendChild(hw);
       out.get = function () { return textInput.value.toUpperCase(); };
     } else if (p.type === 'ledmask') {
       out = buildLedZones(widget, p, onChange);
