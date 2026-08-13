@@ -403,7 +403,12 @@
         var rw = el('div', 'ctl-range');
         var input = document.createElement('input'); input.type = 'range'; input.min = row[4]; input.max = row[5]; input.value = cur;
         var vl = el('span', 'ctl-range-value', String(cur));
-        input.addEventListener('input', function () { vl.textContent = input.value; updatePv(); });
+        // Both 'input' and 'change' - Trident (IE11, which mshta hosts) can
+        // fire 'input' on a range slider inconsistently while dragging; see
+        // controls.js's buildField() for the same fix and full reasoning.
+        var onRangeInput = function () { vl.textContent = input.value; updatePv(); };
+        input.addEventListener('input', onRangeInput);
+        input.addEventListener('change', onRangeInput);
         rw.appendChild(input); rw.appendChild(vl); widget.appendChild(rw);
         valueCtrl = { get: function () { return parseInt(input.value, 10); }, setFromDevice: function (v) { input.value = v; vl.textContent = String(v); } };
       }

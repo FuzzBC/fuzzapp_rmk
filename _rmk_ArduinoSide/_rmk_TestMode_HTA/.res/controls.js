@@ -70,7 +70,17 @@ var Controls = (function () {
       var input = document.createElement('input');
       input.type = 'range'; input.min = p.min; input.max = p.max; input.value = p['default'];
       var valueLabel = el('span', 'ctl-range-value', String(p['default']));
-      input.addEventListener('input', function () { valueLabel.firstChild.nodeValue = input.value; onChange(); });
+      // Both 'input' and 'change' - Trident (IE11, which mshta hosts) can
+      // fire 'input' on a range slider inconsistently while dragging
+      // (confirmed live: the label and dependent preview stopped tracking
+      // in real time), unlike a modern browser where 'input' alone is
+      // reliable. 'change' is the fallback that always fires at least on
+      // release; binding both costs nothing (same handler, same effect)
+      // and guarantees liveness regardless of which one this environment
+      // actually dispatches during the drag itself.
+      var onRangeInput = function () { valueLabel.firstChild.nodeValue = input.value; onChange(); };
+      input.addEventListener('input', onRangeInput);
+      input.addEventListener('change', onRangeInput);
       rw.appendChild(input); rw.appendChild(valueLabel); rw.appendChild(el('span', 'ctl-range-max', String(p.max)));
       widget.appendChild(rw);
       out.get = function () { return parseInt(input.value, 10); };
