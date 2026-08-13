@@ -276,6 +276,10 @@ var ResultView = (function () {
     'TELEM_DIFFUSER_STATUS.strip': function (v) { return DIF_STRIP_NAMES[v] || ('#' + v); },
     'TELEM_DIFFUSER_STATUS.usage_min': function (v) { return Engine.fmtDurationMin(v); },
     'TELEM_DIFFUSER_STATUS.avg_min': function (v) { return Engine.fmtDurationMin(v); },
+    // TELEM_DIFFUSER_USAGE - same accum/avg-in-minutes shape as
+    // TELEM_DIFFUSER_STATUS's usage_min/avg_min, different opcode.
+    'TELEM_DIFFUSER_USAGE.accum_min': function (v) { return Engine.fmtDurationMin(v); },
+    'TELEM_DIFFUSER_USAGE.avg_min': function (v) { return Engine.fmtDurationMin(v); },
     // TELEM_STATUS - same MOTION_LABEL/AMBIENT_LABEL/DIF_SUMMARY_LABEL
     // tables the hero card uses (data.js), matched to AppLink.cpp's
     // updStatus() field encoding.
