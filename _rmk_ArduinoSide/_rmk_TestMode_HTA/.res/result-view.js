@@ -252,6 +252,25 @@ var ResultView = (function () {
   // push) reads the same way as when it comes from a dedicated status
   // query, instead of falling back to bare numbers just because it's
   // going through the generic card path.
+  // TELEM_LINK.rssi_bucket is actually |RSSI| in dBm (not a small 0-4
+  // bucket, despite the field name - see AppLink.cpp::pushLink(): "bucket"
+  // describes the internal dirty-check threshold, the wire value is the
+  // raw magnitude). Same 4 thresholds pushLink() uses to decide the local
+  // "bar" level, reused here purely for display.
+  function wifiBarCount(mag) {
+    if (mag === 0) return 0;
+    if (mag <= 55) return 4;
+    if (mag <= 65) return 3;
+    if (mag <= 75) return 2;
+    return 1;
+  }
+  function wifiBarsText(mag) {
+    if (mag === 0) return 'no signal';
+    var bars = wifiBarCount(mag), s = '';
+    for (var i = 0; i < 4; i++) s += (i < bars) ? '●' : '○';
+    return '-' + mag + ' dBm  ' + s;
+  }
+
   var FIELD_FORMATTERS = {
     'TELEM_DIFFUSER_STATUS.mode': function (v) { return 'M' + v + ' (' + (DIF_MODE_NAMES[v] || '?') + ')'; },
     'TELEM_DIFFUSER_STATUS.strip': function (v) { return DIF_STRIP_NAMES[v] || ('#' + v); },
@@ -262,7 +281,10 @@ var ResultView = (function () {
     // updStatus() field encoding.
     'TELEM_STATUS.motion': function (v) { return v + ' (' + (MOTION_LABEL[v] || '?') + ')'; },
     'TELEM_STATUS.ambient': function (v) { return v + ' (' + (AMBIENT_LABEL[v] || '?') + ')'; },
-    'TELEM_STATUS.diffuser_summary': function (v) { return v + ' (' + (DIF_SUMMARY_LABEL[v] || '?') + ')'; }
+    'TELEM_STATUS.diffuser_summary': function (v) { return v + ' (' + (DIF_SUMMARY_LABEL[v] || '?') + ')'; },
+    'TELEM_LINK.rssi_bucket': function (v) { return wifiBarsText(v); },
+    'TELEM_LINK.wifi_state': function (v) { return v + ' (' + (WIFI_STATE_LABEL[v] || '?') + ')'; },
+    'TELEM_TEST_MODE.mode': function (v) { return v + ' (' + (TEST_MODE_LABEL[v] || '?') + ')'; }
   };
 
   function formatFieldValue(opcodeName, key, val) {

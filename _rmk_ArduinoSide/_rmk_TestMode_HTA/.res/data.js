@@ -85,6 +85,11 @@ var DIF_MODE_OPTIONS = [['1', '1 CONT'], ['2', '2 10 SEC'], ['3', '3 2H after sl
 var MOTION_LABEL = ['auto-off', 'off', 'idle (armed)', 'triggered, front', 'triggered, bed'];
 var AMBIENT_LABEL = { 0: 'off', 1: 'on', 2: 'ready' };
 var DIF_SUMMARY_LABEL = { 0: 'off', 1: 'on', 2: 'out of water', 3: 'no response', 4: 'parfum running' };
+// TELEM_LINK.wifi_state - matches Globals.h's NET_WiFiStatus enum exactly.
+var WIFI_STATE_LABEL = ['connected', 'lost', 'retrying'];
+// TELEM_TEST_MODE.mode - matches Globals.h's __testmode enum exactly (the
+// SET_TEST_MODE dropdown only lists 0-5, missing 6/7 - this covers all 8).
+var TEST_MODE_LABEL = ['NONE', 'TV ON', 'TV OFF', 'UDPRAW SIM', 'MOTION COM SIM', 'MOTION BED SIM', 'DIFFUSER SIM', 'LUX SIM'];
 
 /* ---------------------------------------------------- shared builders */
 function buildNoPayload() { return ''; }
