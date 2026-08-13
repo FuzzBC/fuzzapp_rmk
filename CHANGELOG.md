@@ -5,6 +5,9 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.021
+- No functional changes - rebuild of 8.020 (same fix, fresh version number).
+
 ## 8.020
 - Fixed: cloud login could still fail with "Connection lost" after both of
   the last two fixes (8.018, 8.019). Root cause: two connection attempts
