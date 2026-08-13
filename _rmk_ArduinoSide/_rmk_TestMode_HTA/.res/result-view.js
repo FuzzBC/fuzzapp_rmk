@@ -245,8 +245,23 @@ var ResultView = (function () {
   var ONOFF_FIELDS = {
     'TELEM_ENABLE.value': 1, 'TELEM_STATUS.tv': 1, 'TELEM_STATUS.udpraw': 1
   };
+  // Same curated idea as ONOFF_FIELDS, for fields with a real name/unit
+  // instead of a switch - same lookup tables diffuserStatusView() ("Check
+  // status") already uses, so a diffuser status bundled into some OTHER
+  // command's reply (e.g. DIFFUSER_PARFUM_START's TELEM_DIFFUSER_STATUS
+  // push) reads the same way as when it comes from a dedicated status
+  // query, instead of falling back to bare numbers just because it's
+  // going through the generic card path.
+  var FIELD_FORMATTERS = {
+    'TELEM_DIFFUSER_STATUS.mode': function (v) { return 'M' + v + ' (' + (DIF_MODE_NAMES[v] || '?') + ')'; },
+    'TELEM_DIFFUSER_STATUS.strip': function (v) { return DIF_STRIP_NAMES[v] || ('#' + v); },
+    'TELEM_DIFFUSER_STATUS.usage_min': function (v) { return Engine.fmtDurationMin(v); },
+    'TELEM_DIFFUSER_STATUS.avg_min': function (v) { return Engine.fmtDurationMin(v); }
+  };
 
   function formatFieldValue(opcodeName, key, val) {
+    var fmt = FIELD_FORMATTERS[opcodeName + '.' + key];
+    if (fmt) return { text: fmt(val), cls: 'res-entry-val' };
     if (ONOFF_FIELDS[opcodeName + '.' + key] && (val === 0 || val === 1)) {
       return { text: val ? 'ON' : 'OFF', cls: val ? 'res-entry-on' : 'res-entry-off' };
     }
