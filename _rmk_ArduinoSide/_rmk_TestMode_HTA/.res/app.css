@@ -198,6 +198,13 @@ a { color: inherit; }
 .res-list-line { padding: 1px 0; }
 .res-line { color: #b7b4ac; font-size: 12px; padding: 4px 0; }
 
+/* --- ResultView.js console view (raw Telnet console text) --- */
+.res-console-box { background: #212226; border: 1px solid #2c2d33; border-radius: 12px; padding: 10px 12px; font-family: Consolas, monospace; font-size: 11.5px; max-height: 320px; overflow-y: auto; }
+.res-console-line { color: #b7b4ac; padding: 1px 0; white-space: pre-wrap; }
+.res-console-rule { color: #5f5e5a; padding: 1px 0; }
+.res-console-key { color: #7c7972; }
+.res-console-val { color: #4ecf8a; font-weight: 700; }
+
 /* --- ResultView.js debug_log view (Debug/K term-log rows) --- */
 .dbg-list { margin-top: 4px; }
 .dbg-row { display: flex; align-items: baseline; background: #212226; border-left: 3px solid #5f5e5a; border-radius: 8px; padding: 6px 10px; margin-bottom: 3px; font-size: 11.5px; }

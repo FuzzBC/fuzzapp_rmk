@@ -59,10 +59,39 @@ var Net = (function () {
     return '"' + String(s).replace(/"/g, '\\"') + '"';
   }
 
+  // UTF-8 decode, not a 1:1 byte->char map - the Diffuser's Telnet console
+  // banner uses real UTF-8 box-drawing characters (e.g. U+2500 '-', 3 bytes
+  // E2 94 80), and treating each byte as its own Latin-1 code point turned
+  // every one of those into 3 garbled characters ("a" + two control chars)
+  // instead of one. Handles the 1/2/3-byte UTF-8 forms actually seen on the
+  // wire (ASCII console text plus a handful of box-drawing/status glyphs);
+  // any byte that doesn't decode cleanly falls back to its raw code point
+  // rather than throwing, since this is diagnostic console text, not a
+  // strict protocol field.
   function hexToStr(hex) {
-    var out = '';
-    for (var i = 0; i + 1 < hex.length; i += 2) {
-      out += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    var bytes = [];
+    for (var i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+    var out = '', n = bytes.length;
+    for (i = 0; i < n; i++) {
+      var b0 = bytes[i];
+      if (b0 < 0x80) {
+        out += String.fromCharCode(b0);
+      } else if ((b0 & 0xE0) === 0xC0 && i + 1 < n && (bytes[i + 1] & 0xC0) === 0x80) {
+        out += String.fromCharCode(((b0 & 0x1F) << 6) | (bytes[i + 1] & 0x3F));
+        i += 1;
+      } else if ((b0 & 0xF0) === 0xE0 && i + 2 < n && (bytes[i + 1] & 0xC0) === 0x80 && (bytes[i + 2] & 0xC0) === 0x80) {
+        out += String.fromCharCode(((b0 & 0x0F) << 12) | ((bytes[i + 1] & 0x3F) << 6) | (bytes[i + 2] & 0x3F));
+        i += 2;
+      } else if ((b0 & 0xF8) === 0xF0 && i + 3 < n && (bytes[i + 1] & 0xC0) === 0x80 && (bytes[i + 2] & 0xC0) === 0x80 && (bytes[i + 3] & 0xC0) === 0x80) {
+        // Surrogate pair - codepoint > 0xFFFF, never actually emitted by
+        // this console's text but handled for completeness.
+        var cp = ((b0 & 0x07) << 18) | ((bytes[i + 1] & 0x3F) << 12) | ((bytes[i + 2] & 0x3F) << 6) | (bytes[i + 3] & 0x3F);
+        cp -= 0x10000;
+        out += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF));
+        i += 3;
+      } else {
+        out += String.fromCharCode(b0);
+      }
     }
     return out;
   }

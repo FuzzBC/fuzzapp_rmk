@@ -235,8 +235,18 @@ static void dispatch(uint8_t opcode, const uint8_t *payload, size_t len) {
 
 // -- entry points ---------------------------------------------------------
 
+// Idempotent - called from both WIFI::finishWifiConnect() (the moment WiFi
+// connects during setup()'s own blocking wait) and unconditionally again
+// right after in _rmk_Diffuser.ino's setup(), which is the only opener at
+// all if that first connect attempt timed out instead. Guarding here (one
+// state flag, checked in the one place both paths funnel through) means
+// neither caller has to know about the other, instead of re-binding the
+// same socket twice on every normal boot.
 void udpOpen() {
+    static bool opened = false;
+    if (opened) return;
     g_udp.begin(UDP_PORT);
+    opened = true;
     vlogMsg("UDP", "socket opened on port %d", UDP_PORT);
 }
 

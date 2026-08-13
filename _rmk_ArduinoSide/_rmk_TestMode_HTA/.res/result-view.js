@@ -198,6 +198,40 @@ var ResultView = (function () {
     container.appendChild(grid);
   }
 
+  // Raw Telnet console text (e.g. the connect banner - see Telnet.cpp's
+  // dbgPrintf() calls) isn't a structured protocol reply, just free-form
+  // lines - this gives it basic terminal-like structure instead of one
+  // flat uncolored blob: box-drawing rule lines (----...) get a section-
+  // header look, "%-10s: %s"-style "label     : value" lines (IP/MAC/
+  // Signal/Uptime/Mode/Strip in the banner, "COMMANDS" entries) get their
+  // label/value tinted separately, everything else prints as plain text.
+  function consoleView(container, text) {
+    var box = el('div', 'res-console-box');
+    var lines = String(text || '(empty)').split('\n');
+    lines.forEach(function (line) {
+      if (/─{3,}/.test(line)) {
+        box.appendChild(el('div', 'res-console-rule', line));
+        return;
+      }
+      // "%-10s: %s"-style banner lines only (IP/MAC/Signal/Uptime/Mode/
+      // Strip): a single leading token, then the FIRST colon. Deliberately
+      // NOT a general "anything : anything" match - cmdHelp()'s command
+      // list has lines like "P<min>     Parfum mode: P30 = insist..." where
+      // the colon is mid-sentence, not a label separator; requiring the
+      // part before it to be one token (no spaces) keeps those as plain text.
+      var m = /^(\s*\S+)\s*:\s(.*)$/.exec(line);
+      if (m) {
+        var row = el('div', 'res-console-line');
+        row.appendChild(el('span', 'res-console-key', m[1] + ' : '));
+        row.appendChild(el('span', 'res-console-val', m[2]));
+        box.appendChild(row);
+        return;
+      }
+      box.appendChild(el('div', 'res-console-line', line));
+    });
+    container.appendChild(box);
+  }
+
   function replyList(container, entries) {
     var wrap = el('div', 'res-list');
     wrap.appendChild(el('div', 'res-list-head', entries.length + ' PACKET' + (entries.length === 1 ? '' : 'S') + ' RECEIVED'));
@@ -247,9 +281,7 @@ var ResultView = (function () {
 
     if (sendResult.transport === 'console') {
       ackBanner(container, sendResult.ackKind);
-      var box = el('div', 'res-line', sendResult.text || '(empty)');
-      box.style.whiteSpace = 'pre-wrap';
-      container.appendChild(box);
+      consoleView(container, sendResult.text);
       return;
     }
 
