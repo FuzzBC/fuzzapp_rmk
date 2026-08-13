@@ -273,6 +273,15 @@ var ResultView = (function () {
     var opcodeName = ok ? parsed.opcodeName : null;
     var d = ok ? Engine.decodePayload(parsed.opcode, parsed.payload) : null;
     var kind = opcodeName === 'ACK' ? 'ack' : (opcodeName === 'LOG' ? 'log' : 'telem');
+
+    // A LOG mixed in among other opcodes (e.g. DIAG_HEALTH's 8 LOG lines +
+    // 1 trailing TELEM_LINK, which fails isAllLog()'s "every entry is LOG"
+    // check) still gets the same colored dbg-row treatment as the
+    // dedicated all-LOG view, not this function's generic card - its own
+    // level tag already carries the "what is this" context a card header
+    // would just repeat.
+    if (kind === 'log' && d && d.fields) return logEntryRow(d.fields);
+
     var isFailedAck = kind === 'ack' && d && d.resultCode != null && d.resultCode !== Proto.AckResult.OK;
 
     var card = el('div', 'res-entry cat-' + kind + (isFailedAck ? ' res-entry-fail' : ''));
@@ -326,19 +335,27 @@ var ResultView = (function () {
     }
     return entries.length > 0;
   }
+  // One LOG entry's decoded {level,source,text} -> its dbg-row/-section/-gap
+  // element. Shared by logDumpView() (the all-LOG fast path) and
+  // entryCard() (a LOG mixed in with other opcodes, e.g. DIAG_HEALTH's 8
+  // LOG lines + 1 trailing TELEM_LINK - isAllLog() correctly says "no",
+  // but a LOG entry deserves this treatment either way, not the generic
+  // field-grid a TELEM_* opcode gets).
+  function logEntryRow(f) {
+    if (f.level === 'SECTION') return el('div', 'dbg-section', f.text);
+    if (f.level === 'GAP') return el('div', 'dbg-gap');
+    var info = DBG_LEVEL_INFO[f.level] || DBG_LEVEL_INFO.INFO;
+    var row = el('div', 'dbg-row ' + info[0]);
+    row.appendChild(el('div', 'dbg-level', info[1]));
+    row.appendChild(el('div', 'dbg-text', f.text));
+    return row;
+  }
   function logDumpView(container, entries) {
     var wrap = el('div', 'dbg-list');
     entries.forEach(function (e) {
       var d = Engine.decodePayload(e.parsed.opcode, e.parsed.payload);
-      var f = d.fields;
-      if (!f) { wrap.appendChild(el('div', 'res-list-line', e.desc || '(malformed LOG)')); return; }
-      if (f.level === 'SECTION') { wrap.appendChild(el('div', 'dbg-section', f.text)); return; }
-      if (f.level === 'GAP') { wrap.appendChild(el('div', 'dbg-gap')); return; }
-      var info = DBG_LEVEL_INFO[f.level] || DBG_LEVEL_INFO.INFO;
-      var row = el('div', 'dbg-row ' + info[0]);
-      row.appendChild(el('div', 'dbg-level', info[1]));
-      row.appendChild(el('div', 'dbg-text', f.text));
-      wrap.appendChild(row);
+      if (!d.fields) { wrap.appendChild(el('div', 'res-list-line', e.desc || '(malformed LOG)')); return; }
+      wrap.appendChild(logEntryRow(d.fields));
     });
     container.appendChild(wrap);
   }
