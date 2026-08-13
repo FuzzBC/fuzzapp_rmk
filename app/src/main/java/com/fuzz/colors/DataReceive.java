@@ -760,7 +760,20 @@ public class DataReceive {
      */
     private void _recvDeviceId(byte[] payload) {
         if (payload.length < 12 || Main.MQTT == null) return;
-        String deviceId = new String(payload, 0, 12, java.nio.charset.StandardCharsets.US_ASCII);
+        // Fixed 12-byte C buffer, NUL-padded when the id is shorter than 12
+        // chars (it always is - "smarttvr4a" is 10) - cut at the first NUL
+        // instead of taking all 12 raw bytes, or the trailing padding rides
+        // along as literal embedded NUL characters in the Java String. That
+        // string ends up cached (see MQTT.setDeviceId()) and reused for
+        // every MQTT topic built afterwards - a topic containing a NUL is
+        // silently accepted by CONNECT (topic isn't part of it) but rejected
+        // by SUBSCRIBE, which put this exact controller offline with what
+        // looked identical to "Connection lost" (Paho: "Invalid UTF-8 char:
+        // 0") no matter what else got fixed on the connection-handling side.
+        String raw = new String(payload, 0, 12, java.nio.charset.StandardCharsets.US_ASCII);
+        int nul = raw.indexOf('\0');
+        String deviceId = (nul >= 0) ? raw.substring(0, nul) : raw;
+        if (deviceId.isEmpty()) return;
         Log.v("DATA_R", "Device id: " + deviceId);
         Main.MQTT.setDeviceId(deviceId);
     }

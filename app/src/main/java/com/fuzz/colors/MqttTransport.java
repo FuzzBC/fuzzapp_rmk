@@ -198,9 +198,17 @@ public class MqttTransport {
         return _prefs().getString(KEY_PASS, "");
     }
 
-    /** @return the cached device id, or DEFAULT_DEVICE_ID (already correct - see class doc) if never overridden. */
+    /** @return the cached device id, or DEFAULT_DEVICE_ID (already correct - see class doc) if never overridden.
+     * Self-heals a value poisoned by the DataReceive._recvDeviceId() NUL-padding
+     * bug (fixed alongside this, but whatever a phone already had cached in
+     * SharedPreferences before that fix stays broken forever otherwise - this
+     * getter is the one place every topic string (see publish()/tryConnect())
+     * actually reads the id from, so cleaning it up here fixes it retroactively
+     * with no need to clear app data or reinstall). */
     public String getDeviceId() {
-        return _prefs().getString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
+        String id = _prefs().getString(KEY_DEVICE_ID, DEFAULT_DEVICE_ID);
+        int nul = id.indexOf('\0');
+        return (nul >= 0) ? id.substring(0, nul) : id;
     }
 
     /**

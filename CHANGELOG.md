@@ -5,6 +5,18 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.024
+- Fixed the real cause of "Connection lost" (8.020-8.023 fixed other real
+  bugs, but not this one): the controller's own device id is delivered in
+  a fixed-size slot padded with filler bytes when the id is shorter than
+  the slot, and those filler bytes were being kept as part of the id
+  instead of trimmed off. That corrupted id got saved and reused for
+  every cloud topic afterwards - accepted while logging in, but rejected
+  the instant the app tried to actually listen for replies, which looked
+  identical to a dropped connection. Fixed at the source, and any phone
+  that already had the corrupted value saved self-repairs automatically -
+  no need to clear app data or log in again.
+
 ## 8.023
 - Added: much more detailed cloud-connection logging in the console (no PC
   needed) - every connect attempt now shows which internal attempt number
