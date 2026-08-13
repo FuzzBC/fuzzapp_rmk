@@ -66,9 +66,13 @@ import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 
+import android.util.Log;
+
 import androidx.core.content.ContextCompat;
 
 public class StatusManager {
+
+    private static final String TAG = "STATUS_MGR";
 
     // --------------------------------------------------------
     // Status enums  (values must match Arduino hex encoding)
@@ -428,6 +432,7 @@ public class StatusManager {
      * @param diffuser  STS_Diffuser ordinal (4 = PARFUM).
      */
     public void applyStatus(int tv, int motion, int udpraw, int ambient, int diffuser) {
+        Log.v(TAG, "applyStatus(tv=" + tv + " motion=" + motion + " udpraw=" + udpraw + " ambient=" + ambient + " diffuser=" + diffuser + ")");
         // Decode each field into locals first, so we can detect a true no-op
         // update before touching any state or UI (avoids spamming icon
         // recolors / lock toggles / animations on every identical packet —
@@ -456,6 +461,8 @@ public class StatusManager {
                 && newDiffuser == currentDiffuser) {
             return;
         }
+        Log.d(TAG, "state changed: tv=" + newTv + " motion=" + newMotion + " ambilight=" + newAmbilight
+                + " ambientMode=" + newAmbientMode + " diffuser=" + newDiffuser);
 
         // Verbose diffuser-specific log - only fires when the diffuser field
         // itself actually changed (not just piggybacking on some other field
@@ -586,6 +593,7 @@ public class StatusManager {
      * @param rawHum   Relative humidity in %.
      */
     public void applyClimate(int rawTemp, int rawHum) {
+        Log.v(TAG, "applyClimate(temp=" + rawTemp + " hum=" + rawHum + ")");
         if (rawTemp != currentTemp) {
             _animateTempHum(STS_Text_Temp, currentTemp, rawTemp, " °c",
                     ContextCompat.getColor(Main, R.color.icon_tint_temperature));
@@ -606,6 +614,7 @@ public class StatusManager {
     public void applyEnable(boolean on) {
         STS_EnableDisable next = on ? STS_EnableDisable.ON : STS_EnableDisable.OFF;
         if (next == currentEnableDisable) return;
+        Log.d(TAG, "applyEnable: " + currentEnableDisable + " -> " + next);
         currentEnableDisable = next;
         SET.updateEnableDisableButton(on);
     }
@@ -621,6 +630,7 @@ public class StatusManager {
      * @param lux  New classified lux level (1..5).
      */
     public void applyLux(int lux) {
+        Log.v(TAG, "applyLux(" + currentLux + " -> " + lux + ")");
         _animateLux(currentLux, lux);
         currentLux = lux;
     }
@@ -791,6 +801,12 @@ public class StatusManager {
         // reachable, so it would fire continuously during normal operation.
         // The same numbers are already shown on demand via the "DIFFUSER
         // usage" section of SmartTV's own debug dump (DBG -> DIFFUSER).
+        // Log.v() instead (adb-only, invisible in the UI either way) - this
+        // is exactly the kind of high-frequency detail that doesn't belong
+        // in the in-app console but is genuinely useful when chasing a
+        // refill-percent/history bug with a cable plugged in.
+        Log.v(TAG, "applyDiffuserUsage(accumMin=" + accumMin + " avgMin=" + avgMin
+                + " refillCount=" + refillCount + " totalRefills=" + totalRefills + ")");
 
         // Keep the raw fields around too, not just the rounded percent -
         // DiffuserUsagePopup (long-press on the badge) reads these directly.

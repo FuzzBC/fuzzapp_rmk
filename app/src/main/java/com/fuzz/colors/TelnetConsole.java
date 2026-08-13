@@ -22,6 +22,7 @@ package com.fuzz.colors;
  * ============================================================
  */
 
+import android.util.Log;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.RecyclerView;
@@ -33,6 +34,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 public class TelnetConsole {
+
+    private static final String TAG = "TELNET_CONSOLE";
 
     // --------------------------------------------------------
     // Constants
@@ -126,6 +129,7 @@ public class TelnetConsole {
      */
     public void setEnabled(boolean on) {
         if (enabled == on) return;
+        Log.d(TAG, "setEnabled(" + on + ")");
         enabled = on;
 
         if (on) {
@@ -153,9 +157,11 @@ public class TelnetConsole {
             while (enabled && myGen == generation) {
                 Socket s = new Socket();
                 try {
+                    Log.d(TAG, "gen=" + myGen + " connecting to " + DIFFUSER_IP + ":" + TELNET_PORT);
                     _postStatus(myGen, "CONNECT…", ThemeManager.getColor(Main, R.color.telnet_status_connecting));
                     s.connect(new InetSocketAddress(DIFFUSER_IP, TELNET_PORT), CONNECT_MS);
                     socket = s;
+                    Log.d(TAG, "gen=" + myGen + " connected");
                     _postStatus(myGen, DIFFUSER_IP, ThemeManager.getColor(Main, R.color.telnet_status_connected));
 
                     // Diffuser firmware prints UTF-8 - decoding as Latin-1 mangles it.
@@ -166,19 +172,23 @@ public class TelnetConsole {
                     while (enabled && myGen == generation
                             && (line = in.readLine()) != null) {
                         final String msg = _sanitize(line);
+                        Log.v(TAG, "gen=" + myGen + " rx: " + msg);
                         Main.runOnUiThread(() -> {
                             if (myGen != generation) return; // stale
                             _appendLine(msg);
                         });
                     }
-                } catch (Exception ignored) {
+                    Log.d(TAG, "gen=" + myGen + " stream ended (readLine returned null or disabled)");
+                } catch (Exception e) {
                     // connect refused / timeout / stream drop - fall to retry
+                    Log.d(TAG, "gen=" + myGen + " " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 } finally {
                     try { s.close(); } catch (Exception ignored) { }
                     if (socket == s) socket = null;
                 }
 
                 if (!enabled || myGen != generation) break;
+                Log.d(TAG, "gen=" + myGen + " retrying in " + RECONNECT_MS + "ms");
                 _postStatus(myGen, "RETRY…", ThemeManager.getColor(Main, R.color.telnet_status_error));
                 try { Thread.sleep(RECONNECT_MS); } catch (InterruptedException e) { break; }
             }

@@ -30,6 +30,7 @@ package com.fuzz.colors;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import com.fuzz.colors.protocol.Frame;
 import com.fuzz.colors.protocol.ProtocolOpcodes;
@@ -82,9 +83,16 @@ class WidgetStatusFetcher {
      * unreachable - caller should keep whatever it last cached).
      */
     static Result fetch(Context ctx) {
+        Log.d(TAG, "fetch() starting - trying local UDP first");
         Result local = _fetchLocalUdp();
-        if (local != null) return local;
-        return _fetchMqttCloud(ctx);
+        if (local != null) {
+            Log.d(TAG, "fetch() resolved over WIFI");
+            return local;
+        }
+        Log.d(TAG, "local UDP produced nothing - falling back to MQTT cloud");
+        Result cloud = _fetchMqttCloud(ctx);
+        Log.d(TAG, cloud != null ? "fetch() resolved over CLOUD" : "fetch() FAILED - neither transport answered");
+        return cloud;
     }
 
     // --------------------------------------------------------
@@ -111,7 +119,10 @@ class WidgetStatusFetcher {
         // app sees a false "NO ACK". DataReceive.isReceivingActively() is the
         // narrow guard for that specific collision window (foregrounded app,
         // mid-command) - skip straight to MQTT cloud instead of racing it.
-        if (DataReceive.isReceivingActively()) return null;
+        if (DataReceive.isReceivingActively()) {
+            Log.v(TAG, "skipping local UDP - live app is actively receiving on this port");
+            return null;
+        }
         try (DatagramSocket socket = new DatagramSocket(null)) {
             socket.setReuseAddress(true);
             socket.bind(new java.net.InetSocketAddress(DataSend.ARDUINO_PORT));
@@ -133,7 +144,8 @@ class WidgetStatusFetcher {
                 }
                 byte[] data = java.util.Arrays.copyOf(packet.getData(), packet.getLength());
                 Frame.Parsed f = Frame.parse(data, data.length);
-                if (!f.ok) continue;
+                if (!f.ok) { Log.v(TAG, "UDP: malformed frame, [" + data.length + "] bytes"); continue; }
+                Log.v(TAG, "UDP: opcode [" + f.opcode + "] [" + data.length + "] bytes");
                 if (f.opcode == (ProtocolOpcodes.Opcode.TELEM_CLIMATE & 0xFF)) {
                     ProtocolOpcodes.TelemClimatePayload c = ProtocolOpcodes.TelemClimatePayload.unpack(f.payload, 0);
                     temp = c.temp_c; hum = c.humidity_pct;
@@ -145,9 +157,14 @@ class WidgetStatusFetcher {
                     noWater = s.diffuser_summary == DIFFUSER_ORDINAL_NO_WATER;
                 }
             }
-            if (temp == null && diffuserPct == null && noWater == null) return null;   // nothing arrived - not reachable on the LAN
+            if (temp == null && diffuserPct == null && noWater == null) {
+                Log.d(TAG, "UDP: timed out with nothing usable - board not reachable on the LAN");
+                return null;
+            }
+            Log.d(TAG, "UDP: got temp=[" + temp + "] hum=[" + hum + "] diffuserPct=[" + diffuserPct + "] noWater=[" + noWater + "]");
             return new Result(temp, hum, diffuserPct, noWater, "WIFI");
         } catch (IOException e) {
+            Log.d(TAG, "UDP: IOException - " + e.getMessage());
             return null;
         }
     }
@@ -159,7 +176,10 @@ class WidgetStatusFetcher {
         SharedPreferences prefs = ctx.getSharedPreferences(MqttTransport.PREFS_NAME, Context.MODE_PRIVATE);
         String user = prefs.getString(MqttTransport.KEY_USER, null);
         String pass = prefs.getString(MqttTransport.KEY_PASS, null);
-        if (user == null || user.isEmpty() || pass == null || pass.isEmpty()) return null;   // no cloud credentials provisioned - see MqttTransport class doc
+        if (user == null || user.isEmpty() || pass == null || pass.isEmpty()) {
+            Log.d(TAG, "MQTT: no cloud credentials provisioned - skipping");
+            return null;   // see MqttTransport class doc
+        }
         String deviceId = prefs.getString(MqttTransport.KEY_DEVICE_ID, MqttTransport.DEFAULT_DEVICE_ID);
         String topicC2D = MqttTransport.TOPIC_BASE + deviceId + MqttTransport.TOPIC_C2D_SUFFIX;
         String topicD2C = MqttTransport.TOPIC_BASE + deviceId + MqttTransport.TOPIC_D2C_SUFFIX;
@@ -202,6 +222,7 @@ class WidgetStatusFetcher {
                         ProtocolOpcodes.TelemStatusPayload s = ProtocolOpcodes.TelemStatusPayload.unpack(f.payload, 0);
                         noWaterHolder[0] = s.diffuser_summary == DIFFUSER_ORDINAL_NO_WATER;
                     }
+                    Log.v(TAG, "MQTT: rx opcode [" + f.opcode + "] on [" + topic + "] [" + raw.length + "] bytes");
                     if (tempHolder[0] != null && pctHolder[0] != null) gotEnough.countDown();
                 }
 
@@ -225,9 +246,14 @@ class WidgetStatusFetcher {
             // short either; whatever DID arrive by then is still used.
             gotEnough.await(MQTT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-            if (tempHolder[0] == null && pctHolder[0] == null && noWaterHolder[0] == null) return null;
+            if (tempHolder[0] == null && pctHolder[0] == null && noWaterHolder[0] == null) {
+                Log.d(TAG, "MQTT: timed out with nothing usable");
+                return null;
+            }
+            Log.d(TAG, "MQTT: got temp=[" + tempHolder[0] + "] hum=[" + humHolder[0] + "] diffuserPct=[" + pctHolder[0] + "] noWater=[" + noWaterHolder[0] + "]");
             return new Result(tempHolder[0], humHolder[0], pctHolder[0], noWaterHolder[0], "CLOUD");
         } catch (Exception e) {
+            Log.d(TAG, "MQTT: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             return null;
         } finally {
             if (client != null) {

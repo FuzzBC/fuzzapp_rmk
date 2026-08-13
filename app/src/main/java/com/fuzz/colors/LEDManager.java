@@ -79,10 +79,13 @@ import java.util.Random;
 
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
+import android.util.Log;
 
 import androidx.annotation.RequiresApi;
 
 public class LEDManager {
+
+    private static final String TAG = "LED_MGR";
 
     // --------------------------------------------------------
     // Constants – must match Arduino firmware
@@ -1249,6 +1252,7 @@ public class LEDManager {
     public void addDualColor(int r1, int g1, int b1, int r2, int g2, int b2) {
         String left  = String.format("%02x%02x%02x", r1, g1, b1);
         String right = String.format("%02x%02x%02x", r2, g2, b2);
+        Log.d(TAG, "addDualColor(" + left + "." + right + ")");
         LED_DualColorList.add(left + "." + right);
         _dualColorSave();
         _dualColorCreate();
@@ -1435,6 +1439,7 @@ public class LEDManager {
      * @param b    Blue  0-255
      */
     public void updateColor(int led, int r, int g, int b) {
+        Log.v(TAG, "updateColor(led=" + led + " rgb=" + r + "," + g + "," + b + ")");
         for (int i = 0; i < LED_TOTAL; i++) {
             if (led != LED_TOTAL && i != led) continue;
             // Stream owns the Ambilight LEDs, and HB is mirrored from COM/BED/LAMP
@@ -1709,6 +1714,7 @@ public class LEDManager {
 
     /** Forwards the TV on/off edge to HBFx so it can (re)start/stop the local HB effect replay. */
     public void notifyTvOnChanged(boolean tvOn) {
+        Log.d(TAG, "notifyTvOnChanged(" + tvOn + ")");
         if (HBFx != null) HBFx.onTvOnChanged(tvOn);
     }
 
@@ -1718,6 +1724,7 @@ public class LEDManager {
      * COM/BED/LAMP average right away.
      */
     public void notifyAmbilightChanged(boolean on) {
+        Log.d(TAG, "notifyAmbilightChanged(" + on + ")");
         if (HBFx != null) HBFx.onAmbilightChanged(on);
         if (on) _updateHBFromAmbientZones();
     }
@@ -1735,6 +1742,7 @@ public class LEDManager {
      * class-level note and onMotionChanged()).
      */
     public void notifyMotionChanged(boolean active) {
+        Log.d(TAG, "notifyMotionChanged(" + active + ")");
         if (HBFx != null) HBFx.onMotionChanged(active);
     }
 
@@ -1757,6 +1765,7 @@ public class LEDManager {
      * @param count  run length
      */
     public void updateColorBulk(int start, int count, int r, int g, int b) {
+        Log.v(TAG, "updateColorBulk(start=" + start + " count=" + count + " rgb=" + r + "," + g + "," + b + ")");
         int end = start + count;
         for (int i = start; i < end && i < LED_TOTAL; i++) {
             if (i < 0) continue;
@@ -1775,6 +1784,7 @@ public class LEDManager {
     public void updateColors(int[] idx, int[][] rgb) {
         if (idx == null || rgb == null) return;
         int n = Math.min(idx.length, rgb.length);
+        Log.v(TAG, "updateColors(" + n + " LEDs)");
         for (int k = 0; k < n; k++) {
             _setColorNow(idx[k], rgb[k][_R], rgb[k][_G], rgb[k][_B]);
         }

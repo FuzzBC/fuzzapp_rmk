@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
@@ -22,6 +23,7 @@ import androidx.core.content.ContextCompat;
  */
 public class UpdateInstaller {
 
+    private static final String TAG = "UPDATE_INSTALLER";
     private static final long POLL_MS = 400;
 
     public interface ProgressListener {
@@ -62,6 +64,7 @@ public class UpdateInstaller {
 
         registerReceiver();
         downloadId = dm.enqueue(req);
+        Log.d(TAG, "download() enqueued id=[" + downloadId + "] url=[" + apkUrl + "] file=[" + fileName + "]");
         lastPollBytes = 0;
         lastPollTime = System.currentTimeMillis();
         mainHandler.postDelayed(pollRunnable, POLL_MS);
@@ -98,6 +101,7 @@ public class UpdateInstaller {
             if (status == DownloadManager.STATUS_FAILED) {
                 int reasonIdx = c.getColumnIndex(DownloadManager.COLUMN_REASON);
                 int reason = reasonIdx >= 0 ? c.getInt(reasonIdx) : -1;
+                Log.d(TAG, "poll() STATUS_FAILED reason=[" + reason + "]");
                 if (listener != null) listener.onFailed("Download failed (reason " + reason + ")");
                 return; // receiver still fires ACTION_DOWNLOAD_COMPLETE on failure too, but stop polling now
             }
@@ -109,6 +113,7 @@ public class UpdateInstaller {
             lastPollTime = now;
 
             int percent = total > 0 ? (int) ((downloaded * 100L) / total) : -1;
+            Log.v(TAG, "poll() status=[" + status + "] " + downloaded + "/" + total + " (" + percent + "%) " + (long) speedBps + " B/s");
             if (listener != null) listener.onProgress(percent, downloaded, total, speedBps);
 
             if (status != DownloadManager.STATUS_SUCCESSFUL) {
@@ -127,6 +132,7 @@ public class UpdateInstaller {
                 unregister();
                 mainHandler.removeCallbacks(pollRunnable);
                 boolean installed = promptInstall();
+                Log.d(TAG, "download complete broadcast id=[" + id + "] installPrompted=[" + installed + "]");
                 if (listener != null) {
                     if (installed) listener.onComplete();
                     else listener.onFailed("Download did not complete successfully");

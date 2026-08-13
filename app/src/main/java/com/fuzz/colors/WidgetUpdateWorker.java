@@ -18,12 +18,15 @@ package com.fuzz.colors;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 public class WidgetUpdateWorker extends Worker {
+
+    private static final String TAG = "WIDGET_WORKER";
 
     public WidgetUpdateWorker(@NonNull Context context, @NonNull WorkerParameters params) {
         super(context, params);
@@ -32,10 +35,13 @@ public class WidgetUpdateWorker extends Worker {
     @NonNull
     @Override
     public Result doWork() {
+        Log.d(TAG, "doWork() starting");
         Context ctx = getApplicationContext();
         WidgetStatusFetcher.Result result = WidgetStatusFetcher.fetch(ctx);
 
         if (result != null) {
+            Log.d(TAG, "caching result: transport=[" + result.transport + "] temp=[" + result.tempC
+                    + "] hum=[" + result.humPct + "] diffuserPct=[" + result.diffuserPct + "] noWater=[" + result.noWater + "]");
             SharedPreferences.Editor editor = ctx.getSharedPreferences(
                     WidgetScheduling.PREFS_NAME, Context.MODE_PRIVATE).edit();
             if (result.tempC != null)       editor.putInt(WidgetScheduling.KEY_TEMP, result.tempC);
@@ -45,6 +51,8 @@ public class WidgetUpdateWorker extends Worker {
             editor.putString(WidgetScheduling.KEY_TRANSPORT, result.transport);
             editor.putLong(WidgetScheduling.KEY_LAST_UPDATE, System.currentTimeMillis());
             editor.apply();
+        } else {
+            Log.d(TAG, "fetch() returned null - board unreachable, keeping last cached values");
         }
         // Whether or not this attempt actually reached the board: refresh
         // every placed widget (both shapes) so the strip's "Refreshing…"
@@ -55,6 +63,7 @@ public class WidgetUpdateWorker extends Worker {
         FuzzWidgetProvider.updateAllWidgets(ctx);
         FuzzWidgetStackProvider.updateAllWidgets(ctx);
 
+        Log.d(TAG, "doWork() done");
         return Result.success();
     }
 }
