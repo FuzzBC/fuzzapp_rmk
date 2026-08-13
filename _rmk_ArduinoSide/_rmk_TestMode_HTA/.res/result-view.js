@@ -300,7 +300,7 @@ var ResultView = (function () {
         if (!d.fields.hasOwnProperty(k)) continue;
         var fv = formatFieldValue(opcodeName, k, d.fields[k]);
         var cell = el('div', 'res-entry-cell');
-        cell.appendChild(el('span', 'res-entry-key', k));
+        cell.appendChild(el('span', 'res-entry-key', k + ':'));
         cell.appendChild(el('span', fv.cls, fv.text));
         grid.appendChild(cell);
       }

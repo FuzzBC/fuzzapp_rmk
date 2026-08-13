@@ -207,8 +207,13 @@ a { color: inherit; }
 /* --- ResultView.js entryCards view (generic "what came back" packet cards,
    replaces the flat uncolored list for any burst/reply that isn't
    already a hand-built view like settings_table/diffuser_status) --- */
-.res-entries { display: flex; flex-direction: column; gap: 6px; }
-.res-entry { background: #212226; border: 1px solid #2c2d33; border-left: 3px solid #4a5568; border-radius: 10px; padding: 8px 10px; }
+/* Margin, not flex `gap` - mshta hosts IE11's Trident engine, which never
+   implemented `gap` for flexbox (only real browsers gained that ~2020+),
+   so every `gap:` here silently rendered as zero spacing - fields and
+   cards ran together with nothing between them. Matches the margin-based
+   pattern .res-swatch already uses successfully elsewhere in this file. */
+.res-entries { display: flex; flex-direction: column; }
+.res-entry { background: #212226; border: 1px solid #2c2d33; border-left: 3px solid #4a5568; border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; }
 .res-entry.cat-telem { border-left-color: #5b9dff; }
 .res-entry.cat-ack { border-left-color: #4ecf8a; }
 .res-entry.cat-ack.res-entry-fail { border-left-color: #ff6b6b; }
@@ -219,9 +224,9 @@ a { color: inherit; }
 .res-entry.cat-ack .res-entry-name { color: #4ecf8a; }
 .res-entry.cat-ack.res-entry-fail .res-entry-name { color: #ff6b6b; }
 .res-entry-seq { font-family: Consolas, monospace; font-size: 10px; color: #7c7972; }
-.res-entry-grid { display: flex; flex-wrap: wrap; gap: 4px 16px; }
-.res-entry-cell { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; }
-.res-entry-key { font-family: Consolas, monospace; color: #7c7972; }
+.res-entry-grid { display: flex; flex-wrap: wrap; }
+.res-entry-cell { display: flex; align-items: baseline; font-size: 11.5px; margin: 2px 16px 2px 0; }
+.res-entry-key { font-family: Consolas, monospace; color: #7c7972; margin-right: 6px; }
 .res-entry-val { font-family: Consolas, monospace; font-weight: 700; color: #4ecf8a; }
 .res-entry-on { font-family: Consolas, monospace; font-weight: 700; color: #4ecf8a; }
 .res-entry-off { font-family: Consolas, monospace; font-weight: 700; color: #8b8a91; }
