@@ -68,6 +68,10 @@ var LED_ZONES = [
 /* ------------------------------------------------------- diffuser table */
 var DIF_MODE_NAMES = ['OFF', 'CONT', '10 SEC', '2H AFTER SLEEP', '4H AFTER SLEEP'];
 var DIF_EFFECT_NAMES = ['STATIC', 'FADE', 'PULSE', 'RANDOM', 'RAINBOW', 'SPARKLE', 'FIRE', 'BOUNCE', 'CONFETTI'];
+// TELEM_DIFFUSER_STATUS.strip - matches the firmware's Strip.cpp::stripStatusName()
+// exactly: 0=off, 1=static, 2=dual, 3+ = effectName(code-2) (DIF_EFFECT_NAMES[0]
+// "STATIC" is skipped there since code 1 already covers plain static).
+var DIF_STRIP_NAMES = ['OFF', 'STATIC', 'DUAL'].concat(DIF_EFFECT_NAMES.slice(1));
 var DIF_EFFECT_OPTIONS = DIF_EFFECT_NAMES.map(function (n, i) { return [String(i), (i < 10 ? '0' + i : '' + i) + ' ' + n]; });
 var DIF_MODE_OPTIONS = [['1', '1 CONT'], ['2', '2 10 SEC'], ['3', '3 2H after sleep'], ['4', '4 4H after sleep']];
 

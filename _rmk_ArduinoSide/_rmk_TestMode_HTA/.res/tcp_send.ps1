@@ -2,11 +2,15 @@
   tcp_send.ps1 - one-shot Telnet/TCP line sender for TestMode.hta.
 
   Opens a TCP connection (the diffuser's Serial/Telnet console, default
-  port 23), writes -PayloadHex (decoded) as one CRLF-terminated line,
-  collects whatever text arrives within -TimeoutMs, then closes. Console replies
-  (S/D/?/banner) can span several lines, so this reads for the whole
-  window instead of stopping at the first chunk - mirrors
-  TestMode_APP/.res/net.py's send_tcp().
+  port 23), writes -PayloadHex (decoded) as one CRLF-terminated line, then
+  collects whatever text arrives. -TimeoutMs is an IDLE window, not one
+  fixed deadline - it resets on every chunk received, bounded by
+  -MaxTimeoutMs, same "keeps waiting as long as data keeps coming, only
+  gives up after real silence" pattern udp_send.ps1 already uses for
+  multi-packet UDP bursts. A long console reply (a full debug dump, a
+  long history listing) can arrive as several separate TCP writes with
+  small gaps between them - a flat deadline from the start could cut it
+  off mid-transfer even while the device was still actively sending.
 
   Launched hidden via WshShell.Run() and writes its result to -OutFile
   (see udp_send.ps1's header for the full reasoning and the
@@ -31,10 +35,12 @@ param(
     # can contain anything, so this gets the same safe treatment.
     [Parameter(Mandatory = $true)][string]$PayloadHex,
     [Parameter(Mandatory = $true)][string]$OutFile,
-    [int]$TimeoutMs = 1500
+    [int]$TimeoutMs = 1500,
+    [int]$MaxTimeoutMs = 0
 )
 
 $ErrorActionPreference = 'Stop'
+if ($MaxTimeoutMs -le 0) { $MaxTimeoutMs = [Math]::Max($TimeoutMs * 4, 6000) }
 function Decode-Hex([string]$hex) {
     if ($hex.Length -eq 0) { return [byte[]]@() }
     $out = New-Object byte[] ($hex.Length / 2)
@@ -77,11 +83,15 @@ try {
 
     $buf = New-Object byte[] 4096
     $ms = New-Object System.IO.MemoryStream
-    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
-    while ((Get-Date) -lt $deadline) {
+    # See the file header - $lastActivity resets on every chunk so this is
+    # an idle timeout, $hardDeadline is the real ceiling.
+    $now = Get-Date
+    $lastActivity = $now
+    $hardDeadline = $now.AddMilliseconds($MaxTimeoutMs)
+    while ((Get-Date) -lt $hardDeadline -and ((Get-Date) - $lastActivity).TotalMilliseconds -lt $TimeoutMs) {
         if ($stream.DataAvailable) {
             $n = $stream.Read($buf, 0, $buf.Length)
-            if ($n -gt 0) { $ms.Write($buf, 0, $n) }
+            if ($n -gt 0) { $ms.Write($buf, 0, $n); $lastActivity = Get-Date }
         } else {
             Start-Sleep -Milliseconds 60
         }

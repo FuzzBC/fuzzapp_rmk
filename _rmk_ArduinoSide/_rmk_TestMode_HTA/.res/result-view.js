@@ -183,12 +183,13 @@ var ResultView = (function () {
 
   function diffuserStatusView(container, fields) {
     var modeName = DIF_MODE_NAMES[fields.mode] || ('M' + fields.mode);
+    var stripName = DIF_STRIP_NAMES[fields.strip] || ('#' + fields.strip);
     var grid = el('div', 'res-grid');
     [['mode', 'M' + fields.mode + ' (' + modeName + ')'],
-     ['strip', String(fields.strip)],
+     ['strip', stripName],
      ['parfum', fields.parfum_min ? fields.parfum_min + ' min' : 'off'],
-     ['usage', fields.usage_min + ' min'],
-     ['avg cycle', fields.avg_min + ' min'],
+     ['usage', Engine.fmtDurationMin(fields.usage_min)],
+     ['avg cycle', Engine.fmtDurationMin(fields.avg_min)],
      ['refills', fields.refill_count + '/10 (lifetime ' + fields.lifetime_refills + ')']].forEach(function (c) {
       var cell = el('div', 'res-cell');
       cell.appendChild(el('div', 'res-cell-label', c[0]));

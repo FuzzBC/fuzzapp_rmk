@@ -193,10 +193,15 @@ var Net = (function () {
   function sendTcp(ip, port, payload, timeoutMs, cb) {
     var script = RES_DIR + '\\tcp_send.ps1';
     var outFile = RES_DIR + '\\' + uniqueName() + '.txt';
+    // Same idle-timeout/hard-cap split as sendUdp() - see tcp_send.ps1's
+    // header. maxTimeout must reach this watchdog too, or a genuinely long
+    // multi-chunk console reply that the .ps1 is correctly still waiting
+    // on would get reported as an error here before it ever finishes.
+    var maxTimeout = Math.max(timeoutMs * 4, 6000);
     var cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + q(script) +
       ' -IP ' + q(ip) + ' -Port ' + parseInt(port, 10) + ' -PayloadHex ' + q(strToHex(payload)) +
-      ' -TimeoutMs ' + parseInt(timeoutMs, 10) + ' -OutFile ' + q(outFile);
-    runHiddenAsync(cmd, outFile, timeoutMs + 4000, function (res) {
+      ' -TimeoutMs ' + parseInt(timeoutMs, 10) + ' -MaxTimeoutMs ' + maxTimeout + ' -OutFile ' + q(outFile);
+    runHiddenAsync(cmd, outFile, maxTimeout + 4000, function (res) {
       if (!res.ok) { cb({ status: 'ERROR', message: res.message, replies: [] }); return; }
       cb(parseEnvelope(res.stdout));
     });
