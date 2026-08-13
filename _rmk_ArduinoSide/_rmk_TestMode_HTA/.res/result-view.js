@@ -292,16 +292,20 @@ var ResultView = (function () {
 
     if (kind === 'ack' && d) {
       var resultName = Proto.ACK_RESULT_NAMES[d.resultCode] || ('code ' + d.resultCode);
-      var chip = el('div', isFailedAck ? 'res-entry-off' : 'res-entry-on', resultName);
+      var chip = el('div', 'res-entry-chip ' + (isFailedAck ? 'res-entry-off' : 'res-entry-on'), resultName);
       card.appendChild(chip);
     } else if (d && d.fields && typeof d.fields === 'object') {
-      var grid = el('div', 'res-entry-grid');
+      // Same box style as diffuserStatusView()'s "Check status" cells
+      // (.res-grid/.res-cell: bordered box, small caps label on top, bold
+      // value below) instead of a bespoke inline "key: value" row layout -
+      // one consistent look for every field grid in the app.
+      var grid = el('div', 'res-grid');
       for (var k in d.fields) {
         if (!d.fields.hasOwnProperty(k)) continue;
         var fv = formatFieldValue(opcodeName, k, d.fields[k]);
-        var cell = el('div', 'res-entry-cell');
-        cell.appendChild(el('span', 'res-entry-key', k + ':'));
-        cell.appendChild(el('span', fv.cls, fv.text));
+        var cell = el('div', 'res-cell');
+        cell.appendChild(el('div', 'res-cell-label', k));
+        cell.appendChild(el('div', 'res-cell-value ' + fv.cls, fv.text));
         grid.appendChild(cell);
       }
       card.appendChild(grid);

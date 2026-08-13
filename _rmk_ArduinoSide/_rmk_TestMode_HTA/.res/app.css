@@ -224,13 +224,17 @@ a { color: inherit; }
 .res-entry.cat-ack .res-entry-name { color: #4ecf8a; }
 .res-entry.cat-ack.res-entry-fail .res-entry-name { color: #ff6b6b; }
 .res-entry-seq { font-family: Consolas, monospace; font-size: 10px; color: #7c7972; }
-.res-entry-grid { display: flex; flex-wrap: wrap; }
-.res-entry-cell { display: flex; align-items: baseline; font-size: 11.5px; margin: 2px 16px 2px 0; }
-.res-entry-key { font-family: Consolas, monospace; color: #7c7972; margin-right: 6px; }
-.res-entry-val { font-family: Consolas, monospace; font-weight: 700; color: #4ecf8a; }
-.res-entry-on { font-family: Consolas, monospace; font-weight: 700; color: #4ecf8a; }
-.res-entry-off { font-family: Consolas, monospace; font-weight: 700; color: #8b8a91; }
+/* Color-only modifiers, layered onto .res-cell-value (the box-layout/
+   sizing lives there, shared with diffuserStatusView()'s "Check status"
+   boxes) - .res-cell-value has no color of its own, so these are what
+   actually distinguish a real on/off switch from an ordinary value. */
+.res-entry-val { color: #4ecf8a; }
+.res-entry-on { color: #4ecf8a; }
+.res-entry-off { color: #8b8a91; }
 .res-entry-raw { font-family: Consolas, monospace; font-size: 11px; color: #b7b4ac; word-break: break-all; }
+/* ACK entries' result chip - res-entry-on/-off give the color, this gives
+   the pill shape/weight (same combo pattern as .res-cell-value above). */
+.res-entry-chip { display: inline-block; font-family: Consolas, monospace; font-weight: 700; font-size: 11px; background: #17181b; border-radius: 999px; padding: 4px 12px; }
 
 /* --- ResultView.js console view (raw Telnet console text) --- */
 .res-console-box { background: #212226; border: 1px solid #2c2d33; border-radius: 12px; padding: 10px 12px; font-family: Consolas, monospace; font-size: 11.5px; max-height: 320px; overflow-y: auto; }
