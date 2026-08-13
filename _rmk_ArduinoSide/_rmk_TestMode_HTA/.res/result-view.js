@@ -256,7 +256,13 @@ var ResultView = (function () {
     'TELEM_DIFFUSER_STATUS.mode': function (v) { return 'M' + v + ' (' + (DIF_MODE_NAMES[v] || '?') + ')'; },
     'TELEM_DIFFUSER_STATUS.strip': function (v) { return DIF_STRIP_NAMES[v] || ('#' + v); },
     'TELEM_DIFFUSER_STATUS.usage_min': function (v) { return Engine.fmtDurationMin(v); },
-    'TELEM_DIFFUSER_STATUS.avg_min': function (v) { return Engine.fmtDurationMin(v); }
+    'TELEM_DIFFUSER_STATUS.avg_min': function (v) { return Engine.fmtDurationMin(v); },
+    // TELEM_STATUS - same MOTION_LABEL/AMBIENT_LABEL/DIF_SUMMARY_LABEL
+    // tables the hero card uses (data.js), matched to AppLink.cpp's
+    // updStatus() field encoding.
+    'TELEM_STATUS.motion': function (v) { return v + ' (' + (MOTION_LABEL[v] || '?') + ')'; },
+    'TELEM_STATUS.ambient': function (v) { return v + ' (' + (AMBIENT_LABEL[v] || '?') + ')'; },
+    'TELEM_STATUS.diffuser_summary': function (v) { return v + ' (' + (DIF_SUMMARY_LABEL[v] || '?') + ')'; }
   };
 
   function formatFieldValue(opcodeName, key, val) {

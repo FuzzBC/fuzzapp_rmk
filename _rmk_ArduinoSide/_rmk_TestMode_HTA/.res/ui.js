@@ -121,10 +121,9 @@
   }
 
   /* ------------------------------------------------------------- hero */
+  // MOTION_LABEL/AMBIENT_LABEL/DIF_SUMMARY_LABEL now live in data.js,
+  // shared with result-view.js's generic entry cards.
   var DIF_MODE_LABEL = ['OFF', 'CONT', '10 SEC', '2H AFTER SLEEP', '4H AFTER SLEEP'];
-  var MOTION_LABEL = ['auto-off', 'off', 'idle (armed)', 'triggered, front', 'triggered, bed'];
-  var DIF_SUMMARY_LABEL = { 0: 'off', 1: 'on', 2: 'out of water', 3: 'no response', 4: 'parfum running' };
-  var AMBIENT_LABEL = { 0: 'off', 1: 'on', 2: 'ready' };
   function dash(v) { return v == null ? '—' : v; }
 
   function renderHero() {

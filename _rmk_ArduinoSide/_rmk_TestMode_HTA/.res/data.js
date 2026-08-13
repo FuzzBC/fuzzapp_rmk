@@ -75,6 +75,17 @@ var DIF_STRIP_NAMES = ['OFF', 'STATIC', 'DUAL'].concat(DIF_EFFECT_NAMES.slice(1)
 var DIF_EFFECT_OPTIONS = DIF_EFFECT_NAMES.map(function (n, i) { return [String(i), (i < 10 ? '0' + i : '' + i) + ' ' + n]; });
 var DIF_MODE_OPTIONS = [['1', '1 CONT'], ['2', '2 10 SEC'], ['3', '3 2H after sleep'], ['4', '4 4H after sleep']];
 
+/* ---------------------------------------------------- SmartTV status table */
+// TELEM_STATUS's fields - shared by ui.js's hero card and result-view.js's
+// generic entry cards, so a status reply reads the same way everywhere it
+// shows up. Matches AppLink.cpp::updStatus() exactly - see its comments for
+// the u8 -> meaning mapping (motion mirrors MOTION::Status's Globals.h enum
+// directly; ambient/diffuser_summary are each a small hand-built code, not
+// a raw firmware enum).
+var MOTION_LABEL = ['auto-off', 'off', 'idle (armed)', 'triggered, front', 'triggered, bed'];
+var AMBIENT_LABEL = { 0: 'off', 1: 'on', 2: 'ready' };
+var DIF_SUMMARY_LABEL = { 0: 'off', 1: 'on', 2: 'out of water', 3: 'no response', 4: 'parfum running' };
+
 /* ---------------------------------------------------- shared builders */
 function buildNoPayload() { return ''; }
 
