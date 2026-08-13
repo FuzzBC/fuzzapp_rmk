@@ -206,6 +206,7 @@ public class MqttTransport {
      */
     public void setDeviceId(String deviceId) {
         if (deviceId.equals(getDeviceId())) return;
+        Log.d("MQTT", "setDeviceId(" + getDeviceId() + " -> " + deviceId + ")" + (isConnected() ? ", reconnecting" : ""));
         _prefs().edit().putString(KEY_DEVICE_ID, deviceId).apply();
         if (isConnected()) { disconnect(); connect(); }
     }
@@ -221,6 +222,7 @@ public class MqttTransport {
      * @param pass  Password to cache.
      */
     public void setCredentials(String user, String pass) {
+        Log.d("MQTT", "setCredentials(user=" + user + ")");
         _prefs().edit().putString(KEY_USER, user).putString(KEY_PASS, pass).apply();
     }
 
@@ -429,7 +431,8 @@ public class MqttTransport {
             c = client;
             client = null;
         }
-        if (c == null) return;
+        if (c == null) { Log.v("MQTT", "disconnect() - no live client, no-op"); return; }
+        Log.d("MQTT", "disconnect() - tearing down live session");
         new Thread(() -> {
             try {
                 if (c.isConnected()) c.disconnect();

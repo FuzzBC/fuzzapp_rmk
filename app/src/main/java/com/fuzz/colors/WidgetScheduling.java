@@ -39,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 final class WidgetScheduling {
     private WidgetScheduling() { }
 
+    private static final String TAG = "WIDGET_SCHED";
+
     // ---- Shared data cache (written by WidgetUpdateWorker, read by both providers) ----
     static final String PREFS_NAME       = "FuZz_Widget";
     static final String KEY_TEMP         = "temp";
@@ -66,6 +68,7 @@ final class WidgetScheduling {
                     .build();
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                     WORK_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request);
+            Log.d(TAG, "ensurePeriodicRefresh() enqueued (KEEP), every " + PERIODIC_MINUTES + " min");
         } catch (Throwable t) {
             Log.e("FuzzWidget", "ensurePeriodicRefresh failed", t);
         }
@@ -76,11 +79,14 @@ final class WidgetScheduling {
         try {
             AppWidgetManager manager = AppWidgetManager.getInstance(context);
             for (Class<?> provider : PROVIDERS) {
-                if (manager.getAppWidgetIds(new ComponentName(context, provider)).length > 0) {
+                int n = manager.getAppWidgetIds(new ComponentName(context, provider)).length;
+                if (n > 0) {
+                    Log.d(TAG, "ensureIfAnyPlaced() - " + provider.getSimpleName() + " has " + n + " placed, arming");
                     ensurePeriodicRefresh(context);
                     return;
                 }
             }
+            Log.v(TAG, "ensureIfAnyPlaced() - nothing placed, leaving job alone");
         } catch (Throwable t) {
             Log.e("FuzzWidget", "ensureIfAnyPlaced failed", t);
         }
@@ -91,9 +97,13 @@ final class WidgetScheduling {
         try {
             AppWidgetManager manager = AppWidgetManager.getInstance(context);
             for (Class<?> provider : PROVIDERS) {
-                if (manager.getAppWidgetIds(new ComponentName(context, provider)).length > 0) return;
+                if (manager.getAppWidgetIds(new ComponentName(context, provider)).length > 0) {
+                    Log.v(TAG, "cancelIfNothingPlaced() - " + provider.getSimpleName() + " still placed, keeping job");
+                    return;
+                }
             }
             WorkManager.getInstance(context).cancelUniqueWork(WORK_PERIODIC);
+            Log.d(TAG, "cancelIfNothingPlaced() - nothing placed anywhere, cancelled periodic job");
         } catch (Throwable t) {
             Log.e("FuzzWidget", "cancelIfNothingPlaced failed", t);
         }
@@ -104,6 +114,7 @@ final class WidgetScheduling {
         try {
             OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(WidgetUpdateWorker.class).build();
             WorkManager.getInstance(context).enqueueUniqueWork(WORK_MANUAL, ExistingWorkPolicy.REPLACE, request);
+            Log.d(TAG, "triggerManualRefresh() enqueued (REPLACE)");
         } catch (Throwable t) {
             Log.e("FuzzWidget", "triggerManualRefresh failed", t);
         }

@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.028
+- Internal: filled in real gaps in the adb debug logging from the last
+  two updates - the widget background-refresh scheduler had none at all
+  (only error-path logging, no visibility into normal operation), and
+  the cloud (MQTT) transport had barely any despite being the most
+  debugged part of this app so far.
+
 ## 8.027
 - Fixed: LED colours from the controller never reached the app - every
   colour update packet was silently rejected and dropped. This app never
