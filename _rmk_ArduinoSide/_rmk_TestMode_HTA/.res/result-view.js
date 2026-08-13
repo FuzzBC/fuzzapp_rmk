@@ -342,6 +342,15 @@ var ResultView = (function () {
       var resultName = Proto.ACK_RESULT_NAMES[d.resultCode] || ('code ' + d.resultCode);
       var chip = el('div', 'res-entry-chip ' + (isFailedAck ? 'res-entry-off' : 'res-entry-on'), resultName);
       card.appendChild(chip);
+    } else if (opcodeName === 'TELEM_DUAL_COLOR' && d && d.fields) {
+      // r1/g1/b1/r2/g2/b2 as bare numbers doesn't show what the color
+      // actually IS - swatches() (already used for color_params/
+      // colorSyncView) gives the same "see the color" treatment here.
+      var f = d.fields;
+      swatches(card, [
+        ['Colour 1', hexb(f.r1, 2) + hexb(f.g1, 2) + hexb(f.b1, 2)],
+        ['Colour 2', hexb(f.r2, 2) + hexb(f.g2, 2) + hexb(f.b2, 2)]
+      ]);
     } else if (d && d.fields && typeof d.fields === 'object') {
       // Same box style as diffuserStatusView()'s "Check status" cells
       // (.res-grid/.res-cell: bordered box, small caps label on top, bold
