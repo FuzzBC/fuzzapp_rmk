@@ -122,6 +122,18 @@ bool Unpack(const uint8_t* in, size_t len, HelloPayload& out) {
     return true;
 }
 
+size_t Pack(const DiagHealthPayload& p, uint8_t* out) {
+    size_t i = 0;
+    out[i++] = (uint8_t)p.category;
+    return i;
+}
+bool Unpack(const uint8_t* in, size_t len, DiagHealthPayload& out) {
+    if (len < DIAG_HEALTH_SIZE) return false;
+    size_t i = 0;
+    out.category = in[i++];
+    return true;
+}
+
 size_t Pack(const LedSetColorPayload& p, uint8_t* out) {
     size_t i = 0;
     out[i++] = (uint8_t)p.r;

@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.029
+- Fixed: the DBG button's 22-item diagnostic grid was cosmetic - every
+  single entry silently fired the exact same generic health dump no
+  matter which one you tapped (a leftover from the old app's per-module
+  debug system, which never got ported over). Replaced with 6 real
+  categories (Health, Network, LED, Motion, TV, Task) that each show
+  genuinely different information now.
+
 ## 8.028
 - Internal: filled in real gaps in the adb debug logging from the last
   two updates - the widget background-refresh scheduler had none at all

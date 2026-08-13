@@ -9,7 +9,6 @@ Regenerate after any edit to protocol_table.json:
 Outputs (all marked GENERATED - do not hand-edit):
     _rmk_ArduinoSide/_rmk_Shared/protocol_opcodes.h        (C++, shared by both boards)
     _rmk_app/.../core/transport/ProtocolOpcodes.java       (Java, app side)
-    _rmk_ArduinoSide/_rmk_TestMode/protocol_opcodes.py     (Python, test console)
     _rmk_ArduinoSide/_rmk_TestMode_HTA/.res/protocol_opcodes.js  (ES5 JS, HTA test console)
 
 A CI/pre-commit check should re-run this and diff against the committed
@@ -33,7 +32,6 @@ SHARED_DIR = os.path.dirname(HERE)
 TABLE_PATH = os.path.join(SHARED_DIR, "protocol_table.json")
 
 CPP_OUT = os.path.join(SHARED_DIR, "protocol_opcodes.h")
-PY_OUT = os.path.join(os.path.dirname(SHARED_DIR), "_rmk_TestMode", "protocol_opcodes.py")
 REPO_ROOT = os.path.dirname(os.path.dirname(SHARED_DIR))  # .../_rmk_ArduinoSide/_rmk_Shared -> repo root
 # Targets the real cloned app (com.fuzz.colors) directly under a new
 # `protocol` subpackage now - the earlier standalone _rmk_app scaffold
@@ -546,7 +544,6 @@ def main():
     write(CPP_OUT, gen_cpp(table))
     write(os.path.join(SHARED_DIR, "protocol_opcodes.cpp"), gen_cpp_impl(table))
     write(JAVA_OUT, gen_java(table))
-    write(PY_OUT, gen_python(table))
     write(JS_OUT, gen_javascript(table))
 
 

@@ -230,8 +230,12 @@ var SMARTTV_COMMANDS = [
     desc: 'Send first - triggers a full telemetry push (status/climate/lux/link/settings/colours/...)', params: [], build: function () { return Proto.packHello(1); } },
   { id: 'Keepalive', opcode: 'KEEPALIVE', transport: 'udp', section: 'UDP :8472 - session', ack: false, name: 'Keep-alive ping', label: 'KEEPALIVE',
     desc: 'No ack expected - board suspends TX if it hears nothing for a while', params: [], build: buildNoPayload },
-  { id: 'DiagHealth', opcode: 'DIAG_HEALTH', transport: 'udp', section: 'UDP :8472 - session', name: 'Diagnostic - health summary', label: 'DIAG_HEALTH',
-    desc: 'Read-only health check (WiFi, free RAM, LEDs, TV, diffuser mirror, EEPROM save state)', params: [], build: buildNoPayload },
+  { id: 'DiagHealth', opcode: 'DIAG_HEALTH', transport: 'udp', section: 'UDP :8472 - session', name: 'Diagnostic - category dump', label: 'DIAG_HEALTH',
+    desc: 'Read-only diagnostic dump, one of 6 real categories - see AppLink.cpp\'s DiagCategory enum (app-side SettingsManager.SET_Debug must stay index-parallel)',
+    direct_buttons: [
+      [Proto.packDiagHealth(0), 'Health'], [Proto.packDiagHealth(1), 'Network'], [Proto.packDiagHealth(2), 'LED'],
+      [Proto.packDiagHealth(3), 'Motion'], [Proto.packDiagHealth(4), 'TV'], [Proto.packDiagHealth(5), 'Task']
+    ] },
 
   { id: 'LedSetColor', opcode: 'LED_SET_COLOR', transport: 'udp', section: 'UDP :8472 - LED', name: 'Set LED color', label: 'LED_SET_COLOR',
     desc: 'Set solid colour on the selected LEDs',

@@ -602,22 +602,26 @@ public class DataSend {
     }
 
     /**
-     * Request a health-summary diagnostic dump. Opcode: DIAG_HEALTH.
-     * Replaces the old per-module ASCII debug dump ('K' + index) - the new
-     * firmware only exposes this one aggregate health check over the app
-     * protocol; per-module dumps are superseded by direct Telnet access
-     * (see MainActivity's Telnet toggle, added alongside this adaptation).
+     * Request a diagnostic dump for one category. Opcode: DIAG_HEALTH,
+     * payload=[category]. Replaces the old per-module ASCII debug dump
+     * ('K' + index) with a small, honest set of real categories - see
+     * SettingsManager.SET_Debug and AppLink.cpp's DiagCategory enum for
+     * the matching list (both must stay index-parallel). The original
+     * 22-item picker looked the same for every entry (they all silently
+     * collapsed to the same generic health dump); this only offers what
+     * the firmware actually has distinct data for.
      *
-     * @param debug  Unused, kept for call-site compatibility (the old debug
-     *               dropdown's selected index no longer has per-item wire
-     *               opcodes to target).
+     * @param category  Index into SettingsManager.SET_Debug - must match
+     *                  AppLink.cpp's DiagCategory enum order exactly.
      *
-     * Called by: MainActivity (debug dropdown selection).
+     * Called by: MainActivity (debug grid selection).
      */
-    public void sendDebug(int debug) {
-        Log.v("DATA_S", "Sending diag health (debug index " + debug + " - no longer per-module, see DIAG_HEALTH)");
-        _sendBare(ProtocolOpcodes.Opcode.DIAG_HEALTH, null);
-        Log.i("DATA_S", "[DIAG_HEALTH] # DEBUG");
+    public void sendDebug(int category) {
+        Log.v("DATA_S", "Sending diag category " + category);
+        ProtocolOpcodes.DiagHealthPayload p = new ProtocolOpcodes.DiagHealthPayload();
+        p.category = category;
+        _sendBare(ProtocolOpcodes.Opcode.DIAG_HEALTH, p.pack());
+        Log.i("DATA_S", "[DIAG_HEALTH] # DEBUG category [" + category + "]");
     }
 
     // --------------------------------------------------------

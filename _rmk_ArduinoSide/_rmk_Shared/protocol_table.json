@@ -36,7 +36,7 @@
     {"code": "0x01", "name": "HELLO",                  "link": "both", "dir": "cmd",   "ack": "FAST",  "fields": [{"name": "proto_version", "type": "u8"}]},
     {"code": "0x02", "name": "KEEPALIVE",               "link": "both", "dir": "cmd",   "ack": "NONE",  "fields": []},
     {"code": "0x03", "name": "LOG",                     "link": "both", "dir": "telem", "ack": "NONE",  "fields": [{"name": "level", "type": "u8"}, {"name": "source", "type": "u8"}, {"name": "text", "type": "str"}]},
-    {"code": "0x04", "name": "DIAG_HEALTH",              "link": "both", "dir": "cmd",   "ack": "FAST",  "fields": []},
+    {"code": "0x04", "name": "DIAG_HEALTH",              "link": "both", "dir": "cmd",   "ack": "FAST",  "fields": [{"name": "category", "type": "u8"}]},
     {"code": "0x05", "name": "DIAG_PARFUM_TRACE",         "link": "A",    "dir": "cmd",   "ack": "FAST",  "fields": []},
 
     {"code": "0x10", "name": "LED_SET_COLOR",             "link": "B", "dir": "cmd", "ack": "FAST", "fields": [{"name": "r", "type": "u8"}, {"name": "g", "type": "u8"}, {"name": "b", "type": "u8"}]},

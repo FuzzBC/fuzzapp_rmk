@@ -192,6 +192,22 @@ public final class ProtocolOpcodes {
             return p;
         }
     }
+    public static final class DiagHealthPayload {
+        public int category;
+        public static final int SIZE = 1;
+        public byte[] pack() {
+            byte[] out = new byte[SIZE];
+            int i = 0;
+            out[i++] = (byte) category;
+            return out;
+        }
+        public static DiagHealthPayload unpack(byte[] in, int offset) {
+            DiagHealthPayload p = new DiagHealthPayload();
+            int i = offset;
+            p.category = in[i++] & 0xFF;
+            return p;
+        }
+    }
     public static final class LedSetColorPayload {
         public int r;
         public int g;

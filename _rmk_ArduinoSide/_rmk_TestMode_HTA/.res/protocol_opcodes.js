@@ -193,6 +193,18 @@ var Proto = (function () {
     return out;
   }
 
+  function packDiagHealth(category) {
+    var s = '';
+    s += String.fromCharCode(category & 0xFF);
+    return s;
+  }
+  function unpackDiagHealth(data, offset) {
+    offset = offset || 0;
+    var out = {}, i = offset;
+    out.category = data.charCodeAt(i) & 0xFF; i += 1;
+    return out;
+  }
+
   function packLedSetColor(r, g, b) {
     var s = '';
     s += String.fromCharCode(r & 0xFF);
@@ -619,6 +631,7 @@ var Proto = (function () {
     Opcode: Opcode, OPCODE_NAMES: OPCODE_NAMES, crc8: crc8,
     packAck: packAck, unpackAck: unpackAck,
     packHello: packHello, unpackHello: unpackHello,
+    packDiagHealth: packDiagHealth, unpackDiagHealth: unpackDiagHealth,
     packLedSetColor: packLedSetColor, unpackLedSetColor: unpackLedSetColor,
     packLedSetDualColor: packLedSetDualColor, unpackLedSetDualColor: unpackLedSetDualColor,
     packLedSetSelection: packLedSetSelection, unpackLedSetSelection: unpackLedSetSelection,

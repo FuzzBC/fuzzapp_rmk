@@ -895,6 +895,76 @@ static void handleDiffuserParfumStart(const uint8_t *payload, size_t len, uint8_
     DIF::Parfum(p.minutes, p.mode);
 }
 
+/** DIAG_HEALTH categories - real, distinct dumps (not the original 22-item
+    per-module '"K" debug switch, which never had a wire opcode in this
+    protocol to begin with - see Debug.h's class doc). Kept small and
+    honest: each one prints genuinely different fields, unlike the app's
+    old debug grid where every entry collapsed to this same HEALTH block
+    regardless of which was tapped. */
+enum DiagCategory {
+    DIAG_CAT_HEALTH  = 0,
+    DIAG_CAT_NETWORK = 1,
+    DIAG_CAT_LED     = 2,
+    DIAG_CAT_MOTION  = 3,
+    DIAG_CAT_TV      = 4,
+    DIAG_CAT_TASK    = 5,
+};
+
+static void diagHealth() {
+    bool wifiOk = (WiFi.status() == WL_CONNECTED);
+    bool ramOk  = (getFreeRam() >= 4000);
+    termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "==== HEALTH SUMMARY ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_NET, "APP", "DiagHealth", "WiFi [%s] (%d dBm)", wifiOk ? "OK" : "DOWN", (int)WiFi.RSSI());
+    termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "RAM free [%d] of [%d] B%s", getFreeRam(), ARD_RAM_TOTAL, ramOk ? "" : " [LOW]");
+    termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "DiagHealth", "LEDs [%s]", LED::State.Enabled ? "enabled" : "disabled");
+    termMsgLog(APP_LOG_INF, APP_SRC_TV,  "APP", "DiagHealth", "TV [%s]", TV::State.Status ? "on" : "off");
+    termMsgLog(APP_LOG_INF, APP_SRC_DIF, "APP", "DiagHealth", "Diffuser mode [%d] parfum [%d] min", DIF::State.Mode, DIF::State.ParfumMin);
+    termMsgLog(APP_LOG_INF, APP_SRC_EE,  "APP", "DiagHealth", "EEPROM [%s]", (EE::State.tID != SCHED::TASK_ID_NONE) ? "save pending" : "up to date");
+    termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "==== %s ====", (wifiOk && ramOk) ? "ALL OK" : "ISSUES FOUND");
+}
+
+static void diagNetwork() {
+    IPAddress ip = WiFi.localIP();
+    static const char* RTC_NAME[] = { "OK", "RETRY", "RETRYING" };
+    termMsgLog(APP_LOG_INF, APP_SRC_NET, "APP", "DiagNetwork", "==== NETWORK ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_NET, "APP", "DiagNetwork", "WiFi [%s] IP [%d.%d.%d.%d] RSSI [%d] dBm",
+        (WiFi.status() == WL_CONNECTED) ? "OK" : "DOWN", ip[0], ip[1], ip[2], ip[3], (int)WiFi.RSSI());
+    termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagNetwork", "MQTT [%s]", MQTT::State.Up ? "up" : "down");
+    termMsgLog(APP_LOG_INF, APP_SRC_RTC, "APP", "DiagNetwork", "RTC [%s] date [%02d/%02d/%d] time [%02d:%02d:%02d]",
+        (RTC_Status <= rtcRETRYING) ? RTC_NAME[RTC_Status] : "?",
+        NET::Date.time[_DD], NET::Date.time[_MM], NET::Date.time[_YY],
+        NET::Date.time[_HH], NET::Date.time[_MI], NET::Date.time[_SS]);
+    termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagNetwork", "uptime [%lu] ms", (unsigned long)millis());
+}
+
+static void diagLed() {
+    termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "DiagLed", "==== LED ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "DiagLed", "Enabled [%s]", LED::State.Enabled ? "yes" : "no");
+    termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "DiagLed", "Strips TV:%d COM:%d UCOM:%d BED:%d LAMP:%d HB:%d total:%d",
+        LED_TV_NUM, LED_COM_NUM, LED_UCOM_NUM, LED_BED_NUM, LED_LAMP_NUM, LED_HB_NUM, LED_NUM_TOTAL);
+    termMsgLog(APP_LOG_INF, APP_SRC_UDPRAW, "APP", "DiagLed", "Ambilight [%s]", UDPRAW::State.Status ? "ON" : "OFF");
+}
+
+static void diagMotion() {
+    static const char* MOTION_NAME[] = { "AUTOOFF", "OFF", "ON", "COM", "BED" };
+    uint8_t st = (uint8_t)MOTION::State.Status;
+    termMsgLog(APP_LOG_INF, APP_SRC_MOTION, "APP", "DiagMotion", "==== MOTION ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_MOTION, "APP", "DiagMotion", "Status [%s]", (st < 5) ? MOTION_NAME[st] : "?");
+    termMsgLog(APP_LOG_INF, APP_SRC_LUX, "APP", "DiagMotion", "Lux level [%d]", LISENS::State.Lux);
+}
+
+static void diagTv() {
+    termMsgLog(APP_LOG_INF, APP_SRC_TV, "APP", "DiagTv", "==== TV ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_TV, "APP", "DiagTv", "Status [%s] pin [%d] transitioning [%s]",
+        TV::State.Status ? "ON" : "OFF", TV::State.PinValue, TV::State.Transitioning ? "yes" : "no");
+}
+
+static void diagTask() {
+    termMsgLog(APP_LOG_INF, APP_SRC_TASK, "APP", "DiagTask", "==== SCHEDULER ====");
+    termMsgLog(APP_LOG_INF, APP_SRC_TASK, "APP", "DiagTask", "Active [%d] peak [%d] total created [%lu]",
+        (int)SCHED::TaskCount(), (int)SCHED::MaxTaskCountEverSeen(), (unsigned long)SCHED::TotalTasksCreated());
+}
+
 /** Dispatches one fully-parsed frame. Sets g_ackResult (default OK) as its
     outcome; RELAY-tier opcodes arm DifLink's relay instead of resolving
     the ack immediately - see the tail of dispatchFrame(). */
@@ -909,16 +979,16 @@ static void dispatch(Opcode opcode, const uint8_t *payload, size_t len, uint8_t 
             break;   // liveness only
 
         case Opcode::DIAG_HEALTH: {
-            bool wifiOk = (WiFi.status() == WL_CONNECTED);
-            bool ramOk  = (getFreeRam() >= 4000);
-            termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "==== HEALTH SUMMARY ====");
-            termMsgLog(APP_LOG_INF, APP_SRC_NET, "APP", "DiagHealth", "WiFi [%s] (%d dBm)", wifiOk ? "OK" : "DOWN", (int)WiFi.RSSI());
-            termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "RAM free [%d] of [%d] B%s", getFreeRam(), ARD_RAM_TOTAL, ramOk ? "" : " [LOW]");
-            termMsgLog(APP_LOG_INF, APP_SRC_LED, "APP", "DiagHealth", "LEDs [%s]", LED::State.Enabled ? "enabled" : "disabled");
-            termMsgLog(APP_LOG_INF, APP_SRC_TV,  "APP", "DiagHealth", "TV [%s]", TV::State.Status ? "on" : "off");
-            termMsgLog(APP_LOG_INF, APP_SRC_DIF, "APP", "DiagHealth", "Diffuser mode [%d] parfum [%d] min", DIF::State.Mode, DIF::State.ParfumMin);
-            termMsgLog(APP_LOG_INF, APP_SRC_EE,  "APP", "DiagHealth", "EEPROM [%s]", (EE::State.tID != SCHED::TASK_ID_NONE) ? "save pending" : "up to date");
-            termMsgLog(APP_LOG_INF, APP_SRC_SYS, "APP", "DiagHealth", "==== %s ====", (wifiOk && ramOk) ? "ALL OK" : "ISSUES FOUND");
+            Proto::DiagHealthPayload p{};
+            uint8_t category = (len >= Proto::DIAG_HEALTH_SIZE && Proto::Unpack(payload, len, p)) ? p.category : DIAG_CAT_HEALTH;
+            switch (category) {
+                case DIAG_CAT_NETWORK: diagNetwork(); break;
+                case DIAG_CAT_LED:     diagLed();     break;
+                case DIAG_CAT_MOTION:  diagMotion();  break;
+                case DIAG_CAT_TV:      diagTv();      break;
+                case DIAG_CAT_TASK:    diagTask();    break;
+                default:                diagHealth(); break;
+            }
             break;
         }
 

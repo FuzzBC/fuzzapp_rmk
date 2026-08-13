@@ -167,16 +167,20 @@ public class SettingsManager {
     // Debug / TestMode string tables  (read-only)
     // --------------------------------------------------------
     /**
-     * Debug item names shown in the debug-list dialog.
-     * Index sent to Arduino via DATAs.sendDebug(index) - the order here MUST
-     * match the firmware's __debug enum in _FuZzAPP_SmartTV_R4_DEF.h, or the
-     * picker fires the wrong dump.
+     * Debug category names shown in the debug grid dialog. Index sent to
+     * the SmartTV via DATAs.sendDebug(index) as DIAG_HEALTH's `category`
+     * field - the order here MUST match AppLink.cpp's DiagCategory enum
+     * exactly, or the grid fires the wrong dump.
+     *
+     * Deliberately small: the original 22-item list was a straight port
+     * of the old firmware's ASCII 'K'+index per-module dump, which never
+     * got a wire opcode in this protocol (see Debug.h's class doc) - every
+     * one of those 22 entries silently fired the exact same generic health
+     * dump regardless of which was tapped. This list only has entries the
+     * firmware actually has distinct data for.
      */
     public final String[] SET_Debug = {
-        "LED_INFO", "LED_SELECTED", "LED_ORDER", "LED_COLOR", "LED_PRECOLOR",
-        "MOTION", "TV", "EEPROM", "APP", "AMBILIGHT", "BME280",
-        "AMBIENT_MODE", "WIFI", "ARDUINO", "LIGHT_SENSOR", "HEARTBEAT", "DIFFUSER",
-        "TASK", "TELNET", "RTC", "TEST_MODE", "ALL", "MQTT"
+        "HEALTH", "NETWORK", "LED", "MOTION", "TV", "TASK"
     };
 
     /**
@@ -186,18 +190,13 @@ public class SettingsManager {
      * the same position and throws if any one is short.
      */
     public final String[] SET_DebugSub = {
-        "strip state", "selection", "pixel order", "color buf", "pre-color",
-        "sensor", "ADC / state", "settings", "UDP link", "UDPRAW", "temp / hum",
-        "AM state", "net status", "RAM / time", "LUX ADC", "HB effect", "DIF UDP",
-        "scheduler", "console link", "clock / NTP", "forced state", "everything", "broker link"
+        "WiFi / RAM / all", "IP / RSSI / MQTT / RTC", "strips / ambilight",
+        "sensor / lux", "pin / status", "scheduler"
     };
 
     /** Emoji icons parallel to SET_Debug (grid UI only). */
     public final String[] SET_DebugIcon = {
-        "\uD83D\uDCA1", "\uD83C\uDFAF", "\uD83D\uDD32", "\uD83C\uDFA8", "\u270F\uFE0F",
-        "\uD83C\uDFC3", "\uD83D\uDCFA", "\uD83D\uDCBE", "\uD83D\uDCF1", "\uD83C\uDF08", "\uD83C\uDF21\uFE0F",
-        "\uD83C\uDF19", "\uD83D\uDCF6", "\uD83E\uDD16", "\uD83D\uDFE1", "\u2764\uFE0F", "\uD83D\uDCA7",
-        "\u2699\uFE0F", "\u2328\uFE0F", "\uD83D\uDD52", "\uD83E\uDDEA", "\uD83D\uDCCB", "\u2601\uFE0F"
+        "\uD83D\uDCCB", "\uD83D\uDCF6", "\uD83C\uDFA8", "\uD83C\uDFC3", "\uD83D\uDCFA", "\u2699\uFE0F"
     };
 
     /**

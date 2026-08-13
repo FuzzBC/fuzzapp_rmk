@@ -113,6 +113,13 @@ constexpr size_t HELLO_SIZE = 1;
 size_t Pack(const HelloPayload& p, uint8_t* out);
 bool Unpack(const uint8_t* in, size_t len, HelloPayload& out);
 
+struct DiagHealthPayload {
+    uint8_t category;
+};
+constexpr size_t DIAG_HEALTH_SIZE = 1;
+size_t Pack(const DiagHealthPayload& p, uint8_t* out);
+bool Unpack(const uint8_t* in, size_t len, DiagHealthPayload& out);
+
 struct LedSetColorPayload {
     uint8_t r;
     uint8_t g;
