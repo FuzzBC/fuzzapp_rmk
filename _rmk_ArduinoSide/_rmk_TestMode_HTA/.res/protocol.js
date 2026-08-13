@@ -27,6 +27,30 @@ var Engine = (function () {
     var h = Math.floor(total / 60), m = total % 60;
     return h + 'h ' + m + 'm';
   }
+  // Every console command opens a brand-new one-shot TCP connection
+  // (tcp_send.ps1 connects, sends the line, reads the reply, closes) - and
+  // the Diffuser's Telnet server sends its full connect banner (IP/MAC/
+  // Signal/Uptime/Mode/Strip + a COMMANDS list via cmdHelp()) to any
+  // freshly-accepted client before it even looks at what was sent. Sending
+  // "?" (cmdHelp() again) on top of that reads back as the command list
+  // twice - not a bug in the reply itself, just banner noise from every
+  // single command going through a fresh session instead of one shared
+  // one. Strips a leading banner block by finding the line that's PURELY
+  // box-drawing dashes (cmdHelp()'s closing rule, dbgPrintln('---...---')
+  // with nothing else on it - the only such pure-dash line anywhere in the
+  // banner+help text, since the opening rule and the "COMMANDS" header rule
+  // both have real text mixed into them) and dropping everything through
+  // that line, keeping only the actual command's own reply.
+  function stripConnectBanner(text) {
+    if (!text || text.charAt(0) !== '─') return text;
+    var lines = text.split('\n');
+    for (var i = 1; i < lines.length; i++) {
+      if (/^─+$/.test(lines[i])) {
+        return lines.slice(i + 1).join('\n').replace(/^\n+/, '');
+      }
+    }
+    return text;
+  }
   function hex2(b) { var s = (b & 0xFF).toString(16).toUpperCase(); return s.length < 2 ? '0' + s : s; }
   function toHex(byteStr) {
     var out = '';
@@ -193,7 +217,7 @@ var Engine = (function () {
       logAppend(tag, 'send', 'TCP > ' + device.ip + ' ' + payload);
       Net.sendTcp(device.ip, device.telnetPort, payload, (spec.timeout_ms || device.timeoutMs) + 300, function (result) {
         if (result.status === 'OK') {
-          var text = result.replies[0] || '';
+          var text = stripConnectBanner(result.replies[0] || '');
           logAppend(tag, 'recv', 'TCP < ' + (text || '(empty)'));
           cb({ transport: 'console', ackKind: text ? 'ok' : 'timeout', text: text });
         } else {
