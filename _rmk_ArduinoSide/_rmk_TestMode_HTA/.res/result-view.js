@@ -232,12 +232,80 @@ var ResultView = (function () {
     container.appendChild(box);
   }
 
-  function replyList(container, entries) {
-    var wrap = el('div', 'res-list');
+  // Curated "OPCODE.field" -> real on/off switch, not just a 0/1-valued
+  // enum or count that happens to overlap. There's no bool type in
+  // protocol_table.json (everything's u8/u16/i8/bytes/raw) to drive this
+  // from schema, so this list is hand-picked from the fields actually
+  // known to be plain switches - same reasoning as EE_SETTINGS_TABLE's
+  // kind:'switch' rows (data.js) for settings. Deliberately short: an
+  // enum like TELEM_STATUS.motion or TELEM_STATUS.ambient reads 0-3, and
+  // mislabelling one of those "OFF" would be actively wrong, not just
+  // unstyled.
+  var ONOFF_FIELDS = {
+    'TELEM_ENABLE.value': 1, 'TELEM_STATUS.tv': 1, 'TELEM_STATUS.udpraw': 1
+  };
+
+  function formatFieldValue(opcodeName, key, val) {
+    if (ONOFF_FIELDS[opcodeName + '.' + key] && (val === 0 || val === 1)) {
+      return { text: val ? 'ON' : 'OFF', cls: val ? 'res-entry-on' : 'res-entry-off' };
+    }
+    if (typeof val === 'string') {
+      // Long or non-printable byte strings (TELEM_SETTINGS_FULL's 50-byte
+      // blob, TELEM_COLOR_SYNC's packed frame, TELEM_DEVICE_ID's NUL-
+      // padded id, ...) get a size summary instead of a wall of hex - the
+      // opcode-specific views (settingsTable/colorSyncView) already exist
+      // for actually reading those; this generic card just needs to not
+      // be unreadable when one shows up inside a mixed burst.
+      if (val.length > 16 || /[^\x20-\x7e]/.test(val)) return { text: val.length + ' bytes', cls: 'res-entry-val' };
+      return { text: "'" + val + "'", cls: 'res-entry-val' };
+    }
+    return { text: String(val), cls: 'res-entry-val' };
+  }
+
+  function entryCard(entry) {
+    var parsed = entry.parsed;
+    // Malformed frames (bad CRC, truncated, ...) have parsed.ok === false
+    // and none of the decoded fields (opcode/opcodeName/payload) - see
+    // Engine.parseFrame()/describeFrame(). Must not reach decodePayload()
+    // with those missing, or toHex(undefined) throws. entry.desc already
+    // holds describeFrame()'s safe "MALFORMED (...)" text for this case.
+    var ok = parsed && parsed.ok;
+    var opcodeName = ok ? parsed.opcodeName : null;
+    var d = ok ? Engine.decodePayload(parsed.opcode, parsed.payload) : null;
+    var kind = opcodeName === 'ACK' ? 'ack' : (opcodeName === 'LOG' ? 'log' : 'telem');
+    var isFailedAck = kind === 'ack' && d && d.resultCode != null && d.resultCode !== Proto.AckResult.OK;
+
+    var card = el('div', 'res-entry cat-' + kind + (isFailedAck ? ' res-entry-fail' : ''));
+    var head = el('div', 'res-entry-head');
+    head.appendChild(el('span', 'res-entry-name', ok ? opcodeName : 'MALFORMED'));
+    if (ok) head.appendChild(el('span', 'res-entry-seq', 'seq ' + parsed.seq));
+    card.appendChild(head);
+
+    if (kind === 'ack' && d) {
+      var resultName = Proto.ACK_RESULT_NAMES[d.resultCode] || ('code ' + d.resultCode);
+      var chip = el('div', isFailedAck ? 'res-entry-off' : 'res-entry-on', resultName);
+      card.appendChild(chip);
+    } else if (d && d.fields && typeof d.fields === 'object') {
+      var grid = el('div', 'res-entry-grid');
+      for (var k in d.fields) {
+        if (!d.fields.hasOwnProperty(k)) continue;
+        var fv = formatFieldValue(opcodeName, k, d.fields[k]);
+        var cell = el('div', 'res-entry-cell');
+        cell.appendChild(el('span', 'res-entry-key', k));
+        cell.appendChild(el('span', fv.cls, fv.text));
+        grid.appendChild(cell);
+      }
+      card.appendChild(grid);
+    } else {
+      card.appendChild(el('div', 'res-entry-raw', (d && d.text) || entry.desc || entry.raw || '(unrecognised packet)'));
+    }
+    return card;
+  }
+
+  function entryCards(container, entries) {
+    var wrap = el('div', 'res-entries');
     wrap.appendChild(el('div', 'res-list-head', entries.length + ' PACKET' + (entries.length === 1 ? '' : 'S') + ' RECEIVED'));
-    var box = el('div', 'res-list-box');
-    entries.forEach(function (e) { box.appendChild(el('div', 'res-list-line', e.desc || e.raw || '(unrecognised packet)')); });
-    wrap.appendChild(box);
+    entries.forEach(function (e) { wrap.appendChild(entryCard(e)); });
     container.appendChild(wrap);
   }
 
@@ -247,7 +315,7 @@ var ResultView = (function () {
   // (no level tag), GAP is just a blank spacer - matches app.css's .dbg-*
   // rules, which existed but were never wired to anything until now (a
   // multi-line LOG dump - e.g. DIAG_HEALTH - used to fall through to the
-  // plain, uncolored replyList() below instead).
+  // plain, uncolored entryCards() below instead).
   var DBG_LEVEL_INFO = {
     ERROR: ['dbg-error', 'ERR'], WARN: ['dbg-warn', 'WRN'],
     INFO: ['dbg-info', 'INF'], DEBUG: ['dbg-debug', 'DBG']
@@ -292,7 +360,7 @@ var ResultView = (function () {
 
     if (entries.length > 1) {
       if (isAllLog(entries)) logDumpView(container, entries);
-      else replyList(container, entries);
+      else entryCards(container, entries);
     }
 
     var first = entries.length ? entries[0] : null;
@@ -316,7 +384,7 @@ var ResultView = (function () {
     if (render_.type === 'diffuser_history' && first) { diffuserHistoryView(container, payload); return; }
 
     if (entries.length > 1) return;
-    if (first) { container.appendChild(el('div', 'res-line', first.desc || first.raw)); return; }
+    if (first) { container.appendChild(entryCard(first)); return; }
     container.appendChild(el('div', 'res-line', '-'));
   }
 
