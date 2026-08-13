@@ -5,6 +5,17 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.022
+- Fixed: cloud login could still fail with "Connection lost" even after the
+  last two fixes (8.020, 8.021) - those closed one race but missed another.
+  This app's MQTT library had its own built-in auto-recovery that could
+  reconnect on its own the instant a connection dropped for any reason
+  (a brief mobile-data hiccup, for example) - running completely outside
+  the app's own connection-attempt sequencing, so it could still collide
+  with a normal reconnect happening around the same time. That built-in
+  auto-recovery is now off; reconnecting after a drop goes exclusively
+  through the app's own already-sequenced path instead.
+
 ## 8.021
 - No functional changes - rebuild of 8.020 (same fix, fresh version number).
 

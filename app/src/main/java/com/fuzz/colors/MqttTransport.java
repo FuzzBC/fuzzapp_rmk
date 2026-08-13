@@ -253,11 +253,14 @@ public class MqttTransport {
     // --------------------------------------------------------
     /**
      * Connect + subscribe on a background thread. Idempotent: a no-op while a
-     * connect is in flight or the session is already live. Paho's automatic
-     * reconnect keeps the session up afterwards; connectComplete re-subscribes.
-     * No-op (see hasCredentials() guard below) until the app has provisioned
-     * a verified username/password pair. Thin wrapper over tryConnect() using
-     * whatever's currently cached.
+     * connect is in flight or the session is already live. A drop is NOT
+     * auto-recovered by Paho itself (see tryConnect()'s opts) - the
+     * always-on transport supervisor (MainActivity, every SUPERVISE_MS)
+     * calls this again on its own regular cadence, which is what actually
+     * brings the session back up, serialized through tryConnect() like
+     * every other caller. No-op (see hasCredentials() guard below) until the
+     * app has provisioned a verified username/password pair. Thin wrapper
+     * over tryConnect() using whatever's currently cached.
      */
     public void connect() {
         if (connecting) return;                                  // already trying
@@ -342,7 +345,25 @@ public class MqttTransport {
                         opts.setUserName(user);
                         opts.setPassword(pass.toCharArray());
                         opts.setCleanSession(true);
-                        opts.setAutomaticReconnect(true);                // survive drops
+                        // Deliberately NOT opts.setAutomaticReconnect(true): Paho's
+                        // automatic reconnect runs its own internal background
+                        // thread that redials the broker with this SAME client id
+                        // the instant a connection drops for ANY reason (a brief
+                        // mobile-data hiccup, a keepalive miss) - entirely outside
+                        // tryConnect()/connectLock. If the app's own supervisor
+                        // (every SUPERVISE_MS, see MainActivity) also notices the
+                        // drop and calls connect() around the same time, that's
+                        // the exact same duplicate-client-id collision the
+                        // connectLock serialization above exists to prevent - just
+                        // via a path the lock can never see or serialize against,
+                        // since it's internal to Paho, not a call through this
+                        // class. Confirmed live: the connectLock fix alone (8.020/
+                        // 8.021) did NOT resolve "Connection lost", which pointed
+                        // straight back at this. Recovery after a drop now goes
+                        // exclusively through the supervisor's own connect() call,
+                        // which IS routed through tryConnect()/connectLock like
+                        // every other attempt - so only one reconnect path exists,
+                        // period.
                         opts.setConnectionTimeout(CONNECT_TO_S);
                         opts.setKeepAliveInterval(KEEPALIVE_S);
 
@@ -451,13 +472,13 @@ public class MqttTransport {
     private final MqttCallbackExtended pahoCallback = new MqttCallbackExtended() {
         @Override
         public void connectComplete(boolean reconnect, String serverURI) {
-            // Re-subscribe after an automatic reconnect (a fresh session drops subs).
+            // `reconnect` is only ever true for Paho's OWN automatic reconnect,
+            // which is deliberately disabled (see tryConnect()'s opts) - every
+            // real reconnect goes through tryConnect() instead, which already
+            // subscribes itself before handing off the client. Nothing to do
+            // here; kept only because MqttCallbackExtended requires an override.
             if (reconnect) {
-                try {
-                    client.subscribe(TOPIC_BASE + getDeviceId() + TOPIC_D2C_SUFFIX, 0);
-                }
-                catch (Exception e) { Log.e("MQTT", "resub failed: " + e.getMessage()); }
-                Log.i("MQTT", "reconnected");
+                Log.w("MQTT", "unexpected Paho-internal reconnect (should be disabled)");
             }
         }
 
