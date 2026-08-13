@@ -152,6 +152,14 @@ public class MqttTransport {
      * hint, which used to cover bad credentials, network errors, and TLS
      * failures identically. */
     public volatile String lastConnectError;
+    /** Wall-clock time (System.currentTimeMillis()) of the most recent
+     * successful connect+subscribe, or 0 if never connected this app run.
+     * Read by connectionLost() to log how long the session actually lived
+     * before dropping - the single most useful number for telling "died
+     * instantly" apart from "ran fine for a while then dropped", which
+     * in-app Log.i()/Log.e() alone (invisible without a PC+adb) couldn't
+     * surface at all. See _detailLog() for where this shows up. */
+    private volatile long lastConnectSuccessAtMs = 0;
 
     // --------------------------------------------------------
     // Constructor
@@ -248,6 +256,19 @@ public class MqttTransport {
         void onResult(boolean ok);
     }
 
+    /** Yellow-tagged, always-on (not gated by the MQTT LOG toggle) console
+     * line for the connect/disconnect lifecycle specifically - separate
+     * from the wire-level pub/sub tracing (which stays opt-in, see
+     * publish()/messageArrived()) because lifecycle events are rare
+     * (only on an actual connect attempt or drop) and are exactly the
+     * detail needed to diagnose "Connection lost" without a PC+adb: which
+     * generation, how long each stage took, and the real exception/reason
+     * code, not just a final ok/fail summary. */
+    private void _detailLog(String msg) {
+        Log.i("MQTT", msg);
+        Main.runOnUiThread(() -> Main._Console(false, "☁", "{#Y}mqtt{##} " + msg));
+    }
+
     // --------------------------------------------------------
     // Public API
     // --------------------------------------------------------
@@ -307,6 +328,9 @@ public class MqttTransport {
         }
         connecting = true;
         final String topicD2C = TOPIC_BASE + getDeviceId() + TOPIC_D2C_SUFFIX;
+        final String cid = _clientId();
+        _detailLog("gen=" + myGen + " tryConnect() called, thread=" + Thread.currentThread().getId()
+                + " clientId=" + cid + " user=" + user);
 
         new Thread(() -> {
             boolean ok = false;
@@ -330,16 +354,21 @@ public class MqttTransport {
             synchronized (connectLock) {
                 if (myGen != connectGeneration) {
                     superseded = true;    // a newer request queued up while we waited for the lock
+                    _detailLog("gen=" + myGen + " superseded before dialing broker (current gen=" + connectGeneration + ")");
                 } else {
                     final MqttClient staleClient = client;
                     client = null;
                     if (staleClient != null) {
-                        try { if (staleClient.isConnected()) staleClient.disconnect(); staleClient.close(); } catch (Exception ignored) { }
+                        boolean staleWasConnected;
+                        try { staleWasConnected = staleClient.isConnected(); } catch (Exception e) { staleWasConnected = false; }
+                        _detailLog("gen=" + myGen + " dropping stale client (was connected=" + staleWasConnected + ")");
+                        try { if (staleWasConnected) staleClient.disconnect(); staleClient.close(); } catch (Exception ignored) { }
                     }
+                    final long tStart = System.currentTimeMillis();
                     try {
                         MqttClient localClient = new MqttClient(
                                 "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
-                                _clientId(), new MemoryPersistence());
+                                cid, new MemoryPersistence());
                         localClient.setCallback(pahoCallback);
                         MqttConnectOptions opts = new MqttConnectOptions();
                         opts.setUserName(user);
@@ -367,19 +396,26 @@ public class MqttTransport {
                         opts.setConnectionTimeout(CONNECT_TO_S);
                         opts.setKeepAliveInterval(KEEPALIVE_S);
 
-                        Log.i("MQTT", "connecting to " + MQTT_HOST + ":" + MQTT_PORT);
+                        _detailLog("gen=" + myGen + " dialing " + MQTT_HOST + ":" + MQTT_PORT + " ...");
                         localClient.connect(opts);
+                        long connectMs = System.currentTimeMillis() - tStart;
+                        _detailLog("gen=" + myGen + " CONNACK ok in " + connectMs + "ms, subscribing " + topicD2C + " ...");
+
                         localClient.subscribe(topicD2C, 0);
+                        long subMs = System.currentTimeMillis() - tStart;
                         client = localClient;
                         ok = true;
                         lastConnectError = null;
-                        Log.i("MQTT", "connected, subscribed " + topicD2C);
+                        lastConnectSuccessAtMs = System.currentTimeMillis();
+                        _detailLog("gen=" + myGen + " SUBACK ok, total " + subMs + "ms - session live");
                     } catch (Exception e) {
+                        long failMs = System.currentTimeMillis() - tStart;
                         String detail = (e instanceof MqttException)
                                 ? ("reasonCode=" + ((MqttException) e).getReasonCode() + " " + e.getMessage())
                                 : (e.getClass().getSimpleName() + ": " + e.getMessage());
                         lastConnectError = detail;
-                        Log.e("MQTT", "connect failed: " + detail);
+                        _detailLog("gen=" + myGen + " {#R}FAILED{##} after " + failMs + "ms: " + detail
+                                + (e.getCause() != null ? (" | cause: " + e.getCause().getClass().getSimpleName() + ": " + e.getCause().getMessage()) : ""));
                         ok = false;
                     }
                 }
@@ -451,12 +487,15 @@ public class MqttTransport {
      * right after this explicit disconnect - see tryConnect()'s doc. */
     public void disconnect() {
         final MqttClient c;
+        final int gen;
         synchronized (connectLock) {
             connectGeneration++;
+            gen = connectGeneration;
             c = client;
             client = null;
         }
         if (c == null) return;
+        _detailLog("gen=" + gen + " explicit disconnect() called");
         new Thread(() -> {
             try {
                 if (c.isConnected()) c.disconnect();
@@ -497,7 +536,16 @@ public class MqttTransport {
 
         @Override
         public void connectionLost(Throwable cause) {
-            Log.w("MQTT", "connection lost: " + (cause != null ? cause.getMessage() : "?"));
+            // Age of the session at the moment it dropped - the single most
+            // useful number for telling "never really connected" apart from
+            // "connected, ran fine, then genuinely dropped later" (e.g. a
+            // mobile-network idle timeout below KEEPALIVE_S=30s). 0/negative
+            // if this fires before any successful connect this app run.
+            long ageMs = lastConnectSuccessAtMs > 0 ? (System.currentTimeMillis() - lastConnectSuccessAtMs) : -1;
+            String causeDetail = (cause == null) ? "?"
+                    : cause.getClass().getSimpleName() + ": " + cause.getMessage()
+                    + (cause.getCause() != null ? (" | cause: " + cause.getCause().getClass().getSimpleName() + ": " + cause.getCause().getMessage()) : "");
+            _detailLog("{#Y}connectionLost{##} after " + ageMs + "ms since last successful connect - " + causeDetail);
             Main.runOnUiThread(() -> {
                 if (!cloudDownLogged) {
                     cloudDownLogged = true;

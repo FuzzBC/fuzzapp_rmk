@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.023
+- Added: much more detailed cloud-connection logging in the console (no PC
+  needed) - every connect attempt now shows which internal attempt number
+  it is, how long each stage (dial broker / subscribe) actually took in
+  milliseconds, the exact underlying error (not just a summary), and how
+  long a session had been alive before it dropped. Needed to keep chasing
+  the "Connection lost" issue with real numbers instead of guessing.
+
 ## 8.022
 - Fixed: cloud login could still fail with "Connection lost" even after the
   last two fixes (8.020, 8.021) - those closed one race but missed another.
