@@ -5,6 +5,17 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.020
+- Fixed: cloud login could still fail with "Connection lost" after both of
+  the last two fixes (8.018, 8.019). Root cause: two connection attempts
+  happening close together (background retry + a manual Save, or even a
+  fast double-tap) each opened their own connection to the broker using
+  this device's identity - only the bookkeeping *afterward* was protected
+  before, not the connection attempts themselves, so the broker could
+  boot whichever one it saw second, sometimes moments after the app had
+  already shown "CLOUD ON". Connection attempts are now fully queued end
+  to end, so only one is ever actually talking to the broker at a time.
+
 ## 8.019
 - Fixed: cloud login could still fail with "Connection lost" (the last fix
   covered a different cause). This app shares its cloud identity with the

@@ -124,19 +124,25 @@ public class MqttTransport {
      * only needs to say "it broke" once, not on every single retry.
      * Cleared on the next successful connect (see CLOUD ON below). */
     private boolean cloudDownLogged = false;
-    /** Guards `client` + `connectGeneration` - tryConnect() used to read/
-     * write the shared `client` field from its background thread with zero
-     * synchronization, so two overlapping attempts (background supervisor
-     * vs. an explicit dialog Save, or two retries firing close together)
-     * could stomp on each other: one attempt's disconnect() tearing down
-     * the OTHER attempt's freshly-connecting/just-connected client. Live-
-     * tested and confirmed this is real - it surfaces as a Paho
-     * "Connection lost" (reasonCode 32109) moments after a connect that
-     * otherwise succeeds, which had been misread as a network/broker
-     * problem. connectGeneration lets a superseded attempt notice it's
-     * been overtaken (right after its own connect() call, the one place
-     * another thread could have raced in) and quietly clean up instead of
-     * fighting over the shared client. */
+    /** Guards `client` + `connectGeneration`, AND serializes the actual
+     * dial-the-broker section of tryConnect() (see there) - not just the
+     * bookkeeping around it. Two overlapping tryConnect() calls (background
+     * supervisor vs. an explicit dialog Save, two retries firing close
+     * together, ...) build a client with the SAME _clientId() every time;
+     * if their connect() calls to the broker were ever allowed to run
+     * concurrently, the broker's own duplicate-client-id takeover rule
+     * kicks whichever CONNECT packet arrives second, independent of which
+     * attempt this app's own bookkeeping had already declared the winner.
+     * That produced exactly the "connects fine, then ~1s later Connection
+     * lost (reasonCode 32109)" symptom that survived an earlier fix which
+     * only serialized the post-connect bookkeeping and not the network
+     * call itself. Holding this lock across the whole connect()+subscribe()
+     * call guarantees only one CONNECT with this client ID is ever in
+     * flight to the broker at a time - a genuinely newer request just
+     * waits its turn instead of racing on the wire. connectGeneration lets
+     * a request that queued up behind the lock notice a newer one already
+     * superseded it, so it can skip dialing the broker entirely instead of
+     * connecting and immediately disconnecting again. */
     private final Object connectLock = new Object();
     private int connectGeneration = 0;
     /** Detail from the most recent tryConnect() failure (reason code +
@@ -292,17 +298,9 @@ public class MqttTransport {
      */
     public void tryConnect(final String user, final String pass, final ConnectCallback callback) {
         final int myGen;
-        final MqttClient staleClient;
         synchronized (connectLock) {
             connectGeneration++;          // supersede any attempt already in flight
             myGen = connectGeneration;
-            staleClient = client;
-            client = null;                // claimed - nobody else touches this reference now
-        }
-        if (staleClient != null) {
-            new Thread(() -> {
-                try { if (staleClient.isConnected()) staleClient.disconnect(); staleClient.close(); } catch (Exception ignored) { }
-            }).start();
         }
         connecting = true;
         final String topicD2C = TOPIC_BASE + getDeviceId() + TOPIC_D2C_SUFFIX;
@@ -310,61 +308,68 @@ public class MqttTransport {
         new Thread(() -> {
             boolean ok = false;
             boolean superseded = false;
-            MqttClient localClient = null;
-            try {
-                localClient = new MqttClient(
-                        "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
-                        _clientId(), new MemoryPersistence());
-                localClient.setCallback(pahoCallback);
-                MqttConnectOptions opts = new MqttConnectOptions();
-                opts.setUserName(user);
-                opts.setPassword(pass.toCharArray());
-                opts.setCleanSession(true);
-                opts.setAutomaticReconnect(true);                // survive drops
-                opts.setConnectionTimeout(CONNECT_TO_S);
-                opts.setKeepAliveInterval(KEEPALIVE_S);
+            // Whole dial-the-broker section is serialized on connectLock, not
+            // just the bookkeeping after it: two tryConnect() calls close
+            // together (dialog Save + background retry, a double-tap, etc.)
+            // both build a client with the SAME _clientId() - if their
+            // connect() calls to the broker were allowed to overlap on the
+            // wire, the broker's own duplicate-client-id takeover rule kicks
+            // whichever CONNECT packet lost the race, independent of which
+            // one this app's generation counter had already declared the
+            // winner. That produced exactly the observed symptom: connect
+            // succeeds, CLOUD ON fires, then ~1s later the broker's takeover
+            // of the OTHER attempt's later-arriving CONNECT kills this one
+            // out from under it (Paho reasonCode 32109). Holding this lock
+            // across the actual connect()+subscribe() call guarantees only
+            // one CONNECT with this client ID is ever in flight to the
+            // broker at a time - a genuinely newer request simply waits its
+            // turn instead of racing on the wire.
+            synchronized (connectLock) {
+                if (myGen != connectGeneration) {
+                    superseded = true;    // a newer request queued up while we waited for the lock
+                } else {
+                    final MqttClient staleClient = client;
+                    client = null;
+                    if (staleClient != null) {
+                        try { if (staleClient.isConnected()) staleClient.disconnect(); staleClient.close(); } catch (Exception ignored) { }
+                    }
+                    try {
+                        MqttClient localClient = new MqttClient(
+                                "ssl://" + MQTT_HOST + ":" + MQTT_PORT,
+                                _clientId(), new MemoryPersistence());
+                        localClient.setCallback(pahoCallback);
+                        MqttConnectOptions opts = new MqttConnectOptions();
+                        opts.setUserName(user);
+                        opts.setPassword(pass.toCharArray());
+                        opts.setCleanSession(true);
+                        opts.setAutomaticReconnect(true);                // survive drops
+                        opts.setConnectionTimeout(CONNECT_TO_S);
+                        opts.setKeepAliveInterval(KEEPALIVE_S);
 
-                Log.i("MQTT", "connecting to " + MQTT_HOST + ":" + MQTT_PORT);
-                localClient.connect(opts);
-
-                // Only publish to the shared client / subscribe if nothing
-                // superseded us while connect() was blocking - the one
-                // window another tryConnect() could have raced in.
-                synchronized (connectLock) {
-                    if (myGen == connectGeneration) {
+                        Log.i("MQTT", "connecting to " + MQTT_HOST + ":" + MQTT_PORT);
+                        localClient.connect(opts);
                         localClient.subscribe(topicD2C, 0);
                         client = localClient;
                         ok = true;
                         lastConnectError = null;
-                    } else {
-                        superseded = true;
+                        Log.i("MQTT", "connected, subscribed " + topicD2C);
+                    } catch (Exception e) {
+                        String detail = (e instanceof MqttException)
+                                ? ("reasonCode=" + ((MqttException) e).getReasonCode() + " " + e.getMessage())
+                                : (e.getClass().getSimpleName() + ": " + e.getMessage());
+                        lastConnectError = detail;
+                        Log.e("MQTT", "connect failed: " + detail);
+                        ok = false;
                     }
                 }
-                if (ok) Log.i("MQTT", "connected, subscribed " + topicD2C);
-            } catch (Exception e) {
-                // The dialog's generic "Rejected by broker" hint used to be
-                // shown for EVERY failure here (bad password, network
-                // hiccup, TLS issue, timeout, ...) with no way to tell
-                // which - Log.e() alone isn't visible without a PC+adb
-                // connection, so this is surfaced in-app instead (see
-                // MainActivity._submitMqttCredentials()'s use of this).
-                String detail = (e instanceof MqttException)
-                        ? ("reasonCode=" + ((MqttException) e).getReasonCode() + " " + e.getMessage())
-                        : (e.getClass().getSimpleName() + ": " + e.getMessage());
-                lastConnectError = detail;
-                Log.e("MQTT", "connect failed: " + detail);
-                ok = false;
-            } finally {
-                connecting = false;
             }
+            connecting = false;
 
             if (superseded) {
-                // A newer tryConnect() took over while we were connecting -
-                // this attempt's outcome doesn't matter anymore; clean up
-                // our own client quietly and don't touch shared state or
-                // fire the callback (the superseding attempt owns both).
-                final MqttClient toClose = localClient;
-                try { if (toClose.isConnected()) toClose.disconnect(); toClose.close(); } catch (Exception ignored) { }
+                // A newer tryConnect() queued up while we were waiting for
+                // the lock - this attempt never touched the broker at all,
+                // nothing to clean up. The superseding attempt owns the
+                // outcome and the callback.
                 return;
             }
 
