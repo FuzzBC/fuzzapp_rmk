@@ -173,10 +173,8 @@ char* formatMSG(const char *fmt, ...) {
     return _b;
 }
 
-/** True if msg reads like a problem report, not routine state - see the
-    SmartTV side's own convention this mirrors: "!"-tagged lines are
-    rejected/invalid/out-of-range, left-aligned; "#"-tagged lines are
-    routine action/event, tag right-aligned. */
+/** True if msg reads like a problem report, not routine state - used to
+    pick ERR vs INF below (see logMsg()). */
 static bool looksLikeProblem(const char *msg) {
     static const char *const markers[] = {
         "error", "fail", "invalid", "bad ", "reject", "unsup", "lock", "no water", "timeout"
@@ -190,13 +188,26 @@ static bool looksLikeProblem(const char *msg) {
     return false;
 }
 
+/** Line format: "[LEVEL] [TAG] message" - matches the SmartTV RMK
+    firmware's termMsgLog() output ("[%s] [%s::%s] %s", level, ns, func,
+    text - see AppLink.cpp) instead of this board's own older "tag # msg" /
+    "tag ! msg" convention (itself a port of the ORIGINAL SmartTV
+    firmware's PRNT::formatMSG style, now superseded on that side). tag
+    plays the same role SmartTV's ns (module name) does; this board never
+    tracked a separate per-function name the way SmartTV's __func__-driven
+    DLOG_*() macros do, so that part of the bracket is simply omitted
+    rather than faked. Level is still inferred from looksLikeProblem()
+    (ERR vs INF) - callers weren't updated to pass one explicitly, so
+    behaviour is otherwise unchanged, just re-skinned to read the same as
+    the SmartTV's Serial/Telnet output now that both boards' Telnet
+    sessions can reasonably be watched side by side. */
 void logMsg(const char *tag, const char *fmt, ...) {
     char buf[224];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    dbgWrite(formatMSG(looksLikeProblem(buf) ? "%32s ! %s\n" : "%~32s # %s\n", tag, buf));
+    dbgWrite(formatMSG("[%s] [%s] %s\n", looksLikeProblem(buf) ? "ERR" : "INF", tag, buf));
 }
 
 /** Telnet terminals expect CRLF; translate LF -> CRLF so lines don't stack
