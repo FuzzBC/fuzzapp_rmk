@@ -1073,7 +1073,7 @@ class FlashConsole:
         self.root.after(0, lambda: self.progress_var.set(0))
 
         # Close existing connections for flash
-        self.root.after(0, self._suspend_console_connection)
+        self.root.after(0, lambda: self._suspend_console_connection(mode, dest))
         time.sleep(0.3)  # let COM/socket release before flash claims it
 
         # Perform flash
@@ -1105,17 +1105,32 @@ class FlashConsole:
 
         self.root.after(0, self._resume_console_connection)
 
-    def _suspend_console_connection(self):
-        """Close any active serial/telnet console link before flashing; remember to reopen."""
+    def _suspend_console_connection(self, mode=None, dest=None):
+        """Close only whichever console link the CURRENT flash actually
+        conflicts with - not any unrelated device's connection. A serial
+        upload only needs its own COM port free (telnet runs over TCP,
+        totally unrelated to that port, so it's never touched for a serial
+        flash regardless of which device it's connected to - e.g. flashing
+        the SmartTV over USB must not drop an unrelated telnet session to
+        the Diffuser, or vice versa). A WiFi OTA flash only risks
+        contending with a telnet session to the SAME device (shared RAM/
+        WiFi buffers on that one target) - a session to some other device
+        stays open too. mode/dest mirror _flash()'s target tuple: ('serial',
+        port) or ('wifi', (ip, port))."""
         self._resume_connections = []
-        if self.serial_connection and self.serial_connection.is_connected():
-            self._resume_connections.append(('serial', self.serial_connection.port, self.serial_connection.baudrate))
-            self._log(self.build_output, "Closing serial connection before flash...")
-            self._disconnect_serial()
-        if self.telnet_connection and self.telnet_connection.is_connected():
-            self._resume_connections.append(('telnet', self.telnet_connection.host, self.telnet_connection.port))
-            self._log(self.console_output, "Closing telnet connection before flash...")
-            self._disconnect_telnet()
+        if mode == 'serial':
+            if (self.serial_connection and self.serial_connection.is_connected()
+                    and self.serial_connection.port == dest):
+                self._resume_connections.append(('serial', self.serial_connection.port, self.serial_connection.baudrate))
+                self._log(self.build_output, "Closing serial connection before flash...")
+                self._disconnect_serial()
+        elif mode == 'wifi':
+            ip, _port = dest
+            if (self.telnet_connection and self.telnet_connection.is_connected()
+                    and self.telnet_connection.host == ip):
+                self._resume_connections.append(('telnet', self.telnet_connection.host, self.telnet_connection.port))
+                self._log(self.console_output, "Closing telnet connection before flash...")
+                self._disconnect_telnet()
 
     def _resume_console_connection(self):
         """Reopen whichever console link(s) were closed for the flash."""
