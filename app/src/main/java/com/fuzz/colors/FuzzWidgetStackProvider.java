@@ -35,23 +35,28 @@ import java.util.Locale;
 
 public class FuzzWidgetStackProvider extends AppWidgetProvider {
 
+    private static final String TAG = "WIDGET_STACK";
+
     @Override
     public void onUpdate(Context context, AppWidgetManager manager, int[] widgetIds) {
         // Re-affirms the periodic job (idempotent, KEEP policy) on every system-triggered
         // update, not just the one-time onEnabled() transition - the OS (Doze, OEM battery
         // managers, "unused apps" hibernation) can silently drop the WorkManager job, and
         // onEnabled() alone never notices, leaving the widget stuck showing stale data.
+        Log.d(TAG, "onUpdate(" + widgetIds.length + " widgets)");
         WidgetScheduling.ensurePeriodicRefresh(context);
         for (int id : widgetIds) _safeUpdate(context, manager, id, false);
     }
 
     @Override
     public void onEnabled(Context context) {
+        Log.d(TAG, "onEnabled()");
         WidgetScheduling.ensurePeriodicRefresh(context);
     }
 
     @Override
     public void onDisabled(Context context) {
+        Log.d(TAG, "onDisabled()");
         WidgetScheduling.cancelIfNothingPlaced(context);
     }
 
@@ -59,6 +64,7 @@ public class FuzzWidgetStackProvider extends AppWidgetProvider {
     public void onReceive(Context context, Intent intent) {
         super.onReceive(context, intent);
         if (!WidgetScheduling.ACTION_REFRESH.equals(intent.getAction())) return;
+        Log.d(TAG, "onReceive(ACTION_REFRESH)");
 
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int[] ids = manager.getAppWidgetIds(new ComponentName(context, FuzzWidgetStackProvider.class));
@@ -71,6 +77,7 @@ public class FuzzWidgetStackProvider extends AppWidgetProvider {
     static void updateAllWidgets(Context context) {
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int[] ids = manager.getAppWidgetIds(new ComponentName(context, FuzzWidgetStackProvider.class));
+        Log.v(TAG, "updateAllWidgets(" + ids.length + " placed)");
         for (int id : ids) _safeUpdate(context, manager, id, false);
     }
 

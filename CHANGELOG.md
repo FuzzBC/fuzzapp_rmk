@@ -5,6 +5,14 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.026
+- Internal: this build actually ships the debug/verbose logging work from
+  the last update, which never made it into a published version -
+  StatusManager, LEDManager, the widget refresh path (fetch/worker/both
+  home-screen providers), the Diffuser Telnet console, and the update
+  installer all now log to adb (Log.d/Log.v - no UI or console impact),
+  for easier diagnosis of future issues.
+
 ## 8.025
 - Internal: removed the extra-verbose per-stage cloud connection logging
   added in 8.023 - it did its job (found the real bug, fixed in 8.024) and
