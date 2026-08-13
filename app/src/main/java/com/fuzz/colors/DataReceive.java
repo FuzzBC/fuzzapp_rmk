@@ -800,10 +800,16 @@ public class DataReceive {
     /**
      * TELEM_COLOR_SYNC - compressed binary colour delta. Body is a run of
      * records until payload end:
-     *   0x01 FILL  start count r g b        – LEDs [start, start+count) = (r,g,b)
-     *   0x02 SETN  count {idx r g b}…       – 'count' scattered pixels
-     * Same record encoding as the old ASCII-era 'LK' packet - this is
-     * nearly a line-for-line port of the old _recvLedColorBin().
+     *   0xF0 FILL  start count r g b        – LEDs [start, start+count) = (r,g,b)
+     *   0xF1 SETN  count {idx r g b}…       – 'count' scattered pixels
+     * Same record shape as the old ASCII-era 'LK' packet, but the SmartTV
+     * RMK firmware picked new marker bytes (AppLink.cpp's LK_OP_FILL/
+     * LK_OP_SETN - deliberately high values, safely outside any real LED
+     * index) instead of the original's 0x01/0x02 - this parser was a
+     * line-for-line port of the old _recvLedColorBin() and got left on the
+     * old marker values, so every TELEM_COLOR_SYNC packet was silently
+     * rejected ("COLOR SYNC BAD OPCODE [240] at [0]") and no colour ever
+     * reached the UI. Confirmed live via logcat before fixing.
      *
      * @param d  Payload bytes (record stream, no 'L''K' prefix anymore -
      *           the opcode itself identifies this).
@@ -817,7 +823,7 @@ public class DataReceive {
         int total = 0;
         while (i < len) {
             int op = d[i++] & 0xFF;
-            if (op == 0x01) {                         // FILL start count r g b
+            if (op == 0xF0) {                         // FILL start count r g b
                 if (i + 5 > len) break;
                 int start = d[i++] & 0xFF;
                 int count = d[i++] & 0xFF;
@@ -825,7 +831,7 @@ public class DataReceive {
                 Log.v("DATA_R", "FILL op - start: " + start + " count: " + count + " RGB: " + r + "," + g + "," + b);
                 LED.updateColorBulk(start, count, r, g, b);   // one shot, no per-pixel animator
                 total += count;
-            } else if (op == 0x02) {                  // SETN count {idx r g b}
+            } else if (op == 0xF1) {                  // SETN count {idx r g b}
                 if (i >= len) break;
                 int count = d[i++] & 0xFF;
                 Log.v("DATA_R", "SETN op - count: " + count);

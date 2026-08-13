@@ -5,6 +5,13 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.027
+- Fixed: LED colours from the controller never reached the app - every
+  colour update packet was silently rejected and dropped. This app never
+  got updated for a wire-format change made on the SmartTV side during
+  the rebuild, so it was reading each colour update with the wrong marker
+  bytes and throwing all of them out.
+
 ## 8.026
 - Internal: this build actually ships the debug/verbose logging work from
   the last update, which never made it into a published version -
