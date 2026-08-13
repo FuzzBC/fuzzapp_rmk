@@ -81,7 +81,6 @@ void loop() {
     DIF::Loop();
     DIF::TickAsyncSend();   // advance any staged diffuser send one non-blocking step
     MQTT::Loop();
-    TELNET::Loop();
     SCHED::RunTasks(TimeNow);
 
     if (LED::State.Enabled) {
@@ -89,11 +88,28 @@ void loop() {
         TV::Status();
 
         if (!UDPRAW::State.Status) {
+            // TELNET::Loop() (and MOTION/LED refresh below) deliberately
+            // skipped while a stream is active - same "nothing non-essential
+            // runs while UDPRAW owns the strip" rule the original firmware
+            // applied everywhere else (LED::Refresh, MOTION::Status,
+            // NET::Check, dual-colour/ambient-mode commands - see 01_
+            // PROTOCOL.md's port notes). Telnet didn't exist as a runtime
+            // toggle in the original, so it never had a precedent here, but
+            // TELNET_Srv.available() being polled unconditionally every
+            // single iteration - on a WiFiS3 API already documented
+            // elsewhere (Telnet.cpp) as unreliable/slow on this board - is
+            // exactly the kind of per-tick cost that rule exists to avoid,
+            // and it's the one thing in this loop that never got it. Only
+            // matters when SET_TELNET_ENABLE has actually turned mirroring
+            // on; skips instantly otherwise either way.
+            TELNET::Loop();
             MOTION::Status();
             if (LED::ShouldRefresh(TimeNow)) {
                 LED::Refresh(TimeNow);
             }
         }
+    } else {
+        TELNET::Loop();
     }
 
     // Coalesced app colour sync: flush at most one TELEM_COLOR_SYNC frame
