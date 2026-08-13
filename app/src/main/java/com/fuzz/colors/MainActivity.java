@@ -506,10 +506,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         MQTT = new MqttTransport(this, DATAr); // Instantiate MQTT fallback transport
         // NOTE: _connectTransport() removed from here because onResume() executes right after onCreate()!
 
-        // ── 8b. Restore telnet console if it was left ON ──────
-        if (telnetEnabled) { // Check if telnet session flag is active
-            TELNET.setEnabled(true); // Enable telnet subsystem (connects to static diffuser IP)
-        } // End telnet setup check
+        // ── 8b. Restore telnet console panes if left ON ───────
+        // Independent per pane - either, both, or neither may have been on.
+        // SmartTV's own server has no EEPROM persistence (resets to OFF on
+        // a firmware reboot), but the app restarting doesn't imply the
+        // board did too - reconnecting here is harmless either way, same
+        // as the Diffuser pane already did: a genuinely-gone server just
+        // shows RETRY… until "TV TELNET" is armed again.
+        if (telnetEnabled) TELNET.setEnabled(true);
+        if (smarttvTelnetOn) TELNET.setSmartTvEnabled(true);
+        _UpdateTelnetPaneVisibility();
 
         // ── 9. Welcome toast ──────────────────────────────────
         _Toast("~ ~ FuZz Show ~ ~"); // Display initial startup toast notification
@@ -1040,7 +1046,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         DATAr.destroy();
         DATAs.shutdown();
         if (MQTT != null) MQTT.disconnect();
-        if (TELNET != null) TELNET.setEnabled(false);  // close both telnet sockets/threads
+        if (TELNET != null) {
+            TELNET.setEnabled(false);          // close Diffuser pane's socket/thread
+            TELNET.setSmartTvEnabled(false);   // close SmartTV pane's socket/thread
+        }
         if (updateInstaller != null) updateInstaller.unregister();
         if (dualColorCycleAnim != null) dualColorCycleAnim.cancel();
         if (navStrokeRunAnim != null) navStrokeRunAnim.cancel();
@@ -1126,11 +1135,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         LAY_CONSOLE = findViewById(R.id.ConsoleLayout);
         LAY_TELNET  = findViewById(R.id.TelnetLayout);
 
-        // Telnet console (Diffuser pane only) - restore persisted toggle
+        // Telnet console: SmartTV pane (top) + Diffuser pane (bottom) -
+        // restore persisted toggles below, once both panes exist.
+        RecyclerView rvTelSmartTv = findViewById(R.id._recyclertelnet_smarttv);
+        rvTelSmartTv.setLayoutManager(new LinearLayoutManager(this));
         RecyclerView rvTelDif = findViewById(R.id._recyclertelnet_dif);
         rvTelDif.setLayoutManager(new LinearLayoutManager(this));
-        TELNET = new TelnetConsole(this, rvTelDif,
-                findViewById(R.id._telnet_dif_status));
+        TELNET = new TelnetConsole(this,
+                rvTelSmartTv, findViewById(R.id._telnet_smarttv_status),
+                rvTelDif, findViewById(R.id._telnet_dif_status));
         telnetEnabled = getSharedPreferences("FuZz_Telnet", MODE_PRIVATE)
                 .getBoolean("ENABLED", false);
         mqttLogEnabled = getSharedPreferences("FuZz_MqttLog", MODE_PRIVATE)
@@ -1143,7 +1156,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         findViewById(R.id._telnet_close).setOnClickListener(v -> _ShowTelnetWindow(false));
         _MakeTelnetWindowDraggable();
         _MakeFabMovable();
-        telnetFab.setVisibility(telnetEnabled ? View.VISIBLE : View.GONE);
+        telnetFab.setVisibility((telnetEnabled || smarttvTelnetOn) ? View.VISIBLE : View.GONE);
 
         // Page order: TERM – LEDS (default) – SET, navigated via the bottom-right buttons
         _RebuildNavPages();
@@ -1392,11 +1405,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     /**
-     * TELNET debug toggle (Debug dialog grid, last cell).
-     * ON  – persists the flag, reveals the floating launcher button, arms
-     *       TELNET (connects to static diffuser IP).
-     * OFF – persists the flag, hides the floating window + launcher and
-     *       drops the telnet link.
+     * TELNET debug toggle (Debug dialog grid, Diffuser cell).
+     * ON  – persists the flag, arms the Diffuser pane, reveals the
+     *       floating launcher (if not already up for the SmartTV pane).
+     * OFF – persists the flag, drops the Diffuser link, and hides the
+     *       floating window + launcher only if the SmartTV pane is also
+     *       off - otherwise the window stays up showing just that pane.
      *
      * @param on  New state.
      */
@@ -1408,17 +1422,35 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 .edit().putBoolean("ENABLED", on).apply();
 
         TELNET.setEnabled(on);
+        _UpdateTelnetPaneVisibility();
 
         if (on) {
             telnetFab.setVisibility(View.VISIBLE);          // reveal the floating launcher
             _Toast("TELNET { ON }");
             _Console(false, "►►", "TELNET -> {{#G}ON{##}} tap the {{#C}>_{##}} button");
         } else {
-            _ShowTelnetWindow(false);                       // hide the floating window
-            telnetFab.setVisibility(View.GONE);
+            if (!smarttvTelnetOn) {
+                _ShowTelnetWindow(false);                   // hide the floating window
+                telnetFab.setVisibility(View.GONE);
+            }
             _Toast("TELNET { OFF }");
             _Console(false, "►►", "TELNET -> {{#R}OFF{##}}");
         }
+    }
+
+    /**
+     * Shows/hides each telnet pane (SmartTV top, Diffuser bottom) to match
+     * which one(s) are actually enabled - a single enabled pane fills the
+     * whole window, both together split it evenly (see the panes'
+     * layout_weight in activity_main.xml). Call after either
+     * _TelnetSetEnabled()/_SmartTvTelnetSetEnabled() changes state, and
+     * once at startup after both are restored from prefs.
+     */
+    private void _UpdateTelnetPaneVisibility() {
+        View smarttvPane = findViewById(R.id._telnet_smarttv_pane);
+        View difPane = findViewById(R.id._telnet_dif_pane);
+        if (smarttvPane != null) smarttvPane.setVisibility(smarttvTelnetOn ? View.VISIBLE : View.GONE);
+        if (difPane != null) difPane.setVisibility(telnetEnabled ? View.VISIBLE : View.GONE);
     }
 
     /**
@@ -1446,11 +1478,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     /**
      * SmartTV remote telnet toggle (Debug dialog grid). Sends SET_TELNET_ENABLE
-     * to the SmartTV so its own telnet server can be reached on the LAN for
-     * diagnostics - unrelated to the Diffuser-only TELNET console above.
-     * Flashed OFF with no EEPROM persistence on the device side, so this is
-     * a fire-and-forget command; the locally-persisted flag only reflects the
-     * last state this app requested, not a confirmed device readback.
+     * to arm the SmartTV's own telnet server, AND connects/disconnects this
+     * app's own client for the SmartTV pane (top half of the same floating
+     * window the Diffuser pane already used) - previously this only sent
+     * the wire command with nowhere in the app to actually view the result.
+     * Flashed OFF with no EEPROM persistence on the device side, so the
+     * wire command is fire-and-forget; the locally-persisted flag only
+     * reflects the last state this app requested, not a confirmed device
+     * readback (the pane's own status chip shows the real connection state).
      *
      * @param on  New state.
      */
@@ -1460,6 +1495,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 .edit().putBoolean("ENABLED", on).apply();
 
         DATAs.sendTelnetEnable(on);
+        TELNET.setSmartTvEnabled(on);
+        _UpdateTelnetPaneVisibility();
+
+        if (on) {
+            telnetFab.setVisibility(View.VISIBLE);
+        } else if (!telnetEnabled) {
+            _ShowTelnetWindow(false);
+            telnetFab.setVisibility(View.GONE);
+        }
+
         _Toast("TV TELNET { " + (on ? "ON" : "OFF") + " }");
         _Console(false, "►►", "TV TELNET -> {{#" + (on ? "G}ON" : "R}OFF") + "{##}}");
     }

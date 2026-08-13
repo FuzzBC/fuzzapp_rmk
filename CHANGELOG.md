@@ -5,6 +5,15 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.030
+- Added: the SmartTV's own telnet server ("TV TELNET" in the debug grid)
+  now actually shows something - previously it could arm the console on
+  the board but there was nowhere in the app to view it (only the
+  Diffuser had a live console). The floating telnet window now shows
+  both, SmartTV on top and Diffuser on the bottom, each independent -
+  turn on just one and it fills the window, turn on both and it splits
+  evenly.
+
 ## 8.029
 - Fixed: the DBG button's 22-item diagnostic grid was cosmetic - every
   single entry silently fired the exact same generic health dump no

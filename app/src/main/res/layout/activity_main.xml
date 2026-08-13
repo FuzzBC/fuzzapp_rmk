@@ -1740,7 +1740,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:letterSpacing="0.14"
-                    android:text="≡  DIFFUSER CONSOLE"
+                    android:text="≡  TELNET CONSOLE"
                     android:textColor="@color/terminal_accent_cyan"
                     android:textSize="11sp"
                     android:textStyle="bold"
@@ -1761,8 +1761,89 @@
 
             </LinearLayout>
 
+            <!-- ── SMARTTV pane ───────────────────────────── -->
+            <!-- Visibility toggled independently in MainActivity (gone unless
+                 the "TV TELNET" debug-grid toggle armed the firmware's own
+                 server via SET_TELNET_ENABLE). When both panes are visible
+                 each gets half the window (layout_weight); when only one is,
+                 it fills the whole window - see _UpdateTelnetPaneVisibility(). -->
+            <LinearLayout
+                android:id="@+id/_telnet_smarttv_pane"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="6dp"
+                android:orientation="vertical"
+                android:background="@drawable/_terminal_panel"
+                android:padding="6dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="22dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp">
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/_dot_red" />
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/_dot_yellow" />
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/_dot_green" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="TELNET ─ SMARTTV"
+                        android:textColor="@color/terminal_label_green_grey"
+                        android:textSize="10sp"
+                        android:letterSpacing="0.12"
+                        android:textStyle="bold"
+                        android:typeface="monospace"
+                        tools:ignore="HardcodedText" />
+
+                    <TextView
+                        android:id="@+id/_telnet_smarttv_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="OFF"
+                        android:textColor="@color/telnet_status_idle"
+                        android:textSize="9sp"
+                        android:textStyle="bold"
+                        android:typeface="monospace"
+                        tools:ignore="HardcodedText" />
+
+                </LinearLayout>
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/_recyclertelnet_smarttv"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:clipToPadding="false"
+                    android:descendantFocusability="blocksDescendants"
+                    android:scrollbarStyle="outsideInset"
+                    tools:listitem="@layout/item_telnet_line" />
+
+            </LinearLayout>
+
             <!-- ── DIFFUSER pane ──────────────────────────── -->
             <LinearLayout
+                android:id="@+id/_telnet_dif_pane"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
