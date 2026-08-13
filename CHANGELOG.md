@@ -5,6 +5,12 @@ Each entry's heading is the exact `versionName` (matches the app's
 
 See AGENTS.md for the rule on keeping this updated.
 
+## 8.025
+- Internal: removed the extra-verbose per-stage cloud connection logging
+  added in 8.023 - it did its job (found the real bug, fixed in 8.024) and
+  was too noisy to leave on permanently. Console still shows CLOUD ON/LOST/
+  FAIL as before.
+
 ## 8.024
 - Fixed the real cause of "Connection lost" (8.020-8.023 fixed other real
   bugs, but not this one): the controller's own device id is delivered in
